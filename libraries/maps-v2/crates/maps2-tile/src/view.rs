@@ -6,7 +6,8 @@ use maps2_units::{TileCoord, TileId};
 
 use crate::varint::{read_varint, zigzag_decode};
 use crate::{
-    ClassCode, FeatureFlags, TileError, TileHeader, FORMAT_VERSION, MAGIC, RASTER_CLASS_BASE,
+    BuildingView, ClassCode, FeatureFlags, LEGACY_FORMAT_VERSION, RoofType, TileError, TileHeader,
+    FORMAT_VERSION, MAGIC, RASTER_CLASS_BASE,
 };
 
 const HEADER_BYTES: usize = 20;
@@ -34,7 +35,7 @@ impl<'a> TileView<'a> {
             return Err(TileError::BadMagic);
         }
         let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-        if version != FORMAT_VERSION {
+        if version != LEGACY_FORMAT_VERSION && version != FORMAT_VERSION {
             return Err(TileError::UnsupportedVersion(version));
         }
         let id = TileId {
@@ -90,7 +91,7 @@ impl<'a> TileView<'a> {
         }
         let span = self.section_span(class)?;
         let bytes = self.bytes.get(span).unwrap_or(&[]);
-        Some(SectionView { bytes })
+        Some(SectionView { bytes, version: self.header.version })
     }
 
     /// The opaque payload of a raster section (class ≥ 0xFF00).
@@ -107,16 +108,17 @@ impl<'a> TileView<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SectionView<'a> {
     bytes: &'a [u8],
+    version: u16,
 }
 
 impl<'a> SectionView<'a> {
     #[must_use]
     pub fn features(&self) -> FeaturesIter<'a> {
         if self.bytes.len() < 2 {
-            return FeaturesIter { bytes: self.bytes, pos: 0, remaining: 0, damaged: true };
+            return FeaturesIter { bytes: self.bytes, pos: 0, remaining: 0, damaged: true, version: self.version };
         }
         let count = usize::from(u16::from_le_bytes([self.bytes[0], self.bytes[1]]));
-        FeaturesIter { bytes: self.bytes, pos: 2, remaining: count, damaged: false }
+        FeaturesIter { bytes: self.bytes, pos: 2, remaining: count, damaged: false, version: self.version }
     }
 }
 
@@ -125,6 +127,7 @@ pub struct FeaturesIter<'a> {
     pos: usize,
     remaining: usize,
     damaged: bool,
+    version: u16,
 }
 
 impl<'a> Iterator for FeaturesIter<'a> {
@@ -148,13 +151,15 @@ impl<'a> FeaturesIter<'a> {
     fn decode_one(&mut self) -> Result<FeatureView<'a>, TileError> {
         let head = self
             .bytes
-            .get(self.pos..self.pos + 8)
+            .get(self.pos..self.pos + feature_head_bytes(self.version))
             .ok_or(TileError::Truncated)?;
         let id = u32::from_le_bytes([head[0], head[1], head[2], head[3]]);
         let flags = head[4];
         let rank = head[5];
-        let name_len = usize::from(u16::from_le_bytes([head[6], head[7]]));
-        self.pos += 8;
+        let building = decode_building(self.version, head)?;
+        let name_offset = feature_name_offset(self.version);
+        let name_len = usize::from(u16::from_le_bytes([head[name_offset], head[name_offset + 1]]));
+        self.pos += head.len();
         let name_bytes = self
             .bytes
             .get(self.pos..self.pos + name_len)
@@ -173,11 +178,36 @@ impl<'a> FeaturesIter<'a> {
             id,
             flags,
             rank,
+            building,
             name,
             vertex_count,
             geometry: &self.bytes[geometry_start..self.pos],
         })
     }
+}
+
+const fn feature_head_bytes(version: u16) -> usize {
+    if version == LEGACY_FORMAT_VERSION { 8 } else { 13 }
+}
+
+const fn feature_name_offset(version: u16) -> usize {
+    if version == LEGACY_FORMAT_VERSION { 6 } else { 11 }
+}
+
+fn decode_building(version: u16, head: &[u8]) -> Result<Option<BuildingView>, TileError> {
+    if version == LEGACY_FORMAT_VERSION {
+        return Ok(None);
+    }
+    let base_height_dm = u16::from_le_bytes([head[6], head[7]]);
+    let top_height_dm = u16::from_le_bytes([head[8], head[9]]);
+    let roof = RoofType::from_wire(head[10]).ok_or(TileError::BadBuilding)?;
+    if base_height_dm == 0 && top_height_dm == 0 {
+        return Ok(None);
+    }
+    (top_height_dm > base_height_dm)
+        .then_some(BuildingView { base_height_dm, top_height_dm, roof })
+        .map(Some)
+        .ok_or(TileError::BadBuilding)
 }
 
 fn skip_geometry(bytes: &[u8], pos: &mut usize, vertex_count: usize) -> Result<(), TileError> {
@@ -200,6 +230,7 @@ pub struct FeatureView<'a> {
     pub id: u32,
     pub flags: FeatureFlags,
     pub rank: u8,
+    pub building: Option<BuildingView>,
     pub name: &'a str,
     vertex_count: usize,
     geometry: &'a [u8],

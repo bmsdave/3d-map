@@ -152,7 +152,7 @@ mod tests {
     /// The scene must be bit-for-bit stable: it is the input of a
     /// golden screenshot, and a silent change there is a silent change
     /// to the picture the reviewer approved.
-    const GOLDEN_FNV1A: u64 = 0x1A67_68A1_4997_A10D;
+    const GOLDEN_FNV1A: u64 = 0x2874_1020_B44E_0006;
 
     fn fnv1a(bytes: &[u8]) -> u64 {
         let mut hash = 0xcbf2_9ce4_8422_2325_u64;

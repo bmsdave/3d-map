@@ -190,7 +190,7 @@ fn manifest_json(
 ) -> Result<String, String> {
     serde_json::to_string_pretty(&json!({
         "format": "MT2",
-        "format_version": 1,
+        "format_version": maps2_tile::FORMAT_VERSION,
         "level": level,
         "feature_count": feature_count,
         "tile_count": tile_count,
@@ -278,6 +278,7 @@ attribution = "© OpenStreetMap contributors""#,
         .expect("descriptor");
 
         let manifest = manifest_json(&[&descriptor], 16, 10, 2, 0).expect("manifest JSON");
+        assert!(manifest.contains("\"format_version\": 2"));
         assert!(manifest.contains("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"));
         assert!(manifest.contains("© OpenStreetMap contributors"));
     }

@@ -188,7 +188,7 @@ mod tests {
     use maps2_units::locate;
 
     /// The package must be bit-for-bit stable, like the Ealing one.
-    const GOLDEN_FNV1A: u64 = 0x5655_9BFF_E5D8_AB08;
+    const GOLDEN_FNV1A: u64 = 0x07F6_A60E_2908_45D4;
 
     fn fnv1a(bytes: &[u8], mut hash: u64) -> u64 {
         for byte in bytes {

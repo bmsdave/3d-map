@@ -3,12 +3,14 @@
 use maps2_units::TileId;
 
 use crate::varint::{write_varint, zigzag_encode};
-use crate::{ClassCode, FeatureDraft, TileError, FORMAT_VERSION, MAGIC, RASTER_CLASS_BASE};
+use crate::{
+    BuildingDraft, ClassCode, FeatureDraft, TileError, FORMAT_VERSION, MAGIC, RASTER_CLASS_BASE,
+};
 
 const SECTION_ENTRY_BYTES: usize = 10;
 
 enum SectionDraft {
-    Vector(Vec<FeatureDraft>),
+    Vector(Vec<(FeatureDraft, Option<BuildingDraft>)>),
     Raster(Vec<u8>),
 }
 
@@ -26,15 +28,24 @@ impl TileBuilder {
     /// Append a feature to the section of `class`, creating the section
     /// on first use. Section order in the file is first-use order.
     pub fn push(&mut self, class: ClassCode, feature: FeatureDraft) {
+        self.push_feature(class, feature, None);
+    }
+
+    /// Appends a building footprint with its vertical extent.
+    pub fn push_building(&mut self, class: ClassCode, feature: FeatureDraft, building: BuildingDraft) {
+        self.push_feature(class, feature, Some(building));
+    }
+
+    fn push_feature(&mut self, class: ClassCode, feature: FeatureDraft, building: Option<BuildingDraft>) {
         debug_assert!(!feature.vertices.is_empty(), "a feature needs at least one vertex");
         debug_assert!(class < RASTER_CLASS_BASE, "raster classes take push_raster");
         if let Some((_, SectionDraft::Vector(features))) =
             self.sections.iter_mut().find(|(c, _)| *c == class)
         {
-            features.push(feature);
+            features.push((feature, building));
             return;
         }
-        self.sections.push((class, SectionDraft::Vector(vec![feature])));
+        self.sections.push((class, SectionDraft::Vector(vec![(feature, building)])));
     }
 
     /// Set the opaque payload of a raster section (heights and future
@@ -93,20 +104,25 @@ fn header_and_table(
     Ok(out)
 }
 
-fn encode_section(features: &[FeatureDraft]) -> Result<Vec<u8>, TileError> {
+fn encode_section(features: &[(FeatureDraft, Option<BuildingDraft>)]) -> Result<Vec<u8>, TileError> {
     let mut out = Vec::new();
     out.extend_from_slice(&checked_u16(features.len())?.to_le_bytes());
-    for feature in features {
-        encode_feature(&mut out, feature)?;
+    for (feature, building) in features {
+        encode_feature(&mut out, feature, *building)?;
     }
     Ok(out)
 }
 
-fn encode_feature(out: &mut Vec<u8>, feature: &FeatureDraft) -> Result<(), TileError> {
+fn encode_feature(
+    out: &mut Vec<u8>,
+    feature: &FeatureDraft,
+    building: Option<BuildingDraft>,
+) -> Result<(), TileError> {
     let first = *feature.vertices.first().ok_or(TileError::EmptyGeometry)?;
     out.extend_from_slice(&feature.id.to_le_bytes());
     out.push(feature.flags);
     out.push(feature.rank);
+    encode_building(out, building)?;
     out.extend_from_slice(&checked_u16(feature.name.len())?.to_le_bytes());
     out.extend_from_slice(feature.name.as_bytes());
     out.extend_from_slice(&checked_u16(feature.vertices.len())?.to_le_bytes());
@@ -118,6 +134,17 @@ fn encode_feature(out: &mut Vec<u8>, feature: &FeatureDraft) -> Result<(), TileE
         write_varint(out, zigzag_encode(i32::from(vertex.1) - i32::from(prev.1)));
         prev = *vertex;
     }
+    Ok(())
+}
+
+fn encode_building(out: &mut Vec<u8>, building: Option<BuildingDraft>) -> Result<(), TileError> {
+    let building = building.unwrap_or(BuildingDraft::flat(0, 0));
+    if building.top_height_dm != 0 && building.top_height_dm <= building.base_height_dm {
+        return Err(TileError::BadBuilding);
+    }
+    out.extend_from_slice(&building.base_height_dm.to_le_bytes());
+    out.extend_from_slice(&building.top_height_dm.to_le_bytes());
+    out.push(building.roof as u8);
     Ok(())
 }
 

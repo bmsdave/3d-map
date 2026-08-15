@@ -8,9 +8,9 @@
 //! through the header table rather than by scanning, and geometry is
 //! decoded lazily as it is iterated.
 //!
-//! Format v1 — **frozen** (stage 3.4). Changing anything below means a
-//! new version in the header and a knowing migration, never a silent
-//! edit. The byte-exact layout lives in `../../docs/tile-format.md`.
+//! Format v2 — **frozen**. Version 1 remains readable; changing anything
+//! below means a new version in the header and a knowing migration, never a
+//! silent edit. The byte-exact layout lives in `../../docs/tile-format.md`.
 //!
 //! ```text
 //! 0   magic  "MT2\0"
@@ -22,7 +22,8 @@
 //! …   payload: sections back to back (offsets relative to payload base)
 //!
 //! vector section (class < 0xFF00): feature_count u16, then features:
-//!   id u32, flags u8, rank u8, name_len u16, name utf8,
+//!   id u32, flags u8, rank u8, base_dm u16, top_dm u16, roof u8,
+//!   name_len u16, name utf8,
 //!   vertex_count u16, first vertex (x u16, y u16),
 //!   deltas: (vertex_count − 1) × (dx, dy) zigzag varint
 //!
@@ -44,7 +45,8 @@ pub use heights::{
 pub use view::{FeatureView, SectionView, TileView};
 
 pub const MAGIC: [u8; 4] = *b"MT2\0";
-pub const FORMAT_VERSION: u16 = 1;
+pub const FORMAT_VERSION: u16 = 2;
+pub const LEGACY_FORMAT_VERSION: u16 = 1;
 
 /// Class codes from here up are raster sections: opaque payloads, no
 /// feature structure. Below — vector sections with features.
@@ -71,6 +73,7 @@ pub enum TileError {
     BadVarint,
     DeltaOutOfRange,
     BadText,
+    BadBuilding,
     TooLarge,
     EmptyGeometry,
 }
@@ -86,6 +89,48 @@ pub struct FeatureDraft {
     pub rank: u8,
     pub name: String,
     pub vertices: Vec<TileCoord>,
+}
+
+/// A building's vertical extent, in decimetres above the terrain datum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BuildingData {
+    pub base_height_dm: u16,
+    pub top_height_dm: u16,
+    pub roof: RoofType,
+}
+
+/// The builder-side name for [`BuildingData`].
+pub type BuildingDraft = BuildingData;
+/// The reader-side name for [`BuildingData`].
+pub type BuildingView = BuildingData;
+
+impl BuildingData {
+    #[must_use]
+    pub const fn flat(base_height_dm: u16, top_height_dm: u16) -> Self {
+        Self { base_height_dm, top_height_dm, roof: RoofType::Flat }
+    }
+}
+
+/// The roof form exposed by MT2 v2.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RoofType {
+    Flat = 0,
+    Gabled = 1,
+    Hipped = 2,
+    Other = 3,
+}
+
+impl RoofType {
+    pub(crate) const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Flat),
+            1 => Some(Self::Gabled),
+            2 => Some(Self::Hipped),
+            3 => Some(Self::Other),
+            _ => None,
+        }
+    }
 }
 
 impl FeatureDraft {
@@ -249,6 +294,33 @@ mod tests {
         assert_eq!(tile.raster(CLASS_HEIGHTS), Some(heights.as_slice()));
         assert_eq!(tile.section(CLASS_HEIGHTS), None, "raster is not features");
         assert_eq!(tile.raster(0), None, "vector is not raster");
+    }
+
+    #[test]
+    fn a_building_carries_its_base_top_and_roof_through_the_tile() {
+        let mut builder = TileBuilder::new(TileId { z: 16, x: 32744, y: 21792 });
+        builder.push_building(
+            3,
+            FeatureDraft::geometry(
+                17,
+                0,
+                vec![TileCoord(10, 10), TileCoord(100, 10), TileCoord(10, 10)],
+            ),
+            BuildingDraft::flat(125, 547),
+        );
+
+        let bytes = builder.build().expect("building tile");
+        let tile = TileView::parse(&bytes).expect("parses");
+        let building = tile
+            .section(3)
+            .expect("building section")
+            .features()
+            .next()
+            .expect("building")
+            .expect("feature")
+            .building;
+
+        assert_eq!(building, Some(BuildingView::flat(125, 547)));
     }
 
     #[test]

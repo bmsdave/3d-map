@@ -9,7 +9,10 @@ use std::{
 };
 
 use maps2_style::Class;
-use maps2_tile::{CLASS_HEIGHTS, FeatureDraft, TileBuilder, TileError, HEIGHTS_BYTES, HEIGHTS_SIDE, encode_height};
+use maps2_tile::{
+    CLASS_HEIGHTS, BuildingDraft, FeatureDraft, TileBuilder, TileError, HEIGHTS_BYTES, HEIGHTS_SIDE,
+    encode_height,
+};
 use maps2_units::{Lonlat, TileCoord, TileId, TilePoint, locate, to_lonlat};
 use num_traits::ToPrimitive;
 use osmpbfreader::{NodeId, OsmObj, OsmPbfReader};
@@ -655,12 +658,27 @@ fn build_tile(
     features.sort_by_key(|feature| (feature.class.code(), feature.feature.id));
     let mut builder = TileBuilder::new(id);
     for feature in features {
-        builder.push(feature.class.code(), feature.feature.clone());
+        push_feature(&mut builder, feature);
     }
     if let Some(grid) = terrain.iter().find(|grid| grid.covers_tile(id)) {
         builder.push_raster(CLASS_HEIGHTS, height_raster_for_tile(grid, id));
     }
     Ok((id, builder.build()?))
+}
+
+fn push_feature(builder: &mut TileBuilder, feature: &PreparedFeature) {
+    if let Some(height) = feature.building_height {
+        builder.push_building(feature.class.code(), feature.feature.clone(), BuildingDraft::flat(0, height_dm(height)));
+    } else {
+        builder.push(feature.class.code(), feature.feature.clone());
+    }
+}
+
+fn height_dm(height: BuildingHeight) -> u16 {
+    let metres = match height {
+        BuildingHeight::Explicit(value) | BuildingHeight::Levels(value) | BuildingHeight::Default(value) => value,
+    };
+    (metres * 10.0).round().to_u16().unwrap_or(u16::MAX)
 }
 
 #[cfg(test)]
@@ -768,7 +786,16 @@ attribution = "© OpenStreetMap contributors""#,
 
         assert_eq!(tiles.len(), 1);
         let tile = TileView::parse(&tiles[0].1).expect("valid MT2");
-        assert!(tile.section(Class::Building.code()).is_some());
+        let building = tile
+            .section(Class::Building.code())
+            .expect("building section")
+            .features()
+            .next()
+            .expect("building")
+            .expect("feature")
+            .building;
+
+        assert_eq!(building, Some(maps2_tile::BuildingView::flat(0, 90)));
     }
 
     #[test]

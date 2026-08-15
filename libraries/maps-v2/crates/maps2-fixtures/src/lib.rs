@@ -372,9 +372,8 @@ mod tests {
     /// The package must be bit-for-bit stable: any format or content
     /// change shows up as a hash change and is made knowingly.
     ///
-    /// Changed at stage 5.1 by adding named places and the POI field —
-    /// content, not format: the tile is still v1 and no field moved.
-    const GOLDEN_FNV1A: u64 = 0xD50A_2750_14E8_0DA5;
+    /// Changed for MT2 v2, which adds the fixed building payload.
+    const GOLDEN_FNV1A: u64 = 0x0EA8_F980_3326_017D;
 
     fn fnv1a(bytes: &[u8], mut hash: u64) -> u64 {
         for byte in bytes {
