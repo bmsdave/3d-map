@@ -15,7 +15,7 @@ use maps2_tile::{
 };
 use maps2_units::{Lonlat, TileCoord, TileId, TilePoint, Zoom, locate, to_lonlat, world_position_px};
 use num_traits::ToPrimitive;
-use osmpbfreader::{NodeId, OsmObj, OsmPbfReader};
+use osmpbfreader::{NodeId, OsmId, OsmObj, OsmPbfReader, WayId};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tiff::decoder::{Decoder, DecodingResult};
@@ -341,6 +341,13 @@ struct RawWay {
     nodes: Vec<NodeId>,
 }
 
+#[derive(Clone, Debug)]
+struct RawRelation {
+    id: u32,
+    tags: Vec<(String, String)>,
+    outer: Vec<WayId>,
+}
+
 /// Resolves classified OSM ways to MT2-ready geometry using two PBF passes.
 ///
 /// # Errors
@@ -349,21 +356,46 @@ struct RawWay {
 /// that cannot be represented by MT2 v1.
 pub fn resolve_osm_pbf(path: impl AsRef<Path>, level: u8) -> Result<Vec<PreparedFeature>, OsmError> {
     let path = path.as_ref();
-    let ways = read_classified_ways(path)?;
+    let relations = read_classified_relations(path)?;
+    let ways = read_classified_ways(path, &relations)?;
     let nodes = read_referenced_nodes(path, &referenced_nodes(&ways))?;
-    prepare_ways(&ways, &nodes, level)
+    let mut features = prepare_ways(&ways, &nodes, level)?;
+    features.extend(prepare_relations(&relations, &ways, &nodes, level)?);
+    Ok(features)
 }
 
-fn read_classified_ways(path: &Path) -> Result<Vec<RawWay>, OsmError> {
+fn read_classified_relations(path: &Path) -> Result<Vec<RawRelation>, OsmError> {
+    let input = File::open(path).map_err(|error| OsmError::Read(error.to_string()))?;
+    let mut reader = OsmPbfReader::new(input);
+    reader.iter().filter_map(|object| match object {
+        Ok(OsmObj::Relation(relation)) => Some(Ok(relation)),
+        Ok(_) => None,
+        Err(error) => Some(Err(OsmError::Read(error.to_string()))),
+    }).filter_map(|relation| match relation {
+        Ok(relation) => {
+            let tags = owned_tags(&relation.tags);
+            let outer = relation.refs.iter().filter(|member| member.role == "outer" || member.role.is_empty())
+                .filter_map(|member| match member.member { OsmId::Way(id) => Some(id), _ => None }).collect::<Vec<_>>();
+            classify_osm_tags(&tag_refs(&tags)).filter(|_| !outer.is_empty()).map(|_| {
+                u32::try_from(relation.id.0).map(|id| RawRelation { id, tags, outer })
+                    .map_err(|_| OsmError::WayIdOutOfRange(relation.id.0))
+            })
+        }
+        Err(error) => Some(Err(error)),
+    }).collect()
+}
+
+fn read_classified_ways(path: &Path, relations: &[RawRelation]) -> Result<Vec<RawWay>, OsmError> {
     let input = File::open(path).map_err(|error| OsmError::Read(error.to_string()))?;
     let mut reader = OsmPbfReader::new(input);
     let mut ways = Vec::new();
+    let relation_ways = relations.iter().flat_map(|relation| relation.outer.iter().copied()).collect::<HashSet<_>>();
     for object in reader.iter() {
         let OsmObj::Way(way) = object.map_err(|error| OsmError::Read(error.to_string()))? else {
             continue;
         };
         let tags = owned_tags(&way.tags);
-        if classify_osm_tags(&tag_refs(&tags)).is_none() {
+        if classify_osm_tags(&tag_refs(&tags)).is_none() && !relation_ways.contains(&way.id) {
             continue;
         }
         let id = u32::try_from(way.id.0).map_err(|_| OsmError::WayIdOutOfRange(way.id.0))?;
@@ -403,6 +435,20 @@ fn prepare_way(way: &RawWay, nodes: &HashMap<NodeId, Lonlat>, level: u8) -> Resu
         .map(|node| nodes.get(node).copied().ok_or(OsmError::MissingNode { way_id: way.id, node_id: node.0 }))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(prepare_features(way.id, &tag_refs(&way.tags), &vertices, level))
+}
+
+fn prepare_relations(
+    relations: &[RawRelation], ways: &[RawWay], nodes: &HashMap<NodeId, Lonlat>, level: u8,
+) -> Result<Vec<PreparedFeature>, OsmError> {
+    let index = ways.iter().map(|way| (WayId(i64::from(way.id)), way)).collect::<HashMap<_, _>>();
+    relations.iter().map(|relation| {
+        let members = relation.outer.iter().filter_map(|id| index.get(id).map(|way| way.nodes.clone())).collect();
+        stitch_rings(members).into_iter().map(|ring| {
+            let vertices = ring.iter().map(|node| nodes.get(node).copied().ok_or(OsmError::MissingNode { way_id: relation.id, node_id: node.0 }))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(prepare_features(relation.id, &tag_refs(&relation.tags), &vertices, level))
+        }).collect::<Result<Vec<_>, OsmError>>().map(|parts| parts.into_iter().flatten().collect::<Vec<_>>())
+    }).collect::<Result<Vec<_>, _>>().map(|parts| parts.into_iter().flatten().collect())
 }
 
 /// Stitches unordered OSM member ways into canonical closed rings.
