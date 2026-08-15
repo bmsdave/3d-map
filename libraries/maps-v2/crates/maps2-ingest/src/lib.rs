@@ -405,6 +405,51 @@ fn prepare_way(way: &RawWay, nodes: &HashMap<NodeId, Lonlat>, level: u8) -> Resu
     Ok(prepare_features(way.id, &tag_refs(&way.tags), &vertices, level))
 }
 
+/// Stitches unordered OSM member ways into canonical closed rings.
+///
+/// Incomplete member chains are discarded, so callers never emit invalid
+/// polygon geometry into MT2.
+#[must_use]
+pub fn stitch_rings(mut ways: Vec<Vec<NodeId>>) -> Vec<Vec<NodeId>> {
+    let mut rings = Vec::new();
+    while let Some(seed) = take_next_way(&mut ways) {
+        let mut ring = seed;
+        while !is_closed(&ring) && append_matching_way(&mut ring, &mut ways) {}
+        if is_closed(&ring) {
+            rings.push(canonical_ring(ring));
+        }
+    }
+    rings
+}
+
+fn take_next_way(ways: &mut Vec<Vec<NodeId>>) -> Option<Vec<NodeId>> {
+    let index = ways.iter().position(|way| way.len() > 1)?;
+    Some(ways.remove(index))
+}
+
+fn is_closed(nodes: &[NodeId]) -> bool {
+    nodes.len() > 3 && nodes.first() == nodes.last()
+}
+
+fn append_matching_way(ring: &mut Vec<NodeId>, ways: &mut Vec<Vec<NodeId>>) -> bool {
+    let Some(&end) = ring.last() else { return false };
+    let Some(index) = ways.iter().position(|way| way.first() == Some(&end) || way.last() == Some(&end)) else {
+        return false;
+    };
+    let mut way = ways.remove(index);
+    if way.last() == Some(&end) { way.reverse(); }
+    ring.extend(way.into_iter().skip(1));
+    true
+}
+
+fn canonical_ring(mut ring: Vec<NodeId>) -> Vec<NodeId> {
+    ring.pop();
+    let start = ring.iter().enumerate().min_by_key(|(_, node)| *node).map_or(0, |(index, _)| index);
+    ring.rotate_left(start);
+    ring.push(ring[0]);
+    ring
+}
+
 fn owned_tags(tags: &osmpbfreader::Tags) -> Vec<(String, String)> {
     tags.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect()
 }
@@ -1004,6 +1049,19 @@ attribution = "© OpenStreetMap contributors""#,
         assert_eq!(features.len(), 2);
         assert!(features.iter().all(|feature| feature.feature.vertices.first() == feature.feature.vertices.last()));
         assert!(features.iter().all(|feature| feature.building_height == Some(BuildingHeight::Explicit(12.0))));
+    }
+
+    #[test]
+    fn relation_ring_stitcher_orders_and_reverses_member_ways() {
+        let ways = vec![
+            vec![NodeId(3), NodeId(4), NodeId(1)],
+            vec![NodeId(3), NodeId(2)],
+            vec![NodeId(2), NodeId(1)],
+        ];
+
+        let rings = stitch_rings(ways);
+
+        assert_eq!(rings, vec![vec![NodeId(1), NodeId(2), NodeId(3), NodeId(4), NodeId(1)]]);
     }
 
     #[test]
