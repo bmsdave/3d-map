@@ -31,4 +31,6 @@ The command verifies the pinned input before two-pass way/node resolution,
 then writes deterministic `z/x/y.mt2` files. The output directory is ignored
 by Git. It currently emits only geometry that is entirely contained by a z16
 tile; border clipping, lower zoom generalization, DEM sampling, package
-manifests, and browser loading are deliberately still incomplete.
+browser loading are deliberately still incomplete. Each build writes
+`manifest.json` beside the tiles with MT2 version, zoom, source URL/date/hash,
+licence, attribution, and feature/tile counts.

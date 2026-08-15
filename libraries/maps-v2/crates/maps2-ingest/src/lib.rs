@@ -41,6 +41,12 @@ impl Source {
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    /// The lowercase SHA-256 digest required for the source bytes.
+    #[must_use]
+    pub fn sha256(&self) -> &str {
+        &self.expected_sha256
+    }
 }
 
 /// Input validation failed before a data build began.
@@ -553,6 +559,7 @@ attribution = "© OpenStreetMap contributors""#,
         .expect("valid descriptor");
 
         assert_eq!(descriptor.source.name(), "london.osm.pbf");
+        assert_eq!(descriptor.source.sha256(), HELLO_WORLD_SHA256);
         assert_eq!(descriptor.kind, SourceKind::OsmPbf);
     }
 

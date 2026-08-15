@@ -1,8 +1,10 @@
 use std::{env, fs, fs::File, path::Path, process::ExitCode};
 
 use maps2_ingest::{
-    SourceKind, build_tiles, read_descriptor, resolve_osm_pbf, scan_osm_pbf, validate_source_reader, OsmSummary,
+    SourceDescriptor, SourceKind, build_tiles, read_descriptor, resolve_osm_pbf, scan_osm_pbf, validate_source_reader,
+    OsmSummary,
 };
+use serde_json::json;
 
 fn main() -> ExitCode {
     let args = env::args().skip(1).collect::<Vec<_>>();
@@ -41,8 +43,54 @@ fn build(descriptor_path: &str, input_path: &str, level: &str, output: &str) -> 
     let features = resolve_osm_pbf(input_path, level).map_err(|error| error.to_string())?;
     let tiles = build_tiles(&features).map_err(|error| format!("cannot encode MT2: {error:?}"))?;
     write_tiles(Path::new(output), &tiles)?;
+    write_manifest(Path::new(output), &descriptor, level, features.len(), tiles.len())?;
     println!("{{\"features\":{},\"tiles\":{}}}", features.len(), tiles.len());
     Ok(())
+}
+
+fn write_manifest(
+    output: &Path,
+    descriptor: &SourceDescriptor,
+    level: u8,
+    feature_count: usize,
+    tile_count: usize,
+) -> Result<(), String> {
+    let bytes = manifest_json(descriptor, level, feature_count, tile_count)?;
+    let path = output.join("manifest.json");
+    fs::write(&path, bytes).map_err(|error| format!("cannot write {}: {error}", path.display()))
+}
+
+fn manifest_json(
+    descriptor: &SourceDescriptor,
+    level: u8,
+    feature_count: usize,
+    tile_count: usize,
+) -> Result<String, String> {
+    serde_json::to_string_pretty(&json!({
+        "format": "MT2",
+        "format_version": 1,
+        "level": level,
+        "feature_count": feature_count,
+        "tile_count": tile_count,
+        "source": {
+            "name": descriptor.source.name(),
+            "kind": source_kind_name(descriptor.kind),
+            "url": descriptor.url,
+            "sha256": descriptor.source.sha256(),
+            "source_date": descriptor.source_date,
+            "licence": descriptor.licence,
+            "attribution": descriptor.attribution,
+        }
+    }))
+    .map_err(|error| format!("cannot serialize manifest: {error}"))
+}
+
+const fn source_kind_name(kind: SourceKind) -> &'static str {
+    match kind {
+        SourceKind::OsmPbf => "osm-pbf",
+        SourceKind::CopernicusDem => "copernicus-dem",
+        SourceKind::GebcoGrid => "gebco-grid",
+    }
 }
 
 fn write_tiles(output: &Path, tiles: &[(maps2_units::TileId, Vec<u8>)]) -> Result<(), String> {
@@ -86,4 +134,28 @@ fn print_help() {
     println!(
         "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manifest_carries_source_hash_and_attribution() {
+        let descriptor = read_descriptor(
+            r#"[source]
+name = "london.osm.pbf"
+kind = "osm-pbf"
+url = "https://example.test/london.osm.pbf"
+sha256 = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+source_date = "2026-08-14"
+licence = "ODbL-1.0"
+attribution = "© OpenStreetMap contributors""#,
+        )
+        .expect("descriptor");
+
+        let manifest = manifest_json(&descriptor, 16, 10, 2).expect("manifest JSON");
+        assert!(manifest.contains("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"));
+        assert!(manifest.contains("© OpenStreetMap contributors"));
+    }
 }
