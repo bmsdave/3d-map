@@ -8,6 +8,7 @@ members = [
     "crates/maps2-fixtures",
     "crates/maps2-render",
     "crates/maps2-web",
+    "crates/maps2-ingest",
 ]
 resolver = "2"
 

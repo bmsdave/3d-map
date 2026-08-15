@@ -1,0 +1,13 @@
+[package]
+name = "maps2-ingest"
+version = "0.1.0-alpha"
+edition = "2024"
+description = "Reproducible OSM and DEM ingestion for Maps SDK v2"
+license = "MIT"
+
+[dependencies]
+maps2-style = { path = "../maps2-style" }
+sha2 = "0.10"
+
+[lints]
+workspace = true
