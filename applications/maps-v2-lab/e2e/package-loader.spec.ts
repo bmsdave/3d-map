@@ -18,3 +18,22 @@ test("package loader: rejects a tile whose bytes do not match the manifest", asy
 
   await expect(page.getByTestId("stage")).toHaveAttribute("data-state", "error");
 });
+
+test("package loader: retries a transient manifest failure", async ({ page }) => {
+  let attempts = 0;
+  await page.route("**/fixtures/ealing/package-manifest.json", async (route) => {
+    attempts += 1;
+    if (attempts === 1) {
+      await route.fulfill({ status: 503, body: "temporarily unavailable" });
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto("/#/card/package-loader");
+
+  const stage = page.getByTestId("stage");
+  await expect(stage).toHaveAttribute("data-state", "error");
+  await page.getByRole("button", { name: "Повторить" }).click();
+  await expect(stage).toHaveAttribute("data-state", "ready");
+  expect(attempts).toBe(2);
+});

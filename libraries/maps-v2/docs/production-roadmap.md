@@ -56,8 +56,9 @@ now exercises a manifest-driven, demand-loading host contract with synthetic
 tiles, but does not ship a real-data package. There is still no
 generalisation pipeline, global source set, real-data attribution acceptance,
 release asset, or production performance and resilience evidence. The package
-loader visibly exposes manifest attribution; it has not yet been exercised
-with a real London package. Strict workspace Clippy now passes without
+loader visibly exposes manifest attribution and offers a manual retry after a
+transient manifest failure; it has not yet been exercised with a real London
+package. Strict workspace Clippy now passes without
 suppressions; the remaining blockers are real-data quality and release
 operations rather than the Rust lint gate.
 
