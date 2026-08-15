@@ -11,6 +11,7 @@
 use maps2_units::{
     Lonlat, MAX_LATITUDE_DEG, ScreenPoint, Zoom, lonlat_at_world_px, world_position_px,
 };
+use num_traits::ToPrimitive;
 
 /// Zoom below which the world is fully a globe.
 pub const GLOBE_FULL_BELOW: f64 = 3.5;
@@ -163,9 +164,13 @@ fn clamp_zoom(zoom: f64) -> Zoom {
 pub fn project(point: Lonlat, camera: &Camera) -> ScreenPoint {
     let (x, y) = rotate(unrotated_offset(point, camera), camera.bearing_deg);
     ScreenPoint {
-        x: x as f32,
-        y: y as f32,
+        x: screen_component(x),
+        y: screen_component(y),
     }
+}
+
+fn screen_component(value: f64) -> f32 {
+    value.to_f32().unwrap_or_else(|| if value.is_sign_negative() { f32::MIN } else { f32::MAX })
 }
 
 /// The projection before the bearing turns it, in full `f64`: the inverse
@@ -285,6 +290,10 @@ fn unrotate(offset: (f64, f64), bearing_deg: f64) -> (f64, f64) {
 mod tests {
     use super::*;
 
+    fn assert_close(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < f64::EPSILON, "{actual} != {expected}");
+    }
+
     const LONDON: Lonlat = Lonlat { lon: -0.3049, lat: 51.5149 };
 
     fn camera(lon: f64, lat: f64, zoom: f64) -> Camera {
@@ -302,10 +311,10 @@ mod tests {
 
     #[test]
     fn globeness_fades_between_the_stated_zooms() {
-        assert_eq!(Globeness::at(Zoom::new(2.0)).value(), 1.0);
-        assert_eq!(Globeness::at(Zoom::new(GLOBE_FULL_BELOW)).value(), 1.0);
-        assert_eq!(Globeness::at(Zoom::new(GLOBE_GONE_ABOVE)).value(), 0.0);
-        assert_eq!(Globeness::at(Zoom::new(8.0)).value(), 0.0);
+        assert_close(Globeness::at(Zoom::new(2.0)).value(), 1.0);
+        assert_close(Globeness::at(Zoom::new(GLOBE_FULL_BELOW)).value(), 1.0);
+        assert_close(Globeness::at(Zoom::new(GLOBE_GONE_ABOVE)).value(), 0.0);
+        assert_close(Globeness::at(Zoom::new(8.0)).value(), 0.0);
         let mid = Globeness::at(Zoom::new(4.0)).value();
         assert!((mid - 0.5).abs() < 1e-9, "midpoint was {mid}");
         let a = Globeness::at(Zoom::new(3.8)).value();

@@ -276,6 +276,7 @@ name = "maps2-camera"
 version = "0.1.0-alpha"
 dependencies = [
  "maps2-units",
+ "num-traits",
 ]
 
 [[package]]
