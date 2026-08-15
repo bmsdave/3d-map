@@ -16,6 +16,7 @@
 use maps2_style::{Class, FLAG_BRIDGE, FLAG_TUNNEL};
 use maps2_tile::{FeatureDraft, TileBuilder};
 use maps2_units::{locate, to_lonlat, Lonlat, TileCoord, TileId, TilePoint};
+use num_traits::ToPrimitive;
 
 use crate::{rect_polygon, EALING};
 
@@ -48,6 +49,10 @@ pub fn roads_tiles() -> Vec<(TileId, Vec<u8>)> {
 }
 
 #[must_use]
+///
+/// # Panics
+///
+/// Panics only if this bounded synthetic fixture cannot fit MT2.
 pub fn roads_tile_bytes() -> Vec<u8> {
     let mut builder = TileBuilder::new(roads_tile());
     builder.push(Class::Land.code(), rect_polygon(1, (0, 0, 65535, 65535)));
@@ -101,10 +106,11 @@ fn y_junction() -> Vec<(Class, FeatureDraft)> {
 fn roundabout() -> (Class, FeatureDraft) {
     let mut points: Vec<(u16, u16)> = (0..RING_SIDES)
         .map(|i| {
-            let angle = std::f64::consts::TAU * (i as f64) / (RING_SIDES as f64);
+            let angle = std::f64::consts::TAU * i.to_f64().unwrap_or_default()
+                / RING_SIDES.to_f64().unwrap_or(1.0);
             (
-                (52000.0 + 8000.0 * angle.cos()).round() as u16,
-                (16000.0 + 8000.0 * angle.sin()).round() as u16,
+                (52000.0 + 8000.0 * angle.cos()).round().to_u16().unwrap_or(u16::MAX),
+                (16000.0 + 8000.0 * angle.sin()).round().to_u16().unwrap_or(u16::MAX),
             )
         })
         .collect();

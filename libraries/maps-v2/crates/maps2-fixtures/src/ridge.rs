@@ -14,6 +14,7 @@
 use maps2_style::Class;
 use maps2_tile::{encode_height, TileBuilder, CLASS_HEIGHTS, HEIGHTS_BYTES, HEIGHTS_SIDE};
 use maps2_units::TileId;
+use num_traits::ToPrimitive;
 
 use crate::{rect_polygon, EALING};
 
@@ -51,7 +52,7 @@ pub fn height_metres(xn: f64, yn: f64) -> f32 {
     let base = continents * (1.0 - weight) + floor + ridge(xn, yn);
     // Detail rides on land only, so the sea stays a plane.
     let mask = (base / 300.0).clamp(0.0, 1.0);
-    (base + fbm(xn, yn, 64, 8, 300.0, 0.6) * mask).max(SEA_LEVEL_M) as f32
+    (base + fbm(xn, yn, 64, 8, 300.0, 0.6) * mask).max(SEA_LEVEL_M).to_f32().unwrap_or(f32::MAX)
 }
 
 /// The broad swell the range stands on: how much of the world it owns
@@ -107,10 +108,10 @@ fn fbm(xn: f64, yn: f64, first_freq: i64, octaves: u32, amplitude: f64, gain: f6
 /// Value noise on an integer lattice, periodic in x so the date line is
 /// not a cliff on the globe.
 fn value_noise(xn: f64, yn: f64, freq: i64) -> f64 {
-    let (fx, fy) = (xn * freq as f64, yn * freq as f64);
+    let (fx, fy) = (xn * freq.to_f64().unwrap_or_default(), yn * freq.to_f64().unwrap_or_default());
     let (ix, iy) = (fx.floor(), fy.floor());
     let (tx, ty) = (smooth(fx - ix), smooth(fy - iy));
-    let (ix, iy) = (ix as i64, iy as i64);
+    let (ix, iy) = (ix.to_i64().unwrap_or_default(), iy.to_i64().unwrap_or_default());
     let at = |dx: i64, dy: i64| lattice((ix + dx).rem_euclid(freq), iy + dy);
     let top = at(0, 0) + (at(1, 0) - at(0, 0)) * tx;
     let bottom = at(0, 1) + (at(1, 1) - at(0, 1)) * tx;
@@ -123,13 +124,13 @@ fn smooth(t: f64) -> f64 {
 
 /// A deterministic value in `0..1` at a lattice point.
 fn lattice(ix: i64, iy: i64) -> f64 {
-    let mut h = (ix as u64)
+    let mut h = ix.cast_unsigned()
         .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-        ^ (iy as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+        ^ iy.cast_unsigned().wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
     h ^= h >> 29;
     h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     h ^= h >> 32;
-    (h >> 11) as f64 / (1_u64 << 53) as f64
+    (h >> 11).to_f64().unwrap_or_default() / (1_u64 << 53).to_f64().unwrap_or(1.0)
 }
 
 /// The heights section of one tile: samples on the inclusive `0..=255`
@@ -138,12 +139,12 @@ fn lattice(ix: i64, iy: i64) -> f64 {
 #[must_use]
 pub fn heights_raster(id: TileId) -> Vec<u8> {
     let n = f64::from(1_u32 << id.z);
-    let last = (HEIGHTS_SIDE - 1) as f64;
+    let last = (HEIGHTS_SIDE - 1).to_f64().unwrap_or(1.0);
     let mut out = Vec::with_capacity(HEIGHTS_BYTES);
     for j in 0..HEIGHTS_SIDE {
-        let yn = (f64::from(id.y) + j as f64 / last) / n;
+        let yn = (f64::from(id.y) + j.to_f64().unwrap_or_default() / last) / n;
         for i in 0..HEIGHTS_SIDE {
-            let xn = (f64::from(id.x) + i as f64 / last) / n;
+            let xn = (f64::from(id.x) + i.to_f64().unwrap_or_default() / last) / n;
             out.extend_from_slice(&encode_height(height_metres(xn, yn)).to_le_bytes());
         }
     }
@@ -159,8 +160,8 @@ pub fn ridge_coverage() -> Vec<TileId> {
         for dx in -DETAIL_HALF_SPAN..=DETAIL_HALF_SPAN {
             out.push(TileId {
                 z: RIDGE_DETAIL_LEVEL,
-                x: (i64::from(centre.x) + dx) as u32,
-                y: (i64::from(centre.y) + dy) as u32,
+                x: u32::try_from(i64::from(centre.x) + dx).unwrap_or_default(),
+                y: u32::try_from(i64::from(centre.y) + dy).unwrap_or_default(),
             });
         }
     }
@@ -174,6 +175,10 @@ pub fn ridge_tiles() -> Vec<(TileId, Vec<u8>)> {
 
 /// One tile: ground under the whole square, and its heights.
 #[must_use]
+///
+/// # Panics
+///
+/// Panics only if this bounded synthetic fixture cannot fit MT2.
 pub fn ridge_tile_bytes(id: TileId) -> Vec<u8> {
     let mut builder = TileBuilder::new(id);
     builder.push(Class::Land.code(), rect_polygon(1, (0, 0, 65535, 65535)));
