@@ -350,10 +350,18 @@ fn push_buildings(builder: &mut TileBuilder, level: u8, window: WorldRect) {
                 continue;
             }
             let span = (quantise(x0), quantise(y0), quantise(x1), quantise(y1));
-            builder.push(Class::Building.code(), rect_polygon(id, span));
+            builder.push_building(
+                Class::Building.code(),
+                rect_polygon(id, span),
+                maps2_tile::BuildingDraft::flat(0, fixture_building_height_dm(i, j)),
+            );
             id += 1;
         }
     }
+}
+
+fn fixture_building_height_dm(x: u32, y: u32) -> u16 {
+    90 + u16::try_from((x * 17 + y * 11) % 8).unwrap_or_default() * 30
 }
 
 fn overlaps(a: WorldRect, b: WorldRect) -> bool {
@@ -372,8 +380,8 @@ mod tests {
     /// The package must be bit-for-bit stable: any format or content
     /// change shows up as a hash change and is made knowingly.
     ///
-    /// Changed for MT2 v2, which adds the fixed building payload.
-    const GOLDEN_FNV1A: u64 = 0x0EA8_F980_3326_017D;
+    /// Changed when the micro fixture gained deterministic building heights.
+    const GOLDEN_FNV1A: u64 = 0xB836_99B5_93C0_B551;
 
     fn fnv1a(bytes: &[u8], mut hash: u64) -> u64 {
         for byte in bytes {
@@ -416,6 +424,26 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn micro_buildings_carry_a_nonzero_top_height() {
+        let centre = locate(EALING, 16).tile;
+        let (_, bytes) = ealing_tiles()
+            .into_iter()
+            .find(|(id, _)| *id == centre)
+            .expect("centre tile");
+        let tile = TileView::parse(&bytes).expect("fixture parses");
+        let building = tile
+            .section(Class::Building.code())
+            .expect("building section")
+            .features()
+            .next()
+            .expect("building")
+            .expect("feature")
+            .building;
+
+        assert!(building.is_some_and(|data| data.top_height_dm > 0));
     }
 
     #[test]
