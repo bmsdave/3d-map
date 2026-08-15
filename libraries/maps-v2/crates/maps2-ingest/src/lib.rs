@@ -9,8 +9,8 @@ use std::{
 };
 
 use maps2_style::Class;
-use maps2_tile::{FeatureDraft, TileBuilder, TileError};
-use maps2_units::{Lonlat, TileId, locate};
+use maps2_tile::{FeatureDraft, TileBuilder, TileError, HEIGHTS_BYTES, HEIGHTS_SIDE, encode_height};
+use maps2_units::{Lonlat, TileCoord, TileId, TilePoint, locate, to_lonlat};
 use num_traits::ToPrimitive;
 use osmpbfreader::{NodeId, OsmObj, OsmPbfReader};
 use serde::Deserialize;
@@ -513,6 +513,24 @@ fn cell_index(offset: f64, cells: u32) -> usize {
     usize::try_from(index).unwrap_or_default()
 }
 
+/// Samples a DEM on the edge-aligned grid defined by an MT2 height section.
+#[must_use]
+pub fn height_raster_for_tile(grid: &DemGrid, tile: TileId) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(HEIGHTS_BYTES);
+    for y in 0..HEIGHTS_SIDE {
+        for x in 0..HEIGHTS_SIDE {
+            let point = to_lonlat(TilePoint { tile, coord: TileCoord(raster_coord(x), raster_coord(y)) });
+            bytes.extend_from_slice(&encode_height(grid.sample(point.lon, point.lat)).to_le_bytes());
+        }
+    }
+    bytes
+}
+
+fn raster_coord(index: usize) -> u16 {
+    let value = index * usize::from(u16::MAX) / (HEIGHTS_SIDE - 1);
+    u16::try_from(value).unwrap_or_default()
+}
+
 fn count_class(summary: &mut OsmSummary, class: Option<Class>) {
     match class {
         Some(Class::RoadMotorway | Class::RoadTrunk | Class::RoadPrimary | Class::RoadSecondary
@@ -595,7 +613,7 @@ fn build_tile(id: TileId, features: &[&PreparedFeature]) -> Result<(TileId, Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use maps2_tile::TileView;
+    use maps2_tile::{HeightsRaster, TileView};
 
     const HELLO_WORLD_SHA256: &str = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
 
@@ -722,5 +740,15 @@ attribution = "© OpenStreetMap contributors""#,
         std::fs::write(file.path(), b"not a TIFF").expect("write corrupt bytes");
 
         assert!(load_copernicus_dem(file.path(), -1.0, 51.0).is_err());
+    }
+
+    #[test]
+    fn terrain_adapter_writes_a_complete_mt2_height_raster() {
+        let grid = DemGrid::new(-180.0, -85.0, 1, 1, vec![17.0]).expect("grid");
+        let bytes = height_raster_for_tile(&grid, TileId { z: 0, x: 0, y: 0 });
+        let raster = HeightsRaster::parse(&bytes).expect("height raster");
+
+        assert!((raster.metres(0, 0) - 17.0).abs() < f32::EPSILON);
+        assert!((raster.metres(255, 255) - 17.0).abs() < f32::EPSILON);
     }
 }
