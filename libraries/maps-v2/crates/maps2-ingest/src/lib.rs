@@ -13,7 +13,7 @@ use maps2_tile::{
     CLASS_HEIGHTS, BuildingDraft, FeatureDraft, TileBuilder, TileError, HEIGHTS_BYTES, HEIGHTS_SIDE,
     encode_height,
 };
-use maps2_units::{Lonlat, TileCoord, TileId, TilePoint, locate, to_lonlat};
+use maps2_units::{Lonlat, TileCoord, TileId, TilePoint, Zoom, locate, to_lonlat, world_position_px};
 use num_traits::ToPrimitive;
 use osmpbfreader::{NodeId, OsmObj, OsmPbfReader};
 use serde::Deserialize;
@@ -396,13 +396,13 @@ fn prepare_ways(ways: &[RawWay], nodes: &HashMap<NodeId, Lonlat>, level: u8) -> 
         .map(|features| features.into_iter().flatten().collect())
 }
 
-fn prepare_way(way: &RawWay, nodes: &HashMap<NodeId, Lonlat>, level: u8) -> Result<Option<PreparedFeature>, OsmError> {
+fn prepare_way(way: &RawWay, nodes: &HashMap<NodeId, Lonlat>, level: u8) -> Result<Vec<PreparedFeature>, OsmError> {
     let vertices = way
         .nodes
         .iter()
         .map(|node| nodes.get(node).copied().ok_or(OsmError::MissingNode { way_id: way.id, node_id: node.0 }))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(prepare_feature(way.id, &tag_refs(&way.tags), &vertices, level))
+    Ok(prepare_features(way.id, &tag_refs(&way.tags), &vertices, level))
 }
 
 fn owned_tags(tags: &osmpbfreader::Tags) -> Vec<(String, String)> {
@@ -564,7 +564,7 @@ fn count_class(summary: &mut OsmSummary, class: Option<Class>) {
 /// A classified OSM feature expressed on the MT2 coordinate grid.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreparedFeature {
-    /// The single tile that owns all feature vertices.
+    /// The tile containing this clipped feature part.
     pub tile: TileId,
     /// The MT2 section class.
     pub class: Class,
@@ -577,8 +577,7 @@ pub struct PreparedFeature {
 /// Converts a classified OSM geometry that fits one tile to its MT2 form.
 ///
 /// Returns `None` for unsupported tags, empty geometry, or geometry that
-/// crosses a tile boundary. Boundary clipping is deliberately performed by
-/// the package tiler, not by this coordinate adapter.
+/// crosses a tile boundary. Use [`prepare_features`] for package ingestion.
 #[must_use]
 pub fn prepare_feature(
     id: u32,
@@ -603,7 +602,200 @@ pub fn prepare_feature(
     Some(PreparedFeature { tile, class, feature, building_height })
 }
 
-/// Builds deterministic MT2 tile bytes from single-tile prepared features.
+/// Clips a classified OSM way into all MT2 tiles it covers.
+///
+/// Areas are clipped as closed polygons and roads as line segments. Output
+/// order is stable by tile address and then source segment order.
+#[must_use]
+pub fn prepare_features(
+    id: u32,
+    tags: &[(&str, &str)],
+    vertices: &[Lonlat],
+    level: u8,
+) -> Vec<PreparedFeature> {
+    let Some(class) = classify_osm_tags(tags) else {
+        return Vec::new();
+    };
+    let points = grid_points(vertices, level);
+    let height = (class == Class::Building).then(|| building_height_m(tags));
+    let name = tag(tags, "name").unwrap_or_default();
+    let tiles = covered_tiles(&points, level);
+    if is_area(class) {
+        tiles.into_iter().filter_map(|tile| {
+            prepared_part(id, class, tile, clip_polygon(&points, tile), height, name)
+        }).collect()
+    } else {
+        tiles.into_iter().flat_map(|tile| {
+            clipped_line_parts(&points, tile).into_iter().filter_map(move |part| {
+                prepared_part(id, class, tile, part, height, name)
+            })
+        }).collect()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct GridPoint {
+    x: f64,
+    y: f64,
+}
+
+fn grid_points(vertices: &[Lonlat], level: u8) -> Vec<GridPoint> {
+    let zoom = Zoom::new(f64::from(level));
+    vertices.iter().map(|point| {
+        let (x, y) = world_position_px(*point, zoom);
+        GridPoint { x: x / 256.0, y: y / 256.0 }
+    }).collect()
+}
+
+fn is_area(class: Class) -> bool {
+    matches!(class, Class::Building | Class::Water | Class::Park)
+}
+
+fn covered_tiles(points: &[GridPoint], level: u8) -> Vec<TileId> {
+    let max = (1_u32 << level).saturating_sub(1);
+    let Some(first) = points.first() else {
+        return Vec::new();
+    };
+    let (mut min_x, mut max_x, mut min_y, mut max_y) = (first.x, first.x, first.y, first.y);
+    for point in points {
+        min_x = min_x.min(point.x);
+        max_x = max_x.max(point.x);
+        min_y = min_y.min(point.y);
+        max_y = max_y.max(point.y);
+    }
+    let xs = tile_axis(min_x, max_x, max);
+    let ys = tile_axis(min_y, max_y, max);
+    ys.flat_map(|y| xs.clone().map(move |x| TileId { z: level, x, y })).collect()
+}
+
+fn tile_axis(min: f64, max: f64, limit: u32) -> std::ops::RangeInclusive<u32> {
+    let start = bounded_tile_index(min, limit);
+    let end = bounded_tile_index(max, limit);
+    start..=end
+}
+
+fn bounded_tile_index(value: f64, limit: u32) -> u32 {
+    value.floor().clamp(0.0, f64::from(limit)).to_u32().unwrap_or(limit)
+}
+
+fn clipped_line_parts(points: &[GridPoint], tile: TileId) -> Vec<Vec<GridPoint>> {
+    points.windows(2).fold(Vec::new(), |mut parts, pair| {
+        if let Some((start, end)) = clip_segment(pair[0], pair[1], tile) {
+            append_line_part(&mut parts, start, end);
+        }
+        parts
+    })
+}
+
+fn append_line_part(parts: &mut Vec<Vec<GridPoint>>, start: GridPoint, end: GridPoint) {
+    if same_point(start, end) {
+        return;
+    }
+    if let Some(part) = parts.last_mut().filter(|part| part.last().is_some_and(|last| same_point(*last, start))) {
+        part.push(end);
+    } else {
+        parts.push(vec![start, end]);
+    }
+}
+
+fn same_point(a: GridPoint, b: GridPoint) -> bool {
+    (a.x - b.x).abs() < f64::EPSILON && (a.y - b.y).abs() < f64::EPSILON
+}
+
+fn clip_segment(a: GridPoint, b: GridPoint, tile: TileId) -> Option<(GridPoint, GridPoint)> {
+    let (mut start, mut end) = (0.0, 1.0);
+    let dx = b.x - a.x;
+    let dy = b.y - a.y;
+    let x = f64::from(tile.x);
+    let y = f64::from(tile.y);
+    for (p, q) in [(-dx, a.x - x), (dx, x + 1.0 - a.x), (-dy, a.y - y), (dy, y + 1.0 - a.y)] {
+        if !clip_interval(p, q, &mut start, &mut end) {
+            return None;
+        }
+    }
+    Some((point_on(a, dx, dy, start), point_on(a, dx, dy, end)))
+}
+
+fn clip_interval(p: f64, q: f64, start: &mut f64, end: &mut f64) -> bool {
+    if p.abs() < f64::EPSILON {
+        return q >= 0.0;
+    }
+    let ratio = q / p;
+    if p < 0.0 {
+        if ratio > *end { return false; }
+        *start = start.max(ratio);
+    } else {
+        if ratio < *start { return false; }
+        *end = end.min(ratio);
+    }
+    true
+}
+
+fn point_on(a: GridPoint, dx: f64, dy: f64, ratio: f64) -> GridPoint {
+    GridPoint { x: a.x + dx * ratio, y: a.y + dy * ratio }
+}
+
+fn clip_polygon(points: &[GridPoint], tile: TileId) -> Vec<GridPoint> {
+    let x = f64::from(tile.x);
+    let y = f64::from(tile.y);
+    let left = clip_edge(points, |point| point.x >= x, |a, b| vertical_intersection(a, b, x));
+    let right = clip_edge(&left, |point| point.x <= x + 1.0, |a, b| vertical_intersection(a, b, x + 1.0));
+    let top = clip_edge(&right, |point| point.y >= y, |a, b| horizontal_intersection(a, b, y));
+    clip_edge(&top, |point| point.y <= y + 1.0, |a, b| horizontal_intersection(a, b, y + 1.0))
+}
+
+fn clip_edge(
+    points: &[GridPoint],
+    inside: impl Fn(GridPoint) -> bool,
+    intersection: impl Fn(GridPoint, GridPoint) -> GridPoint,
+) -> Vec<GridPoint> {
+    let Some(&last) = points.last() else { return Vec::new(); };
+    points.iter().copied().fold((Vec::new(), last), |(mut output, previous), current| {
+        match (inside(previous), inside(current)) {
+            (true, true) => output.push(current),
+            (true, false) => output.push(intersection(previous, current)),
+            (false, true) => { output.push(intersection(previous, current)); output.push(current); }
+            (false, false) => {}
+        }
+        (output, current)
+    }).0
+}
+
+fn vertical_intersection(a: GridPoint, b: GridPoint, x: f64) -> GridPoint {
+    point_on(a, b.x - a.x, b.y - a.y, (x - a.x) / (b.x - a.x))
+}
+
+fn horizontal_intersection(a: GridPoint, b: GridPoint, y: f64) -> GridPoint {
+    point_on(a, b.x - a.x, b.y - a.y, (y - a.y) / (b.y - a.y))
+}
+
+fn prepared_part(
+    id: u32, class: Class, tile: TileId, points: Vec<GridPoint>, building_height: Option<BuildingHeight>, name: &str,
+) -> Option<PreparedFeature> {
+    let mut vertices = points.into_iter().map(|point| tile_coord(point, tile)).collect::<Vec<_>>();
+    vertices.dedup();
+    if is_area(class) && vertices.first() != vertices.last() {
+        vertices.push(*vertices.first()?);
+    }
+    let required = if is_area(class) { 4 } else { 2 };
+    (vertices.len() >= required).then(|| PreparedFeature {
+        tile, class, building_height,
+        feature: FeatureDraft { id, flags: 0, rank: 0, name: name.to_string(), vertices },
+    })
+}
+
+fn tile_coord(point: GridPoint, tile: TileId) -> TileCoord {
+    let scale = f64::from(u16::MAX);
+    let x = tile_axis_coord(point.x - f64::from(tile.x), scale);
+    let y = tile_axis_coord(point.y - f64::from(tile.y), scale);
+    TileCoord(x, y)
+}
+
+fn tile_axis_coord(value: f64, scale: f64) -> u16 {
+    (value * scale).round().clamp(0.0, scale).to_u16().unwrap_or(u16::MAX)
+}
+
+/// Builds deterministic MT2 tile bytes from prepared feature parts.
 ///
 /// # Errors
 ///
@@ -771,6 +963,47 @@ attribution = "© OpenStreetMap contributors""#,
         assert_eq!(feature.class, Class::Building);
         assert_eq!(feature.feature.vertices.len(), vertices.len());
         assert_eq!(feature.building_height, Some(BuildingHeight::Explicit(42.0)));
+    }
+
+    #[test]
+    fn geometry_adapter_clips_a_road_across_its_tile_boundary() {
+        let tile = locate(Lonlat { lon: -0.1278, lat: 51.5074 }, 16).tile;
+        let west = to_lonlat(TilePoint { tile, coord: TileCoord(10, u16::MAX / 2) });
+        let middle = to_lonlat(TilePoint { tile, coord: TileCoord(u16::MAX / 2, u16::MAX / 2) });
+        let east_tile = TileId { z: tile.z, x: tile.x + 1, y: tile.y };
+        let east = to_lonlat(TilePoint { tile: east_tile, coord: TileCoord(u16::MAX - 10, u16::MAX / 2) });
+
+        let features = prepare_features(
+            17,
+            &[("highway", "primary"), ("name", "Boundary Road")],
+            &[west, middle, east],
+            16,
+        );
+
+        assert_eq!(features.len(), 2);
+        assert_eq!(features[0].tile, tile);
+        assert_eq!(features[1].tile, east_tile);
+        assert_eq!(features[0].feature.vertices.len(), 3);
+        assert_eq!(features[1].feature.vertices.len(), 2);
+        assert!(features.iter().all(|feature| feature.feature.name == "Boundary Road"));
+    }
+
+    #[test]
+    fn geometry_adapter_clips_a_building_across_its_tile_boundary() {
+        let tile = locate(Lonlat { lon: -0.1278, lat: 51.5074 }, 16).tile;
+        let east = TileId { z: tile.z, x: tile.x + 1, y: tile.y };
+        let vertices = [
+            to_lonlat(TilePoint { tile, coord: TileCoord(u16::MAX - 10, 10) }),
+            to_lonlat(TilePoint { tile: east, coord: TileCoord(10, 10) }),
+            to_lonlat(TilePoint { tile: east, coord: TileCoord(10, u16::MAX - 10) }),
+            to_lonlat(TilePoint { tile, coord: TileCoord(u16::MAX - 10, u16::MAX - 10) }),
+        ];
+
+        let features = prepare_features(18, &[("building", "yes"), ("height", "12")], &vertices, 16);
+
+        assert_eq!(features.len(), 2);
+        assert!(features.iter().all(|feature| feature.feature.vertices.first() == feature.feature.vertices.last()));
+        assert!(features.iter().all(|feature| feature.building_height == Some(BuildingHeight::Explicit(12.0))));
     }
 
     #[test]

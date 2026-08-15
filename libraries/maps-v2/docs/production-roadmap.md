@@ -19,6 +19,21 @@ pipeline then produces the global package.
 - Derived packages, downloaded source data, and pipeline caches are ignored by
   Git. Small synthetic fixtures remain the only committed map content.
 
+## Current position (2026-08-15)
+
+The project has the beginnings of the London path: pinned Greater London OSM
+and two Copernicus DEM descriptors, checksum validation, deterministic MT2 v2
+encoding, terrain rasters, OSM building-height fallbacks, and deterministic
+tile-border clipping. A local z16 London rebuild currently emits 2,007,650
+feature parts in 11,821 terrain-bearing tiles from those validated inputs.
+
+This is **not** a browser-ready London map or a production release. The lab
+still uses committed synthetic fixtures; there is no real-data package loader,
+generalisation pipeline, global source set, attribution UI, release asset, or
+production performance and resilience evidence. Strict workspace Clippy also
+remains an explicit release blocker until the inherited lint backlog is fixed
+without suppressions.
+
 ## Milestones
 
 1. **Reliable SDK baseline.** Make strict workspace Clippy and the existing
@@ -50,6 +65,16 @@ pipeline then produces the global package.
    publish checksums and source notices. CI tests fixtures only; a scheduled
    release workflow builds data externally and attaches packages as release
    assets, never commits them.
+
+## Delivery sequence and exit criteria
+
+| Phase | Deliverable | Exit criterion |
+| --- | --- | --- |
+| London ingest hardening | Geometry repair, multipolygon/relation support, zoom generalisation, antimeridian tests, and bounded resource use | Two clean rebuilds have identical manifest and tile hashes; border and topology tests pass. |
+| London visual beta | A package loader, source notices, visible attribution, real roads/buildings/terrain/labels, and intentional browser goldens | Supported-browser acceptance covers loading, error/retry, context loss, labels, tilt, and a p95 frame time of ≤10 ms. |
+| London release operations | Signed package manifest, size/memory budgets, release checklist, rollback procedure, and ownership | An independent clean environment rebuilds and validates the candidate package without proprietary inputs. |
+| Global data build | Region-sharded OSM/DEM/GEBCO acquisition, low-zoom globe, regional high-zoom packages, and border stitching | Complete shard inventory, deterministic rerun, aggregate attribution, and global z0–z5 coverage validation. |
+| Production SDK | Stable compatibility policy, versioned package loading/migration, accessibility, observability, security response and support matrix | Performance, recovery, upgrade, security, and rollback exercises are signed off by the owner. |
 
 ## Quality gates
 
