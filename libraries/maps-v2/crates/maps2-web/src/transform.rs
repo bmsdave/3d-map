@@ -36,6 +36,7 @@ pub fn place_tile(id: TileId, camera: &Camera, viewport_w: f64, viewport_h: f64)
 mod tests {
     use super::*;
     use maps2_units::{locate, Lonlat, Zoom};
+    use num_traits::ToPrimitive;
 
     const EALING: Lonlat = Lonlat { lon: -0.3049, lat: 51.5149 };
 
@@ -43,7 +44,7 @@ mod tests {
     fn the_camera_centre_lands_in_the_middle_of_the_viewport() {
         for zoom in [8.0, 14.37, 16.0] {
             let camera = Camera::new(EALING, Zoom::new(zoom));
-            let level = zoom.floor() as u8;
+            let level = zoom.floor().to_u8().expect("zoom level fits u8");
             let point = locate(EALING, level);
             let placement = place_tile(point.tile, &camera, 800.0, 600.0);
             let x = placement.translate_x + f64::from(point.coord.0) * placement.scale;

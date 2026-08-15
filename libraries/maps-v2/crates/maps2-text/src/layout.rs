@@ -95,7 +95,7 @@ mod tests {
         // Every quad is a whole cell, so it overhangs the pen span by
         // the field's padding; nothing may start beyond the pen.
         assert!(quads.iter().all(|q| q.x0 < pen_end), "a quad started past the pen");
-        let overhang = 16.0 / EM_PX * ATLAS_CELL_PX as f32;
+        let overhang = 16.0 / EM_PX * ATLAS_CELL_PX.to_f32().expect("cell size fits f32");
         assert!(quads.iter().all(|q| q.x1 <= pen_end + overhang));
     }
 
@@ -107,7 +107,7 @@ mod tests {
         let b = atlas.glyph('b').expect("b").cell;
         assert_eq!((quads[0].u0, quads[0].v0), (atlas.cell_uv(a).0, atlas.cell_uv(a).1));
         assert_eq!((quads[1].u0, quads[1].v0), (atlas.cell_uv(b).0, atlas.cell_uv(b).1));
-        assert_ne!(quads[0].u0, quads[1].u0);
+        assert!((quads[0].u0 - quads[1].u0).abs() > f32::EPSILON);
     }
 
     #[test]
@@ -118,6 +118,6 @@ mod tests {
         let cyrillic = layout_line(&atlas, "Илинг", 0.0, 0.0, 16.0);
         assert!(cyrillic.is_empty(), "cyrillic silently rendered as something");
         let (width, _) = measure_line(&atlas, "Илинг", 16.0);
-        assert_eq!(width, 0.0, "a dropped glyph must not advance the pen");
+        assert!(width.abs() < f32::EPSILON, "a dropped glyph must not advance the pen");
     }
 }

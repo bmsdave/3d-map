@@ -141,7 +141,7 @@ mod tests {
     fn flat_ground_is_shaded_exactly_as_itself() {
         // The whole point of a relative shade: where there is no slope
         // the quiet canvas keeps its own colour, untouched.
-        assert_eq!(relative_shade(0.0, 0.0), FLAT);
+        assert_close(relative_shade(0.0, 0.0), FLAT);
     }
 
     #[test]
@@ -162,7 +162,7 @@ mod tests {
         assert!(facing_away < FLAT, "south-east slope not shaded: {facing_away}");
         // A slope steep enough turns its back on the light entirely,
         // and the shade bottoms out instead of going negative.
-        assert_eq!(relative_shade(-40.0, 40.0), 0.0);
+        assert_close(relative_shade(-40.0, 40.0), 0.0);
     }
 
     #[test]
@@ -171,7 +171,7 @@ mod tests {
         let loud = relative_shade(0.02 * 20.0, -0.02 * 20.0);
         assert!(loud > gentle && gentle > FLAT, "{gentle} then {loud}");
         // Flat ground stays flat however loud the style is.
-        assert_eq!(relative_shade(0.0 * 30.0, 0.0), FLAT);
+        assert_close(relative_shade(0.0 * 30.0, 0.0), FLAT);
     }
 
     #[test]
@@ -179,16 +179,16 @@ mod tests {
         // On the sheet the style's expressiveness governs; on the globe
         // the shading must match the exaggeration the vertices were
         // displaced by, or the light would describe a different planet.
-        assert_eq!(shading_z_factor(0.0, 40.0, 0.0), 1.0);
-        assert_eq!(shading_z_factor(1.0, 40.0, 1.0), 40.0);
+        assert_close(shading_z_factor(0.0, 40.0, 0.0), 1.0);
+        assert_close(shading_z_factor(1.0, 40.0, 1.0), 40.0);
         let blend = shading_z_factor(0.0, 41.0, 0.5);
         assert!((blend - 21.0).abs() < 1e-6, "blend was {blend}");
     }
 
     #[test]
     fn the_sphere_swells_with_height_and_only_while_it_is_a_sphere() {
-        assert_eq!(relief_radius_scale(3000.0, 40.0, 0.0), 1.0, "flat sheet must not swell");
-        assert_eq!(relief_radius_scale(0.0, 40.0, 1.0), 1.0, "sea level is the sphere");
+        assert_close(relief_radius_scale(3000.0, 40.0, 0.0), 1.0);
+        assert_close(relief_radius_scale(0.0, 40.0, 1.0), 1.0);
         let everest = relief_radius_scale(8848.0, 40.0, 1.0);
         assert!(everest > 1.05 && everest < 1.06, "Everest scaled to {everest}");
         assert!(relief_radius_scale(3000.0, 80.0, 1.0) > relief_radius_scale(3000.0, 40.0, 1.0));
@@ -205,8 +205,8 @@ mod tests {
         assert_eq!(mesh.vertices[0], FillVertex { x: 0, y: 0 });
         assert_eq!(mesh.vertices[24], FillVertex { x: 65535, y: 65535 });
         // Exact edges are what makes two tiles meet without a crack.
-        assert!(mesh.vertices.iter().filter(|v| v.x == 0).count() == 5);
-        assert!(mesh.vertices.iter().filter(|v| v.y == 65535).count() == 5);
+        assert_eq!(mesh.vertices.iter().filter(|v| v.x == 0).count(), 5);
+        assert_eq!(mesh.vertices.iter().filter(|v| v.y == 65535).count(), 5);
         assert!(mesh.indices.iter().all(|i| (*i as usize) < mesh.vertices.len()));
         for triangle in mesh.indices.chunks(3) {
             assert!(triangle[0] != triangle[1] && triangle[1] != triangle[2]);
@@ -248,13 +248,17 @@ mod tests {
         let mut best_height = f32::MIN;
         for y in 0..256 {
             for x in 0..256 {
-                let h = raster.metres(x, y);
-                if h > best_height {
-                    best_height = h;
-                    best = (x, y);
-                }
+                (best, best_height) = higher_peak(best, best_height, (x, y), raster.metres(x, y));
             }
         }
         best
+    }
+
+    fn higher_peak(best: (i32, i32), best_height: f32, candidate: (i32, i32), height: f32) -> ((i32, i32), f32) {
+        if height > best_height { (candidate, height) } else { (best, best_height) }
+    }
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() < f32::EPSILON, "{actual} != {expected}");
     }
 }

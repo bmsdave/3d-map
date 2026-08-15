@@ -15,6 +15,7 @@ maps2-tile = { path = "../maps2-tile" }
 maps2-style = { path = "../maps2-style" }
 maps2-render = { path = "../maps2-render" }
 maps2-text = { path = "../maps2-text" }
+num-traits = "0.2"
 
 [dev-dependencies]
 maps2-fixtures = { path = "../maps2-fixtures" }

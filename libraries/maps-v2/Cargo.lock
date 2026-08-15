@@ -390,6 +390,7 @@ dependencies = [
  "maps2-text",
  "maps2-tile",
  "maps2-units",
+ "num-traits",
  "wasm-bindgen",
  "web-sys",
 ]

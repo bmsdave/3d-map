@@ -185,9 +185,9 @@ mod tests {
         let cell = atlas.glyph(ch).expect("charset glyph").cell;
         let col = cell % ATLAS_COLUMNS;
         let row = cell / ATLAS_COLUMNS;
-        let x = col * ATLAS_CELL_PX + EM_PX.mul_add(dx, CELL_ORIGIN_PX.0) as u32;
-        let y = row * ATLAS_CELL_PX + (CELL_ORIGIN_PX.1 - dy * EM_PX) as u32;
-        atlas.pixels[(y * atlas.width + x) as usize]
+        let x = col * ATLAS_CELL_PX + EM_PX.mul_add(dx, CELL_ORIGIN_PX.0).to_u32().expect("sample x fits u32");
+        let y = row * ATLAS_CELL_PX + (CELL_ORIGIN_PX.1 - dy * EM_PX).to_u32().expect("sample y fits u32");
+        atlas.pixels[(y * atlas.width + x).to_usize().expect("atlas index fits usize")]
     }
 
     #[test]
@@ -234,13 +234,14 @@ mod tests {
     fn cells_tile_the_texture_without_overlapping() {
         let atlas = Atlas::build();
         assert_eq!(atlas.width, ATLAS_COLUMNS * ATLAS_CELL_PX);
-        assert_eq!(atlas.pixels.len(), (atlas.width * atlas.height) as usize);
+        assert_eq!(atlas.pixels.len(), (atlas.width * atlas.height).to_usize().expect("atlas fits usize"));
         for glyph in atlas.glyphs() {
             let (u0, v0, u1, v1) = atlas.cell_uv(glyph.cell);
             assert!((0.0..=1.0).contains(&u0) && (0.0..=1.0).contains(&u1));
             assert!((0.0..=1.0).contains(&v0) && (0.0..=1.0).contains(&v1));
-            let width = (u1 - u0) * atlas.width as f32;
-            assert!((width - ATLAS_CELL_PX as f32).abs() < 1e-3, "cell width {width}");
+            let width = (u1 - u0) * atlas.width.to_f32().expect("atlas width fits f32");
+            let side = ATLAS_CELL_PX.to_f32().expect("cell size fits f32");
+            assert!((width - side).abs() < 1e-3, "cell width {width}");
         }
     }
 
@@ -272,7 +273,7 @@ mod tests {
         };
         for glyph in atlas.glyphs() {
             for (x, y) in border(glyph.cell) {
-                let value = atlas.pixels[(y * atlas.width + x) as usize];
+                let value = atlas.pixels[(y * atlas.width + x).to_usize().expect("atlas index fits usize")];
                 assert!(value < 128, "{:?} inked its cell border: {value}", glyph.ch);
             }
         }

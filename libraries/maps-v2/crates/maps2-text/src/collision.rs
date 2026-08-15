@@ -266,7 +266,6 @@ impl Grid {
 }
 
 #[cfg(test)]
-#[expect(clippy::float_cmp, reason = "areas here are exact sums of exact inputs")]
 mod tests {
     use super::*;
 
@@ -279,16 +278,16 @@ mod tests {
         let mut seed = 0x2545_F491_4F6C_DD1D_u64;
         for i in 0..count {
             seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
-            let a = ((seed >> 33) % 100_000) as f32 / 100_000.0;
+            let a = ((seed >> 33) % 100_000).to_f32().expect("random fraction fits f32") / 100_000.0;
             seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
-            let b = ((seed >> 33) % 100_000) as f32 / 100_000.0;
+            let b = ((seed >> 33) % 100_000).to_f32().expect("random fraction fits f32") / 100_000.0;
             out.push(Candidate {
                 id: i,
                 // Heavy tail: a few important ones, many unimportant.
-                rank: (i % 10) as u8,
+                rank: (i % 10).to_u8().expect("rank fits u8"),
                 text: format!("label {i}"),
                 anchor: (a * spread - (spread - VIEWPORT.0) / 2.0, b * spread - (spread - VIEWPORT.1) / 2.0),
-                size: (40.0 + (i % 7) as f32 * 12.0, 14.0),
+                size: (40.0 + (i % 7).to_f32().expect("size step fits f32") * 12.0, 14.0),
             });
         }
         out
@@ -331,7 +330,7 @@ mod tests {
         let straight = place(&candidates, VIEWPORT, 1.0);
         let backwards = place(&reversed, VIEWPORT, 1.0);
         assert_eq!(ids(&straight), ids(&backwards));
-        assert_eq!(straight.occupancy, backwards.occupancy);
+        assert!((straight.occupancy - backwards.occupancy).abs() < f32::EPSILON);
         assert_eq!(place(&candidates, VIEWPORT, 1.0), straight, "not reproducible");
     }
 
@@ -388,7 +387,7 @@ mod tests {
             let after = place(&shifted(&candidates, dx), VIEWPORT, 1.0);
             let now: std::collections::HashSet<u64> = ids(&after).into_iter().collect();
             let churn = baseline.symmetric_difference(&now).count();
-            let share = churn as f32 / baseline.len() as f32;
+            let share = churn.to_f32().expect("churn fits f32") / baseline.len().to_f32().expect("label count fits f32");
             assert!(share < 0.10, "{dx} px moved {share:.3} of the labels");
         }
     }
@@ -436,7 +435,7 @@ mod tests {
         let placement = place(&[far], VIEWPORT, 1.0);
         assert!(placement.placed.is_empty());
         assert_eq!(placement.rejected[0].reason, Rejection::OffScreen);
-        assert_eq!(placement.occupancy, 0.0);
+        assert!(placement.occupancy.abs() < f32::EPSILON);
     }
 
     #[test]

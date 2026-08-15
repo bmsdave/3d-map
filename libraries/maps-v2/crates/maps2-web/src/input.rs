@@ -10,6 +10,7 @@
 
 use maps2_camera::{Camera, CameraPatch, project, unproject};
 use maps2_units::{Lonlat, ScreenPoint};
+use num_traits::ToPrimitive;
 
 /// Pointer position in the canvas' own pixels, origin top-left.
 pub type Point = (f64, f64);
@@ -201,7 +202,7 @@ impl Input {
 /// `delta` away from the middle of the screen is now in the middle of it.
 #[must_use]
 pub fn pan_patch(camera: &Camera, delta: Point) -> CameraPatch {
-    let back = ScreenPoint { x: -delta.0 as f32, y: -delta.1 as f32 };
+    let back = ScreenPoint { x: screen_scalar(-delta.0), y: screen_scalar(-delta.1) };
     CameraPatch { centre: Some(unproject(back, camera)), ..CameraPatch::default() }
 }
 
@@ -259,7 +260,14 @@ pub fn wheel_zoom_step(delta_y: f64, pinch: bool) -> f64 {
 /// projects in.
 #[must_use]
 pub fn centre_offset(at: Point, view: Viewport) -> ScreenPoint {
-    ScreenPoint { x: (at.0 - view.0 / 2.0) as f32, y: (at.1 - view.1 / 2.0) as f32 }
+    ScreenPoint {
+        x: screen_scalar(at.0 - view.0 / 2.0),
+        y: screen_scalar(at.1 - view.1 / 2.0),
+    }
+}
+
+fn screen_scalar(value: f64) -> f32 {
+    value.to_f32().expect("gesture coordinates fit f32")
 }
 
 fn centre_of(view: Viewport) -> Point {
@@ -327,7 +335,7 @@ mod tests {
             let carried = drift_px(
                 before.centre(),
                 &after,
-                ScreenPoint { x: delta.0 as f32, y: delta.1 as f32 },
+                ScreenPoint { x: screen_scalar(delta.0), y: screen_scalar(delta.1) },
             );
             assert!(carried < 1e-3, "{delta:?}: the ground lagged {carried} px");
         }

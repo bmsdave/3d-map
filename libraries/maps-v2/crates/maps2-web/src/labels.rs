@@ -15,6 +15,7 @@ use maps2_text::{
     LINE_HEIGHT_EM,
 };
 use maps2_units::{TileCoord, TileId};
+use num_traits::ToPrimitive;
 
 use crate::transform::place_tile;
 
@@ -47,7 +48,7 @@ pub fn label_identity(class: Class, feature: u32) -> u64 {
 
 #[must_use]
 pub fn class_of(identity: u64) -> Option<Class> {
-    Class::from_code((identity >> 32) as u16)
+    Class::from_code(u16::try_from(identity >> 32).ok()?)
 }
 
 /// Candidates of one frame, in tile order. Order does not matter to the
@@ -84,8 +85,8 @@ pub fn frame_candidates(
 fn anchor_px(id: TileId, coord: TileCoord, camera: &Camera, viewport: (f64, f64)) -> (f32, f32) {
     let placement = place_tile(id, camera, viewport.0, viewport.1);
     (
-        f64::from(coord.0).mul_add(placement.scale, placement.translate_x) as f32,
-        f64::from(coord.1).mul_add(placement.scale, placement.translate_y) as f32,
+        screen_scalar(f64::from(coord.0).mul_add(placement.scale, placement.translate_x)),
+        screen_scalar(f64::from(coord.1).mul_add(placement.scale, placement.translate_y)),
     )
 }
 
@@ -99,7 +100,11 @@ pub fn place_frame(
     budget: f32,
 ) -> Placement {
     let candidates = frame_candidates(buckets, camera, viewport, atlas);
-    place(&candidates, (viewport.0 as f32, viewport.1 as f32), budget)
+    place(&candidates, (screen_scalar(viewport.0), screen_scalar(viewport.1)), budget)
+}
+
+fn screen_scalar(value: f64) -> f32 {
+    value.to_f32().expect("screen values fit f32")
 }
 
 /// Glyph quads of everything placed, grouped by class so the renderer
@@ -181,7 +186,12 @@ mod tests {
             let placement = place_frame(&borrowed(&owned), camera, VIEWPORT, &atlas, 1.0);
             frame_quads(&atlas, &placement, Class::Label)
                 .iter()
-                .map(|q| ((q.x1 - q.x0) as i32, (q.y1 - q.y0) as i32))
+                .map(|q| {
+                    (
+                        (q.x1 - q.x0).round().to_i32().expect("glyph width fits i32"),
+                        (q.y1 - q.y0).round().to_i32().expect("glyph height fits i32"),
+                    )
+                })
                 .collect::<Vec<_>>()
         };
         upright.apply(&CameraPatch::default()).expect("no-op patch");

@@ -426,7 +426,10 @@ mod tests {
         let (sin, cos) = turn.sin_cos();
         let apex = [32000.0, 32000.0];
         let arm = 12000.0;
-        let quantise = |p: [f64; 2]| TileCoord(p[0].round() as u16, p[1].round() as u16);
+        let quantise = |p: [f64; 2]| TileCoord(
+            p[0].round().to_u16().expect("corner x fits tile coordinates"),
+            p[1].round().to_u16().expect("corner y fits tile coordinates"),
+        );
         vec![
             quantise([apex[0] - arm, apex[1]]),
             quantise(apex),
@@ -443,10 +446,10 @@ mod tests {
     fn ring(sides: usize) -> Vec<TileCoord> {
         let mut points: Vec<TileCoord> = (0..sides)
             .map(|i| {
-                let angle = 2.0 * PI * (i as f64) / (sides as f64);
+                let angle = 2.0 * PI * i.to_f64().expect("ring index fits f64") / sides.to_f64().expect("side count fits f64");
                 TileCoord(
-                    (32000.0 + 9000.0 * angle.cos()).round() as u16,
-                    (32000.0 + 9000.0 * angle.sin()).round() as u16,
+                    (32000.0 + 9000.0 * angle.cos()).round().to_u16().expect("ring x fits tile coordinates"),
+                    (32000.0 + 9000.0 * angle.sin()).round().to_u16().expect("ring y fits tile coordinates"),
                 )
             })
             .collect();

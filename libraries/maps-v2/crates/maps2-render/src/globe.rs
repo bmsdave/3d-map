@@ -205,27 +205,29 @@ mod tests {
 
         let sheet = View::of(&Camera::new(EALING, Zoom::new(12.0)), (800.0, 600.0));
         let near = normalised(Lonlat { lon: EALING.lon + 0.01, lat: EALING.lat });
-        assert_eq!(
-            project_normalised(near, &sheet, 1.0).x,
-            project_normalised(near, &sheet, 1.05).x,
-            "the flat sheet has no radius to swell",
-        );
+        assert_close(project_normalised(near, &sheet, 1.0).x, project_normalised(near, &sheet, 1.05).x);
     }
 
     #[test]
     fn a_tile_frame_is_its_share_of_the_normalised_world() {
         let world = tile_frame(TileId { z: 0, x: 0, y: 0 });
-        assert_eq!((world.origin_x, world.origin_y, world.span), (0.0, 0.0, 1.0));
+        assert_close(world.origin_x, 0.0);
+        assert_close(world.origin_y, 0.0);
+        assert_close(world.span, 1.0);
         let deep = tile_frame(TileId { z: 14, x: 8190, y: 5448 });
-        assert_eq!(deep.span, 1.0 / 16384.0);
-        assert_eq!(deep.origin_x, 8190.0 / 16384.0);
-        assert_eq!(deep.origin_y, 5448.0 / 16384.0);
+        assert_close(deep.span, 1.0 / 16384.0);
+        assert_close(deep.origin_x, 8190.0 / 16384.0);
+        assert_close(deep.origin_y, 5448.0 / 16384.0);
     }
 
     #[test]
     fn the_view_reports_the_shape_the_camera_is_in() {
-        assert_eq!(view_at(2.0).globeness, 1.0);
-        assert_eq!(view_at(8.0).globeness, 0.0);
-        assert_eq!(view_at(4.0).globeness, Globeness::at(Zoom::new(4.0)).value());
+        assert_close(view_at(2.0).globeness, 1.0);
+        assert_close(view_at(8.0).globeness, 0.0);
+        assert_close(view_at(4.0).globeness, Globeness::at(Zoom::new(4.0)).value());
+    }
+
+    fn assert_close(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < f64::EPSILON, "{actual} != {expected}");
     }
 }
