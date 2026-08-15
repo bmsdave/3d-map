@@ -191,6 +191,7 @@ mod tests {
     use super::*;
     use maps2_tile::{HeightsRaster, TileView, CLASS_HEIGHTS, HEIGHTS_BYTES, HEIGHTS_SIDE};
     use maps2_units::locate;
+    use num_traits::ToPrimitive;
 
     /// The package must be bit-for-bit stable, like the Ealing one.
     const GOLDEN_FNV1A: u64 = 0x07F6_A60E_2908_45D4;
@@ -209,14 +210,18 @@ mod tests {
         tile.raster(CLASS_HEIGHTS).expect("heights section").to_vec()
     }
 
+    fn sample(raster: &HeightsRaster<'_>, x: usize, y: usize) -> f32 {
+        raster.metres(i32::try_from(x).unwrap_or_default(), i32::try_from(y).unwrap_or_default())
+    }
+
     fn column(bytes: &[u8], x: usize) -> Vec<f32> {
         let raster = HeightsRaster::parse(bytes).expect("full raster");
-        (0..HEIGHTS_SIDE).map(|y| raster.metres(x as i32, y as i32)).collect()
+        (0..HEIGHTS_SIDE).map(|y| sample(&raster, x, y)).collect()
     }
 
     fn row(bytes: &[u8], y: usize) -> Vec<f32> {
         let raster = HeightsRaster::parse(bytes).expect("full raster");
-        (0..HEIGHTS_SIDE).map(|x| raster.metres(x as i32, y as i32)).collect()
+        (0..HEIGHTS_SIDE).map(|x| sample(&raster, x, y)).collect()
     }
 
     #[test]
@@ -248,7 +253,7 @@ mod tests {
         let raster = HeightsRaster::parse(&raster_bytes).expect("raster");
         let peak = (0..HEIGHTS_SIDE)
             .flat_map(|y| (0..HEIGHTS_SIDE).map(move |x| (x, y)))
-            .map(|(x, y)| raster.metres(x as i32, y as i32))
+            .map(|(x, y)| sample(&raster, x, y))
             .fold(f32::MIN, f32::max);
         assert!(peak > 2000.0, "the centre tile has no mountain: {peak} m");
         // The ramp's last stop is snow at 3600 m. A scene whose every
@@ -256,9 +261,10 @@ mod tests {
         // the top of the ramp but the tile must not live above it.
         let above_snow = (0..HEIGHTS_SIDE)
             .flat_map(|y| (0..HEIGHTS_SIDE).map(move |x| (x, y)))
-            .filter(|(x, y)| raster.metres(*x as i32, *y as i32) > 3600.0)
+            .filter(|(x, y)| sample(&raster, *x, *y) > 3600.0)
             .count();
-        let share = above_snow as f32 / (HEIGHTS_SIDE * HEIGHTS_SIDE) as f32;
+        let share = above_snow.to_f32().unwrap_or_default()
+            / (HEIGHTS_SIDE * HEIGHTS_SIDE).to_f32().unwrap_or(1.0);
         assert!(share < 0.15, "{:.0}% of the scene is above the ramp", share * 100.0);
         // Somewhere on the world tile the ground is at sea level: the
         // hypsometric ramp needs both ends of its scale.
@@ -266,9 +272,9 @@ mod tests {
         let world = HeightsRaster::parse(&world_bytes).expect("raster");
         let lowest = (0..HEIGHTS_SIDE)
             .flat_map(|y| (0..HEIGHTS_SIDE).map(move |x| (x, y)))
-            .map(|(x, y)| world.metres(x as i32, y as i32))
+            .map(|(x, y)| sample(&world, x, y))
             .fold(f32::MAX, f32::min);
-        assert_eq!(lowest, 0.0, "no lowland on the world tile");
+        assert!(lowest.abs() < f32::EPSILON, "no lowland on the world tile: {lowest}");
     }
 
     #[test]
@@ -277,7 +283,7 @@ mod tests {
         let raster = HeightsRaster::parse(&bytes).expect("raster");
         let peak = (0..HEIGHTS_SIDE)
             .flat_map(|y| (0..HEIGHTS_SIDE).map(move |x| (x, y)))
-            .map(|(x, y)| raster.metres(x as i32, y as i32))
+            .map(|(x, y)| sample(&raster, x, y))
             .fold(f32::MIN, f32::max);
         assert!(peak > 1500.0, "the globe is a billiard ball: {peak} m");
     }

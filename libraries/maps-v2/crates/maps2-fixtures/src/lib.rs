@@ -419,15 +419,13 @@ mod tests {
                 (Class::RoadPrimary, 8),
                 (Class::Park, 8),
             ];
-            for (class, min_level) in forbidden {
-                if id.z < min_level {
-                    assert_eq!(
-                        tile.section(class.code()),
-                        None,
-                        "z{} tile must not carry {class:?}",
-                        id.z,
-                    );
-                }
+            for (class, _) in forbidden.into_iter().filter(|(_, min_level)| id.z < *min_level) {
+                assert_eq!(
+                    tile.section(class.code()),
+                    None,
+                    "z{} tile must not carry {class:?}",
+                    id.z,
+                );
             }
         }
     }
