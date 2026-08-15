@@ -1,5 +1,5 @@
 import { createMap, createTilePackageLoader } from "../sdk";
-import { el, readout, section } from "../ui";
+import { controlRow, el, readout, section } from "../ui";
 import type { CardSpec } from "./types";
 
 const MANIFEST = "/fixtures/ealing/package-manifest.json";
@@ -17,6 +17,18 @@ export const packageLoader: CardSpec = {
       { key: "package-missing", label: "вне покрытия" },
       { key: "package-attribution", label: "атрибуция источника" },
     ]);
+    let manifestUrl = MANIFEST;
+    const input = el("input", {
+      type: "url",
+      value: manifestUrl,
+      "data-testid": "package-manifest-url",
+      "aria-label": "URL manifest пакета",
+    });
+    const load = el("button", { type: "button" }, ["Загрузить пакет"]);
+    const source = section("Источник пакета", el("div", {}, [
+      controlRow("Manifest URL", input),
+      load,
+    ]));
     const showError = (error: unknown) => {
       const retry = el("button", { type: "button" }, ["Повторить"]);
       retry.addEventListener("click", () => void loadPackage());
@@ -29,7 +41,7 @@ export const packageLoader: CardSpec = {
       stage.replaceChildren(canvas);
       try {
         const map = await createMap(canvas, null);
-        const loader = await createTilePackageLoader(map, MANIFEST);
+        const loader = await createTilePackageLoader(map, manifestUrl);
         const view = loader.manifest.view;
         map.setCentre(view.lon, view.lat);
         map.setZoom(view.zoom);
@@ -39,13 +51,19 @@ export const packageLoader: CardSpec = {
         out.set("package-level", String(state.tile_level));
         out.set("package-missing", String(result.unavailable));
         out.set("package-attribution", loader.manifest.sources.map((source) => source.attribution).join(" · "));
-        panel.replaceChildren(section("Пакет", out.root));
+        panel.replaceChildren(source, section("Пакет", out.root));
         stage.setAttribute("data-loaded", String(result.loaded));
+        stage.setAttribute("data-manifest", manifestUrl);
         stage.setAttribute("data-state", "ready");
       } catch (error) {
         showError(error);
       }
     };
+    load.addEventListener("click", () => {
+      manifestUrl = input.value.trim();
+      void loadPackage();
+    });
+    panel.append(source);
     void loadPackage();
   },
 };

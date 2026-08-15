@@ -32,7 +32,7 @@ see [the beta plan](libraries/maps-v2/docs/real-data-beta-plan.md) and the
 
 The first ingest foundation can verify, scan, and build z16 vector MT2 tiles
 from the pinned Greater London OSM extract without committing it. It includes
-roads, building footprints, water, parks, outer multipolygon rings, named
+roads, building footprints, water, parks, simple outer/inner multipolygon rings, named
 places and amenity points. Road bridge/tunnel flags are preserved for the
 renderer, and pinned Copernicus height rasters attach to
 every generated London z16 tile. It clips cross-tile geometry deterministically,
@@ -44,7 +44,8 @@ version, sorted relative tile paths, a default view, source attribution, and
 SHA-256 digests for every tile. The browser loader verifies those digests before
 passing downloaded bytes to the renderer.
 The lab's **Пакет: загрузка по спросу** study exercises demand loading against
-the same contract using synthetic tiles. Real derived packages remain external
+the same contract using synthetic tiles and accepts a host-selected manifest
+URL for local real-data acceptance. Real derived packages remain external
 release assets until their source terms and attribution are approved.
 
 ## Try the lab
@@ -66,6 +67,12 @@ npm run dev
 Open `http://localhost:5178`. Direct routes make each renderer concern easy to
 inspect, for example `/#/showcase`, `/#/card/roads-micro`, and
 `/#/card/globe-relief`. The showcase contains twenty animated, live SDK studies.
+
+To inspect a locally hosted London or regional package, open
+`/#/card/package-loader`, replace **Manifest URL** with its `manifest.json`
+URL, and choose **Загрузить пакет**. The package host must permit browser CORS
+requests; the loader verifies every requested tile against the manifest’s
+SHA-256 digest before rendering it.
 
 ## 20 animated studies
 

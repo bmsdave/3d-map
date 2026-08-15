@@ -37,3 +37,15 @@ test("package loader: retries a transient manifest failure", async ({ page }) =>
   await expect(stage).toHaveAttribute("data-state", "ready");
   expect(attempts).toBe(2);
 });
+
+test("package loader: accepts a host-selected package manifest", async ({ page }) => {
+  await page.goto("/#/card/package-loader");
+  const stage = page.getByTestId("stage");
+
+  await expect(stage).toHaveAttribute("data-state", "ready");
+  await page.getByTestId("package-manifest-url").fill("/fixtures/ealing/package-manifest.json?host=local");
+  await page.getByRole("button", { name: "Загрузить пакет" }).click();
+
+  await expect(stage).toHaveAttribute("data-state", "ready");
+  await expect(stage).toHaveAttribute("data-manifest", "/fixtures/ealing/package-manifest.json?host=local");
+});
