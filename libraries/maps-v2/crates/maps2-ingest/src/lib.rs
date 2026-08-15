@@ -11,9 +11,11 @@ use std::{
 use maps2_style::Class;
 use maps2_tile::{FeatureDraft, TileBuilder, TileError};
 use maps2_units::{Lonlat, TileId, locate};
+use num_traits::ToPrimitive;
 use osmpbfreader::{NodeId, OsmObj, OsmPbfReader};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use tiff::decoder::{Decoder, DecodingResult};
 
 /// A named pipeline input pinned to its SHA-256 digest.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -408,6 +410,109 @@ fn tag_refs(tags: &[(String, String)]) -> Vec<(&str, &str)> {
     tags.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect()
 }
 
+/// A north-up, one-degree Copernicus DEM tile.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DemGrid {
+    west: f64,
+    south: f64,
+    width: u32,
+    height: u32,
+    samples: Vec<f32>,
+}
+
+/// A DEM grid does not match its declared geometry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DemError {
+    /// The raster has no cells.
+    Empty,
+    /// The cell count does not equal width times height.
+    SampleCount,
+    /// The TIFF file could not be read or decoded.
+    Read(String),
+    /// The TIFF sample type is not an elevation raster this adapter supports.
+    SampleType,
+}
+
+impl fmt::Display for DemError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("DEM grid must have nonzero dimensions"),
+            Self::SampleCount => f.write_str("DEM sample count does not match dimensions"),
+            Self::Read(error) => write!(f, "cannot read DEM: {error}"),
+            Self::SampleType => f.write_str("unsupported DEM sample type"),
+        }
+    }
+}
+
+impl std::error::Error for DemError {}
+
+/// Loads a one-degree Copernicus DEM Cloud-Optimized `GeoTIFF`.
+///
+/// # Errors
+///
+/// Returns [`DemError`] for unreadable TIFF data, unsupported sample types, or
+/// inconsistent raster dimensions.
+pub fn load_copernicus_dem(path: impl AsRef<Path>, west: f64, south: f64) -> Result<DemGrid, DemError> {
+    let file = File::open(path).map_err(|error| DemError::Read(error.to_string()))?;
+    let mut decoder = Decoder::new(file).map_err(|error| DemError::Read(error.to_string()))?;
+    let (width, height) = decoder.dimensions().map_err(|error| DemError::Read(error.to_string()))?;
+    let image = decoder.read_image().map_err(|error| DemError::Read(error.to_string()))?;
+    DemGrid::new(west, south, width, height, dem_samples(image)?)
+}
+
+fn dem_samples(image: DecodingResult) -> Result<Vec<f32>, DemError> {
+    match image {
+        DecodingResult::I16(samples) => Ok(samples.into_iter().map(f32::from).collect()),
+        DecodingResult::U16(samples) => Ok(samples.into_iter().map(f32::from).collect()),
+        DecodingResult::I32(samples) => Ok(samples.into_iter().map(|sample| sample.to_f32().unwrap_or_default()).collect()),
+        DecodingResult::U32(samples) => Ok(samples.into_iter().map(|sample| sample.to_f32().unwrap_or_default()).collect()),
+        DecodingResult::F32(samples) => Ok(samples),
+        DecodingResult::F64(samples) => Ok(samples.into_iter().map(|sample| sample.to_f32().unwrap_or_default()).collect()),
+        _ => Err(DemError::SampleType),
+    }
+}
+
+impl DemGrid {
+    /// Creates a grid whose west/south edge identifies a one-degree DEM tile.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DemError`] when the dimensions cannot describe `samples`.
+    pub fn new(
+        west: f64,
+        south: f64,
+        width: u32,
+        height: u32,
+        samples: Vec<f32>,
+    ) -> Result<Self, DemError> {
+        if width == 0 || height == 0 {
+            return Err(DemError::Empty);
+        }
+        if grid_len(width, height) != Some(samples.len()) {
+            return Err(DemError::SampleCount);
+        }
+        Ok(Self { west, south, width, height, samples })
+    }
+
+    /// Samples the containing north-up raster cell, clamped to this tile.
+    #[must_use]
+    pub fn sample(&self, lon: f64, lat: f64) -> f32 {
+        let x = cell_index(lon - self.west, self.width);
+        let y = cell_index(self.south + 1.0 - lat, self.height);
+        self.samples[y * usize::try_from(self.width).unwrap_or_default() + x]
+    }
+}
+
+fn grid_len(width: u32, height: u32) -> Option<usize> {
+    usize::try_from(width).ok()?.checked_mul(usize::try_from(height).ok()?)
+}
+
+fn cell_index(offset: f64, cells: u32) -> usize {
+    let ratio = offset.clamp(0.0, 1.0 - f64::EPSILON);
+    let index = (ratio * f64::from(cells)).floor().to_u32().unwrap_or_default();
+    usize::try_from(index).unwrap_or_default()
+}
+
 fn count_class(summary: &mut OsmSummary, class: Option<Class>) {
     match class {
         Some(Class::RoadMotorway | Class::RoadTrunk | Class::RoadPrimary | Class::RoadSecondary
@@ -601,5 +706,21 @@ attribution = "© OpenStreetMap contributors""#,
         std::fs::write(file.path(), b"not an osm pbf").expect("write corrupt bytes");
 
         assert!(resolve_osm_pbf(file.path(), 16).is_err());
+    }
+
+    #[test]
+    fn dem_grid_samples_north_up_cells() {
+        let grid = DemGrid::new(-1.0, 51.0, 2, 2, vec![10.0, 20.0, 30.0, 40.0]).expect("grid");
+
+        assert!((grid.sample(-0.8, 51.8) - 10.0).abs() < f32::EPSILON);
+        assert!((grid.sample(-0.2, 51.2) - 40.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn copernicus_loader_rejects_non_tiff_data() {
+        let file = tempfile::NamedTempFile::new().expect("temporary DEM");
+        std::fs::write(file.path(), b"not a TIFF").expect("write corrupt bytes");
+
+        assert!(load_copernicus_dem(file.path(), -1.0, 51.0).is_err());
     }
 }

@@ -1,8 +1,8 @@
 use std::{env, fs, fs::File, path::Path, process::ExitCode};
 
 use maps2_ingest::{
-    SourceDescriptor, SourceKind, build_tiles, read_descriptor, resolve_osm_pbf, scan_osm_pbf, validate_source_reader,
-    OsmSummary,
+    SourceDescriptor, SourceKind, build_tiles, load_copernicus_dem, read_descriptor, resolve_osm_pbf, scan_osm_pbf,
+    validate_source_reader, OsmSummary,
 };
 use serde_json::json;
 
@@ -28,8 +28,17 @@ fn run(args: &[String]) -> Result<(), String> {
         [command, descriptor, input, level, output] if command == "build" => {
             build(descriptor, input, level, output)
         }
+        [command, path, west, south] if command == "dem-info" => dem_info(path, west, south),
         _ => Err("usage: maps2-ingest scan <osm.pbf>".to_string()),
     }
+}
+
+fn dem_info(path: &str, west: &str, south: &str) -> Result<(), String> {
+    let west = west.parse::<f64>().map_err(|error| format!("invalid west {west}: {error}"))?;
+    let south = south.parse::<f64>().map_err(|error| format!("invalid south {south}: {error}"))?;
+    let grid = load_copernicus_dem(path, west, south).map_err(|error| error.to_string())?;
+    println!("{{\"south_west_height_m\":{}}}", grid.sample(west, south));
+    Ok(())
 }
 
 fn build(descriptor_path: &str, input_path: &str, level: &str, output: &str) -> Result<(), String> {
@@ -132,7 +141,7 @@ fn summary_json(summary: OsmSummary) -> String {
 
 fn print_help() {
     println!(
-        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>"
+        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest dem-info <dem.tif> <west> <south>"
     );
 }
 

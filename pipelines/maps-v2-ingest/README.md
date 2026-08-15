@@ -34,3 +34,18 @@ tile; border clipping, lower zoom generalization, DEM sampling, package
 browser loading are deliberately still incomplete. Each build writes
 `manifest.json` beside the tiles with MT2 version, zoom, source URL/date/hash,
 licence, attribution, and feature/tile counts.
+
+## Terrain input
+
+`sources/london-dem-n51w001.toml` pins the public Copernicus GLO-30 COG that
+covers the western London degree cell. Validate decoding without storing it in
+the repository:
+
+```sh
+cd libraries/maps-v2
+cargo run -p maps2-ingest -- dem-info /path/to/Copernicus_DSM_COG_10_N51_00_W001_00_DEM.tif -1 51
+```
+
+The decoder accepts the signed and floating elevation rasters used by
+Copernicus COGs. Its geographic samples are ready for the upcoming MT2 height
+raster stage; no terrain raster is written to the London package yet.

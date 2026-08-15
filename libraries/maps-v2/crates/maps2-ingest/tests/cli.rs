@@ -12,4 +12,5 @@ fn help_describes_the_pbf_scan_command() {
     assert!(help.contains("scan <osm.pbf>"));
     assert!(help.contains("verify <source.toml> <input>"));
     assert!(help.contains("build <source.toml> <osm.pbf> <level> <output-dir>"));
+    assert!(help.contains("dem-info <dem.tif> <west> <south>"));
 }
