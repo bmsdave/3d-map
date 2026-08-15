@@ -60,6 +60,9 @@ cargo run --release -p maps2-ingest -- build-terrain-range ../../pipelines/maps-
 
 This range contains unsimplified source geometry at every level. It establishes
 the package-loader path, not production-quality cartographic generalisation.
+Classes below their style entry zoom are omitted (for example, buildings do not
+enter before z16), which keeps low-zoom packages aligned with the renderer's
+composition policy.
 
 ## Terrain input
 

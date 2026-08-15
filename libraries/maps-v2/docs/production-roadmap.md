@@ -34,10 +34,11 @@ IDs; collision-free 64-bit source identity is a production-format milestone.
 Inner relation rings and holes remain unfinished.
 
 The CLI can also write an inclusive z12–z16 package range while processing one
-level at a time. A z12 local acceptance build emits 1,906,691 feature parts in
-70 terrain-bearing tiles; z12–z13 emits 3,828,480 parts in 307 tiles. These
-are unsimplified source geometries, so package size and rendering density are
-not yet suitable evidence for a production browser release.
+level at a time. Ingest omits classes below their established style entry zoom:
+a z12 local acceptance build emits 161,638 feature parts in 70 terrain-bearing
+tiles (17 MB), rather than buildings and address-level detail that cannot be
+rendered at z12. Geometry within admitted classes remains unsimplified, so this
+is not yet production-quality cartographic generalisation.
 
 Every generated manifest carries per-tile SHA-256 values plus an aggregate
 package SHA-256, so independent package builds can compare exact bytes without

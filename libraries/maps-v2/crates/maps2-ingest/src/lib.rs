@@ -8,7 +8,7 @@ use std::{
     path::Path,
 };
 
-use maps2_style::{Class, FLAG_BRIDGE, FLAG_TUNNEL};
+use maps2_style::{Class, FLAG_BRIDGE, FLAG_TUNNEL, entry_band};
 use maps2_tile::{
     CLASS_HEIGHTS, BuildingDraft, FeatureDraft, TileBuilder, TileError, HEIGHTS_BYTES, HEIGHTS_SIDE,
     encode_height,
@@ -726,6 +726,9 @@ pub fn prepare_feature(
     level: u8,
 ) -> Option<PreparedFeature> {
     let class = classify_osm_tags(tags)?;
+    if f64::from(level) < entry_band(class).entry_zoom() {
+        return None;
+    }
     let points = vertices.iter().copied().map(|point| locate(point, level)).collect::<Vec<_>>();
     let tile = points.first()?.tile;
     if points.iter().any(|point| point.tile != tile) {
@@ -756,6 +759,9 @@ pub fn prepare_features(
     let Some(class) = classify_osm_tags(tags) else {
         return Vec::new();
     };
+    if f64::from(level) < entry_band(class).entry_zoom() {
+        return Vec::new();
+    }
     if matches!(class, Class::Poi | Class::Label) && vertices.len() == 1 {
         return prepare_feature(id, tags, vertices, level).into_iter().collect();
     }
@@ -1097,6 +1103,20 @@ mod tests {
         assert_eq!(features[0].class, Class::Poi);
         assert_eq!(features[0].feature.vertices.len(), 1);
         assert_eq!(features[0].feature.name, "City Library");
+    }
+
+    #[test]
+    fn geometry_adapter_omits_classes_before_their_entry_zoom() {
+        let building = [
+            Lonlat { lon: -0.1278, lat: 51.5074 },
+            Lonlat { lon: -0.1277, lat: 51.5074 },
+            Lonlat { lon: -0.1277, lat: 51.5073 },
+            Lonlat { lon: -0.1278, lat: 51.5073 },
+            Lonlat { lon: -0.1278, lat: 51.5074 },
+        ];
+
+        assert!(prepare_features(20, &[("building", "yes")], &building, 12).is_empty());
+        assert_eq!(prepare_features(20, &[("building", "yes")], &building, 16).len(), 1);
     }
 
     #[test]
