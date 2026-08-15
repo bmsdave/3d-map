@@ -1,4 +1,4 @@
-use std::{env, fs, fs::File, path::{Path, PathBuf}, process::{Command, ExitCode}};
+use std::{collections::BTreeMap, env, fs, fs::File, path::{Path, PathBuf}, process::{Command, ExitCode}};
 
 use maps2_ingest::{
     SourceDescriptor, SourceKind, build_tiles, build_tiles_with_terrains, load_copernicus_dem, read_descriptor,
@@ -6,6 +6,7 @@ use maps2_ingest::{
 };
 use maps2_units::{TileCoord, TileId, TilePoint, to_lonlat};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 fn main() -> ExitCode {
     let args = env::args().skip(1).collect::<Vec<_>>();
@@ -66,9 +67,9 @@ fn build(descriptor_path: &str, input_path: &str, level: &str, output: &str) -> 
     let level = level.parse::<u8>().map_err(|error| format!("invalid level {level}: {error}"))?;
     let features = resolve_osm_pbf(input_path, level).map_err(|error| error.to_string())?;
     let tiles = build_tiles(&features).map_err(|error| format!("cannot encode MT2: {error:?}"))?;
-    let ids = tile_ids(&tiles);
+    let digests = tile_digests(&tiles);
     write_tiles(Path::new(output), &tiles)?;
-    write_manifest(Path::new(output), &[&descriptor], &[level], features.len(), &ids, 0)?;
+    write_manifest(Path::new(output), &[&descriptor], &[level], features.len(), &digests, 0)?;
     println!("{{\"features\":{},\"tiles\":{}}}", features.len(), tiles.len());
     Ok(())
 }
@@ -160,19 +161,19 @@ fn write_terrain_levels(
     let grids = terrain.iter().map(|input| input.grid.clone()).collect::<Vec<_>>();
     let mut feature_count = 0;
     let mut height_tile_count = 0;
-    let mut ids = Vec::new();
+    let mut digests = Vec::new();
     for level in levels {
         let features = resolve_osm_pbf(osm_input, *level).map_err(|error| error.to_string())?;
         let tiles = build_tiles_with_terrains(&features, &grids).map_err(|error| format!("cannot encode MT2: {error:?}"))?;
         height_tile_count += tiles.iter().filter(|(tile, _)| grids.iter().any(|grid| grid.covers_tile(*tile))).count();
         feature_count += features.len();
-        ids.extend(tile_ids(&tiles));
+        digests.extend(tile_digests(&tiles));
         write_tiles(output, &tiles)?;
     }
     let mut sources = vec![osm];
     sources.extend(terrain.iter().map(|input| &input.descriptor));
-    write_manifest(output, &sources, levels, feature_count, &ids, height_tile_count)?;
-    println!("{{\"features\":{feature_count},\"tiles\":{},\"height_tiles\":{height_tile_count}}}", ids.len());
+    write_manifest(output, &sources, levels, feature_count, &digests, height_tile_count)?;
+    println!("{{\"features\":{feature_count},\"tiles\":{},\"height_tiles\":{height_tile_count}}}", digests.len());
     Ok(())
 }
 
@@ -213,10 +214,10 @@ fn write_manifest(
     descriptors: &[&SourceDescriptor],
     levels: &[u8],
     feature_count: usize,
-    tile_ids: &[TileId],
+    tile_digests: &[TileDigest],
     height_tile_count: usize,
 ) -> Result<(), String> {
-    let bytes = manifest_json(descriptors, levels, feature_count, tile_ids, height_tile_count)?;
+    let bytes = manifest_json(descriptors, levels, feature_count, tile_digests, height_tile_count)?;
     let path = output.join("manifest.json");
     fs::write(&path, bytes).map_err(|error| format!("cannot write {}: {error}", path.display()))
 }
@@ -225,7 +226,7 @@ fn manifest_json(
     descriptors: &[&SourceDescriptor],
     levels: &[u8],
     feature_count: usize,
-    tile_ids: &[TileId],
+    tile_digests: &[TileDigest],
     height_tile_count: usize,
 ) -> Result<String, String> {
     serde_json::to_string_pretty(&json!({
@@ -233,9 +234,11 @@ fn manifest_json(
         "format_version": maps2_tile::FORMAT_VERSION,
         "levels": levels,
         "feature_count": feature_count,
-        "tile_count": tile_ids.len(),
-        "tiles": tile_paths(tile_ids),
-        "view": package_view(tile_ids),
+        "tile_count": tile_digests.len(),
+        "tiles": tile_paths(tile_digests),
+        "tile_digests": digest_map(tile_digests),
+        "package_sha256": package_sha256(tile_digests),
+        "view": package_view(tile_digests),
         "height_tile_count": height_tile_count,
         "sources": descriptors.iter().map(|descriptor| json!({
             "name": descriptor.source.name(),
@@ -250,21 +253,51 @@ fn manifest_json(
     .map_err(|error| format!("cannot serialize manifest: {error}"))
 }
 
-fn tile_ids(tiles: &[(TileId, Vec<u8>)]) -> Vec<TileId> {
-    tiles.iter().map(|(id, _)| *id).collect()
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TileDigest {
+    id: TileId,
+    sha256: String,
 }
 
-fn tile_paths(tile_ids: &[TileId]) -> Vec<String> {
-    let mut ids = tile_ids.to_vec();
+fn tile_digests(tiles: &[(TileId, Vec<u8>)]) -> Vec<TileDigest> {
+    tiles.iter().map(|(id, bytes)| TileDigest { id: *id, sha256: sha256(bytes) }).collect()
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn tile_paths(digests: &[TileDigest]) -> Vec<String> {
+    let mut ids = digests.iter().map(|digest| digest.id).collect::<Vec<_>>();
     ids.sort_by_key(|id| (id.z, id.x, id.y));
-    ids.into_iter().map(|id| format!("{}/{}/{}.mt2", id.z, id.x, id.y)).collect()
+    ids.into_iter().map(tile_path).collect()
 }
 
-fn package_view(tile_ids: &[TileId]) -> Option<serde_json::Value> {
-    let first = *tile_ids.first()?;
-    let (min_x, max_x, min_y, max_y) = tile_ids.iter().fold(
+fn digest_map(digests: &[TileDigest]) -> BTreeMap<String, String> {
+    digests.iter().map(|digest| (tile_path(digest.id), digest.sha256.clone())).collect()
+}
+
+fn package_sha256(digests: &[TileDigest]) -> String {
+    let mut hasher = Sha256::new();
+    for (path, digest) in digest_map(digests) {
+        hasher.update(path.as_bytes());
+        hasher.update([0]);
+        hasher.update(digest.as_bytes());
+        hasher.update(*b"\n");
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn tile_path(id: TileId) -> String {
+    format!("{}/{}/{}.mt2", id.z, id.x, id.y)
+}
+
+fn package_view(digests: &[TileDigest]) -> Option<serde_json::Value> {
+    let first = digests.first()?.id;
+    let (min_x, max_x, min_y, max_y) = digests.iter().fold(
         (first.x, first.x, first.y, first.y),
-        |(min_x, max_x, min_y, max_y), tile| {
+        |(min_x, max_x, min_y, max_y), digest| {
+            let tile = digest.id;
             (min_x.min(tile.x), max_x.max(tile.x), min_y.min(tile.y), max_y.max(tile.y))
         },
     );
@@ -382,11 +415,12 @@ attribution = "© OpenStreetMap contributors""#,
         )
         .expect("descriptor");
 
-        let tiles = vec![
+        let mut tiles = vec![
             (TileId { z: 16, x: 32737, y: 21791 }, Vec::new()),
             (TileId { z: 16, x: 32736, y: 21791 }, Vec::new()),
         ];
-        let manifest = manifest_json(&[&descriptor], &[16], 10, &tile_ids(&tiles), 0).expect("manifest JSON");
+        let digests = tile_digests(&tiles);
+        let manifest = manifest_json(&[&descriptor], &[16], 10, &digests, 0).expect("manifest JSON");
         assert!(manifest.contains("\"format_version\": 2"));
         assert!(manifest.contains("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"));
         assert!(manifest.contains("© OpenStreetMap contributors"));
@@ -395,6 +429,12 @@ attribution = "© OpenStreetMap contributors""#,
         assert_eq!(value["tiles"], serde_json::json!(["16/32736/21791.mt2", "16/32737/21791.mt2"]));
         assert_eq!(value["levels"], serde_json::json!([16]));
         assert_eq!(value["view"]["zoom"], 16);
+        assert_eq!(value["tile_digests"].as_object().expect("tile digests").len(), 2);
+        assert_eq!(value["package_sha256"].as_str().expect("package hash").len(), 64);
+
+        let first = package_sha256(&digests);
+        tiles[0].1.push(1);
+        assert_ne!(first, package_sha256(&tile_digests(&tiles)));
     }
 
     #[test]

@@ -39,6 +39,10 @@ level at a time. A z12 local acceptance build emits 1,906,691 feature parts in
 are unsimplified source geometries, so package size and rendering density are
 not yet suitable evidence for a production browser release.
 
+Every generated manifest carries per-tile SHA-256 values plus an aggregate
+package SHA-256, so independent package builds can compare exact bytes without
+committing derived data.
+
 This is **not** a browser-ready London map or a production release. The lab
 now exercises a manifest-driven, demand-loading host contract with synthetic
 tiles, but does not ship a real-data package. There is still no
