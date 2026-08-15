@@ -36,6 +36,24 @@ pub fn target_level(zoom: f64, source_levels: &[u8]) -> u8 {
     level
 }
 
+/// Adds one host-supplied level while preserving the renderer's sorted,
+/// duplicate-free source pyramid.
+pub fn register_source_level(levels: &mut Vec<u8>, level: u8) {
+    match levels.binary_search(&level) {
+        Ok(_) => {}
+        Err(index) => levels.insert(index, level),
+    }
+}
+
+/// Normalises a complete host package pyramid. Empty packages are invalid;
+/// callers retain the current levels when this returns `None`.
+#[must_use]
+pub fn normalise_source_levels(mut levels: Vec<u8>) -> Option<Vec<u8>> {
+    levels.sort_unstable();
+    levels.dedup();
+    (!levels.is_empty()).then_some(levels)
+}
+
 fn tile_span(camera: &Camera, level: u8, viewport: (f64, f64)) -> (i64, i64, i64, i64) {
     let world = camera.zoom().world_pixels();
     let tile_px = world / f64::from(1_u32 << level);
@@ -118,6 +136,21 @@ mod tests {
         assert_eq!(target_level(18.7, &LEVELS), 16);
         assert_eq!(target_level(0.5, &LEVELS), 0);
         assert_eq!(target_level(11.9, &LEVELS), 10);
+    }
+
+    #[test]
+    fn a_host_added_level_is_sorted_without_losing_existing_levels() {
+        let mut levels = vec![0, 5, 8, 10, 12, 14, 16];
+
+        register_source_level(&mut levels, 15);
+
+        assert_eq!(levels, [0, 5, 8, 10, 12, 14, 15, 16]);
+    }
+
+    #[test]
+    fn a_real_package_replaces_the_fixture_pyramid_with_its_own_levels() {
+        assert_eq!(normalise_source_levels(vec![16, 12, 16]), Some(vec![12, 16]));
+        assert_eq!(normalise_source_levels(Vec::new()), None);
     }
 
     #[test]

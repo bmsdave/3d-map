@@ -6,6 +6,7 @@ import { globeTransition } from "./globeTransition";
 import { inputFlat } from "./inputFlat";
 import { labelsCollision } from "./labelsCollision";
 import { poiDensity } from "./poiDensity";
+import { packageLoader } from "./packageLoader";
 import { roadsMicro } from "./roadsMicro";
 import { terrainShade } from "./terrainShade";
 import type { CardSpec } from "./types";
@@ -25,6 +26,7 @@ export const CARDS: readonly CardSpec[] = [
   globeTransition,
   terrainShade,
   globeRelief,
+  packageLoader,
   ...TRANSITIONS.map(bandToggleCard),
 ];
 

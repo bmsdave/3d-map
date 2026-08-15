@@ -68,6 +68,9 @@ export interface LabelEntry {
 
 export interface MapHandle {
   setZoom(zoom: number): void;
+  setSourceLevels(levels: number[]): void;
+  missingTiles(): string[];
+  loadTile(bytes: Uint8Array): void;
   setCentre(lon: number, lat: number): void;
   setBandOverride(band: string | null): void;
   setTransitionAnimated(animated: boolean): void;
@@ -110,6 +113,30 @@ export interface PackCentre {
   zoom: number;
 }
 
+export interface PackageSource {
+  name: string;
+  attribution: string;
+  licence: string;
+}
+
+export interface TilePackageManifest {
+  format: "MT2";
+  format_version: number;
+  tiles: string[];
+  view: PackCentre;
+  sources: PackageSource[];
+}
+
+export interface PackageLoadResult {
+  loaded: number;
+  unavailable: number;
+}
+
+export interface TilePackageLoader {
+  manifest: TilePackageManifest;
+  loadVisible(): Promise<PackageLoadResult>;
+}
+
 export async function loadPackCentre(pack: string): Promise<PackCentre> {
   const response = await fetch(`/fixtures/${pack}/centre.json`);
   return (await response.json()) as PackCentre;
@@ -127,6 +154,66 @@ async function loadFixtureTiles(map: InstanceType<typeof SdkMap>, pack: string):
   );
 }
 
+function isTilePackageManifest(value: unknown): value is TilePackageManifest {
+  if (!value || typeof value !== "object") return false;
+  const manifest = value as Partial<TilePackageManifest>;
+  return manifest.format === "MT2"
+    && manifest.format_version === 2
+    && Array.isArray(manifest.tiles)
+    && manifest.tiles.every((path) => typeof path === "string" && /^\d+\/\d+\/\d+\.mt2$/.test(path))
+    && !!manifest.view
+    && Number.isFinite(manifest.view.lon)
+    && Number.isFinite(manifest.view.lat)
+    && Number.isFinite(manifest.view.zoom)
+    && Array.isArray(manifest.sources);
+}
+
+async function fetchPackageManifest(url: string): Promise<TilePackageManifest> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`cannot load package manifest: ${response.status}`);
+  const value: unknown = await response.json();
+  if (!isTilePackageManifest(value)) throw new Error("invalid MT2 package manifest");
+  return value;
+}
+
+function packageLevels(manifest: TilePackageManifest): number[] {
+  return [...new Set(manifest.tiles.map((path) => Number(path.split("/")[0])))].sort((a, b) => a - b);
+}
+
+async function fetchTile(url: string): Promise<Uint8Array> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`cannot load package tile: ${response.status}`);
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+/**
+ * Connects a versioned MT2 package to an existing map. The caller sets the
+ * package view, then calls `loadVisible` after camera changes. Network policy
+ * stays in the host instead of leaking into the render loop.
+ */
+export async function createTilePackageLoader(map: MapHandle, manifestUrl: string): Promise<TilePackageLoader> {
+  const manifest = await fetchPackageManifest(manifestUrl);
+  const base = new URL(manifestUrl, window.location.href);
+  const paths = new Map(manifest.tiles.map((path) => [path, new URL(path, base).toString()]));
+  const loaded = new Set<string>();
+  map.setSourceLevels(packageLevels(manifest));
+  return {
+    manifest,
+    async loadVisible(): Promise<PackageLoadResult> {
+      const requested = map.missingTiles();
+      const available = requested.filter((path) => paths.has(path) && !loaded.has(path));
+      const unavailable = requested.length - available.length;
+      const bytes = await Promise.all(available.map(async (path) => [path, await fetchTile(paths.get(path)!)] as const));
+      for (const [path, tile] of bytes) {
+        map.loadTile(tile);
+        loaded.add(path);
+      }
+      map.render();
+      return { loaded: bytes.length, unavailable };
+    },
+  };
+}
+
 declare global {
   interface Window {
     // Ручка последней созданной карты. Лаба — и есть отладочная
@@ -138,6 +225,15 @@ declare global {
 
 let nextCanvasId = 0;
 
+interface PackageMapApi {
+  set_source_levels(levels: Uint8Array): void;
+  missing_tiles(): string;
+}
+
+function packageMapApi(map: InstanceType<typeof SdkMap>): PackageMapApi {
+  return map as unknown as PackageMapApi;
+}
+
 function p95RenderMs(map: InstanceType<typeof SdkMap>, samples: number): number {
   const durations = Array.from({ length: samples }, () => {
     const started = performance.now();
@@ -147,7 +243,7 @@ function p95RenderMs(map: InstanceType<typeof SdkMap>, samples: number): number 
   return durations[Math.ceil(durations.length * 0.95) - 1] ?? Number.POSITIVE_INFINITY;
 }
 
-export async function createMap(canvas: HTMLCanvasElement, pack: string): Promise<MapHandle> {
+export async function createMap(canvas: HTMLCanvasElement, pack: string | null): Promise<MapHandle> {
   if (!canvas.id) {
     nextCanvasId += 1;
     canvas.id = `sdk-canvas-${nextCanvasId}`;
@@ -155,9 +251,13 @@ export async function createMap(canvas: HTMLCanvasElement, pack: string): Promis
   wasmReady ??= init();
   await wasmReady;
   const map = new SdkMap(canvas.id);
-  await loadFixtureTiles(map, pack);
+  const packageApi = packageMapApi(map);
+  if (pack) await loadFixtureTiles(map, pack);
   const handle: MapHandle = {
     setZoom: (zoom) => map.set_zoom(zoom),
+    setSourceLevels: (levels) => packageApi.set_source_levels(new Uint8Array(levels)),
+    missingTiles: () => JSON.parse(packageApi.missing_tiles()) as string[],
+    loadTile: (bytes) => map.load_tile(bytes),
     setCentre: (lon, lat) => map.set_centre(lon, lat),
     setBandOverride: (band) => map.set_band_override(band ?? undefined),
     setTransitionAnimated: (animated) => map.set_transition_animated(animated),

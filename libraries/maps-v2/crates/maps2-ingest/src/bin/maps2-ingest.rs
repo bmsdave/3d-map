@@ -4,6 +4,7 @@ use maps2_ingest::{
     SourceDescriptor, SourceKind, build_tiles, build_tiles_with_terrains, load_copernicus_dem, read_descriptor,
     resolve_osm_pbf, scan_osm_pbf, validate_source_reader, OsmSummary,
 };
+use maps2_units::{TileCoord, TileId, TilePoint, to_lonlat};
 use serde_json::json;
 
 fn main() -> ExitCode {
@@ -64,7 +65,7 @@ fn build(descriptor_path: &str, input_path: &str, level: &str, output: &str) -> 
     let features = resolve_osm_pbf(input_path, level).map_err(|error| error.to_string())?;
     let tiles = build_tiles(&features).map_err(|error| format!("cannot encode MT2: {error:?}"))?;
     write_tiles(Path::new(output), &tiles)?;
-    write_manifest(Path::new(output), &[&descriptor], level, features.len(), tiles.len(), 0)?;
+    write_manifest(Path::new(output), &[&descriptor], level, features.len(), &tiles, 0)?;
     println!("{{\"features\":{},\"tiles\":{}}}", features.len(), tiles.len());
     Ok(())
 }
@@ -139,7 +140,7 @@ fn write_terrain_package(
     let mut sources = vec![osm];
     sources.extend(terrain.iter().map(|input| &input.descriptor));
     write_tiles(output, &tiles)?;
-    write_manifest(output, &sources, level, features.len(), tiles.len(), height_tiles)?;
+    write_manifest(output, &sources, level, features.len(), &tiles, height_tiles)?;
     println!("{{\"features\":{},\"tiles\":{},\"height_tiles\":{height_tiles}}}", features.len(), tiles.len());
     Ok(())
 }
@@ -173,10 +174,10 @@ fn write_manifest(
     descriptors: &[&SourceDescriptor],
     level: u8,
     feature_count: usize,
-    tile_count: usize,
+    tiles: &[(TileId, Vec<u8>)],
     height_tile_count: usize,
 ) -> Result<(), String> {
-    let bytes = manifest_json(descriptors, level, feature_count, tile_count, height_tile_count)?;
+    let bytes = manifest_json(descriptors, level, feature_count, tiles, height_tile_count)?;
     let path = output.join("manifest.json");
     fs::write(&path, bytes).map_err(|error| format!("cannot write {}: {error}", path.display()))
 }
@@ -185,7 +186,7 @@ fn manifest_json(
     descriptors: &[&SourceDescriptor],
     level: u8,
     feature_count: usize,
-    tile_count: usize,
+    tiles: &[(TileId, Vec<u8>)],
     height_tile_count: usize,
 ) -> Result<String, String> {
     serde_json::to_string_pretty(&json!({
@@ -193,7 +194,9 @@ fn manifest_json(
         "format_version": maps2_tile::FORMAT_VERSION,
         "level": level,
         "feature_count": feature_count,
-        "tile_count": tile_count,
+        "tile_count": tiles.len(),
+        "tiles": tile_paths(tiles),
+        "view": package_view(tiles),
         "height_tile_count": height_tile_count,
         "sources": descriptors.iter().map(|descriptor| json!({
             "name": descriptor.source.name(),
@@ -206,6 +209,27 @@ fn manifest_json(
         })).collect::<Vec<_>>(),
     }))
     .map_err(|error| format!("cannot serialize manifest: {error}"))
+}
+
+fn tile_paths(tiles: &[(TileId, Vec<u8>)]) -> Vec<String> {
+    let mut ids = tiles.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+    ids.sort_by_key(|id| (id.z, id.x, id.y));
+    ids.into_iter().map(|id| format!("{}/{}/{}.mt2", id.z, id.x, id.y)).collect()
+}
+
+fn package_view(tiles: &[(TileId, Vec<u8>)]) -> Option<serde_json::Value> {
+    let first = tiles.first()?.0;
+    let (min_x, max_x, min_y, max_y) = tiles.iter().fold(
+        (first.x, first.x, first.y, first.y),
+        |(min_x, max_x, min_y, max_y), (tile, _)| {
+            (min_x.min(tile.x), max_x.max(tile.x), min_y.min(tile.y), max_y.max(tile.y))
+        },
+    );
+    let centre = to_lonlat(TilePoint {
+        tile: TileId { z: first.z, x: min_x + (max_x - min_x) / 2, y: min_y + (max_y - min_y) / 2 },
+        coord: TileCoord(u16::MAX / 2, u16::MAX / 2),
+    });
+    Some(json!({ "lon": centre.lon, "lat": centre.lat, "zoom": first.z }))
 }
 
 const fn source_kind_name(kind: SourceKind) -> &'static str {
@@ -277,9 +301,17 @@ attribution = "© OpenStreetMap contributors""#,
         )
         .expect("descriptor");
 
-        let manifest = manifest_json(&[&descriptor], 16, 10, 2, 0).expect("manifest JSON");
+        let tiles = vec![
+            (TileId { z: 16, x: 32737, y: 21791 }, Vec::new()),
+            (TileId { z: 16, x: 32736, y: 21791 }, Vec::new()),
+        ];
+        let manifest = manifest_json(&[&descriptor], 16, 10, &tiles, 0).expect("manifest JSON");
         assert!(manifest.contains("\"format_version\": 2"));
         assert!(manifest.contains("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"));
         assert!(manifest.contains("© OpenStreetMap contributors"));
+
+        let value = serde_json::from_str::<serde_json::Value>(&manifest).expect("manifest JSON");
+        assert_eq!(value["tiles"], serde_json::json!(["16/32736/21791.mt2", "16/32737/21791.mt2"]));
+        assert_eq!(value["view"]["zoom"], 16);
     }
 }

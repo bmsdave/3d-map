@@ -36,6 +36,12 @@ attach pinned Copernicus height rasters to every currently generated London
 z16 tile. It clips cross-tile ways deterministically, but does not yet provide browser-ready
 real-data coverage. See the [pipeline guide](pipelines/maps-v2-ingest/README.md).
 
+The package manifest is the browser-host contract: it carries an MT2 format
+version, sorted relative tile paths, a default view, and source attribution.
+The lab's **Пакет: загрузка по спросу** study exercises demand loading against
+the same contract using synthetic tiles. Real derived packages remain external
+release assets until their source terms and attribution are approved.
+
 ## Try the lab
 
 Requirements: stable Rust, the `wasm32-unknown-unknown` target, `wasm-pack`,

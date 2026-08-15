@@ -29,6 +29,8 @@ fn write_pack(out: &Path, tiles: &[(TileId, Vec<u8>)], centre: Lonlat, zoom: f64
     let manifest: Vec<String> =
         tiles.iter().map(|(id, _)| format!("{}/{}/{}", id.z, id.x, id.y)).collect();
     fs::write(out.join("manifest.json"), format!("{manifest:?}")).expect("write manifest");
+    fs::write(out.join("package-manifest.json"), package_manifest(tiles, centre, zoom))
+        .expect("write package manifest");
     fs::write(
         out.join("centre.json"),
         format!(
@@ -38,4 +40,39 @@ fn write_pack(out: &Path, tiles: &[(TileId, Vec<u8>)], centre: Lonlat, zoom: f64
     )
     .expect("write centre");
     println!("{} tiles → {}", tiles.len(), out.display());
+}
+
+fn package_manifest(tiles: &[(TileId, Vec<u8>)], centre: Lonlat, zoom: f64) -> String {
+    let mut paths = tiles
+        .iter()
+        .map(|(id, _)| format!("\"{}/{}/{}.mt2\"", id.z, id.x, id.y))
+        .collect::<Vec<_>>();
+    paths.sort();
+    let mut levels = tiles.iter().map(|(id, _)| id.z).collect::<Vec<_>>();
+    levels.sort_unstable();
+    levels.dedup();
+    format!(
+        "{{\"format\":\"MT2\",\"format_version\":{},\"levels\":{:?},\"tiles\":[{}],\"view\":{{\"lon\":{},\"lat\":{},\"zoom\":{zoom}}},\"sources\":[]}}",
+        maps2_tile::FORMAT_VERSION,
+        levels,
+        paths.join(","),
+        centre.lon,
+        centre.lat,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn package_manifest_lists_relative_tiles_and_a_default_view() {
+        let tiles = [(TileId { z: 16, x: 32736, y: 21791 }, Vec::new())];
+
+        let manifest = package_manifest(&tiles, EALING, 16.0);
+
+        assert!(manifest.contains("\"format\":\"MT2\""));
+        assert!(manifest.contains("\"tiles\":[\"16/32736/21791.mt2\"]"));
+        assert!(manifest.contains("\"zoom\":16"));
+    }
 }

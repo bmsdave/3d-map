@@ -24,7 +24,7 @@ pub use line::{
 pub use building::{BuildingBucket, BuildingVertex, build_building_bucket};
 pub use labels::{build_label_bucket, LabelBucket, LabelPoint, LABEL_CLASSES};
 pub use globe::{project_normalised, tile_frame, Projected, TileFrame, View};
-pub use residency::{plan_residency, target_level, ResidencyPlan};
+pub use residency::{normalise_source_levels, plan_residency, register_source_level, target_level, ResidencyPlan};
 pub use terrain::{
     gradient_at, HIGHLIGHT_GAIN, ground_mesh, relative_shade, relief_radius_scale, shading_z_factor, texel_metres,
     GroundMesh, GROUND_MESH_CELLS,

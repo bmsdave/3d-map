@@ -28,7 +28,8 @@ tile-border clipping. A local z16 London rebuild currently emits 2,007,650
 feature parts in 11,821 terrain-bearing tiles from those validated inputs.
 
 This is **not** a browser-ready London map or a production release. The lab
-still uses committed synthetic fixtures; there is no real-data package loader,
+now exercises a manifest-driven, demand-loading host contract with synthetic
+tiles, but does not ship a real-data package. There is still no
 generalisation pipeline, global source set, attribution UI, release asset, or
 production performance and resilience evidence. Strict workspace Clippy also
 remains an explicit release blocker until the inherited lint backlog is fixed

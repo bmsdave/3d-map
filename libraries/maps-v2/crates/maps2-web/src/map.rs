@@ -7,7 +7,7 @@ use web_sys::WebGl2RenderingContext as Gl;
 
 use maps2_camera::{Camera, CameraPatch, Globeness};
 use maps2_render::{
-    build_building_bucket, build_fill_bucket, build_label_bucket, build_line_bucket, plan_residency, road_passes,
+    build_building_bucket, build_fill_bucket, build_label_bucket, build_line_bucket, normalise_source_levels, plan_residency, register_source_level, road_passes,
     shading_z_factor, target_level, texel_metres, tile_frame, FillBucket, LabelBucket,
     LineOptions, Pass, RoadLevel, RoadPass, MITER_LIMIT_MAX, View,
 };
@@ -31,7 +31,7 @@ use crate::transform::place_tile;
 
 /// Levels the fixture package is cut at; the real pipeline will ship a
 /// manifest instead.
-const SOURCE_LEVELS: [u8; 7] = [0, 5, 8, 10, 12, 14, 16];
+const DEFAULT_SOURCE_LEVELS: [u8; 7] = [0, 5, 8, 10, 12, 14, 16];
 
 #[wasm_bindgen]
 pub struct Map {
@@ -79,6 +79,9 @@ pub struct Map {
     width_overrides: HashMap<Class, f32>,
     /// The road draw order, built once: a frame walks it, never makes it.
     passes: Vec<RoadPass>,
+    /// The package pyramid supplied by the host. Fixture levels make the lab
+    /// useful before tiles arrive; real packages add their own levels.
+    source_levels: Vec<u8>,
 }
 
 /// Everything the label pass is steered by, and the last answer it gave.
@@ -207,6 +210,7 @@ impl Map {
             casing: true,
             width_overrides: HashMap::new(),
             passes: road_passes(),
+            source_levels: DEFAULT_SOURCE_LEVELS.to_vec(),
         })
     }
 
@@ -325,6 +329,7 @@ impl Map {
     pub fn load_tile(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
         let view = TileView::parse(bytes).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
         let id = view.header().id;
+        register_source_level(&mut self.source_levels, id.z);
         let fills = build_fill_bucket(&view).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
         let buildings = build_building_bucket(&view).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
         let roads = build_line_bucket(&view, self.line_options)
@@ -340,6 +345,29 @@ impl Map {
             self.heights.insert(id, raster.to_vec());
         }
         Ok(())
+    }
+
+    /// Replaces the fixture pyramid with the levels declared by a package.
+    /// The host must set this before asking for tiles from a real package.
+    pub fn set_source_levels(&mut self, levels: Vec<u8>) -> Result<(), JsValue> {
+        self.source_levels = normalise_source_levels(levels)
+            .ok_or_else(|| JsValue::from_str("a package needs at least one source level"))?;
+        Ok(())
+    }
+
+    /// Tile paths that cover the viewport but have not reached the host yet.
+    /// Fetch policy belongs to the host, so this only names the deterministic
+    /// demand and does not perform network work during a frame.
+    #[must_use]
+    pub fn missing_tiles(&self) -> String {
+        let available = self.tiles.keys().copied().collect::<HashSet<_>>();
+        let plan = plan_residency(&self.camera, self.viewport, &self.source_levels, &available);
+        let paths = plan
+            .missing
+            .iter()
+            .map(|id| format!("\"{}/{}/{}.mt2\"", id.z, id.x, id.y))
+            .collect::<Vec<_>>();
+        format!("[{}]", paths.join(","))
     }
 
     pub fn set_zoom(&mut self, zoom: f64) -> Result<(), JsValue> {
@@ -581,7 +609,7 @@ impl Map {
     }
 
     fn active_level(&self) -> u8 {
-        target_level(self.camera.zoom().value(), &SOURCE_LEVELS)
+        target_level(self.camera.zoom().value(), &self.source_levels)
     }
 
     fn view(&self) -> View {
@@ -708,7 +736,7 @@ impl Map {
     /// the GPU, delete the buffers of evicted ones.
     fn apply_residency(&mut self) -> Vec<TileId> {
         let resident: HashSet<TileId> = self.gpu.keys().copied().collect();
-        let plan = plan_residency(&self.camera, self.viewport, &SOURCE_LEVELS, &resident);
+        let plan = plan_residency(&self.camera, self.viewport, &self.source_levels, &resident);
         for id in &plan.evict {
             if let Some(bucket) = self.gpu.remove(id) {
                 bucket.delete(&self.gl);
