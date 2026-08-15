@@ -29,11 +29,21 @@ cargo run --release -p maps2-ingest -- build ../../pipelines/maps-v2-ingest/sour
 
 The command verifies the pinned input before two-pass way/node resolution,
 then writes deterministic `z/x/y.mt2` files. The output directory is ignored
-by Git. It currently emits only geometry that is entirely contained by a z16
-tile; border clipping, lower zoom generalization, and package browser loading
-are deliberately still incomplete. Each build writes `manifest.json` beside
-the tiles with MT2 version, zoom, source URL/date/hash, licence, attribution,
-and feature/tile counts.
+by Git. Cross-tile geometry is clipped before encoding. Each build writes
+`manifest.json` beside the tiles with MT2 version, source URL/date/hash,
+licence, attribution, levels, and feature/tile counts.
+
+For a browser package that can begin at city zoom and load detail on demand,
+build an inclusive level range. Levels are resolved and written one at a time,
+so a package build does not retain the whole range in memory:
+
+```sh
+cd libraries/maps-v2
+cargo run --release -p maps2-ingest -- build-terrain-range ../../pipelines/maps-v2-ingest/sources/london.toml /path/to/greater-london-260814.osm.pbf 12 16 ../../pipelines/maps-v2-ingest/packages/london-z12-z16 ../../pipelines/maps-v2-ingest/sources/london-dem-n51w001.toml /path/to/Copernicus_DSM_COG_10_N51_00_W001_00_DEM.tif -1 51 ../../pipelines/maps-v2-ingest/sources/london-dem-n51e000.toml /path/to/Copernicus_DSM_COG_10_N51_00_E000_00_DEM.tif 0 51
+```
+
+This range contains unsimplified source geometry at every level. It establishes
+the package-loader path, not production-quality cartographic generalisation.
 
 ## Terrain input
 

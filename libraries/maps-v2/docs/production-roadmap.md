@@ -26,10 +26,16 @@ and two Copernicus DEM descriptors, checksum validation, deterministic MT2 v2
 encoding, terrain rasters, OSM building-height fallbacks, and deterministic
 tile-border clipping, outer-ring multipolygon relations, named places, and
 amenity points. A local z16 London rebuild currently emits 2,128,113 feature
-parts in 11,944 terrain-bearing tiles from those validated inputs. MT2 v1's
-32-bit feature IDs require a deterministic fallback for oversized OSM node
+parts in 11,944 terrain-bearing tiles from those validated inputs. MT2's
+current 32-bit feature IDs require a deterministic fallback for oversized OSM node
 IDs; collision-free 64-bit source identity is a production-format milestone.
 Inner relation rings and holes remain unfinished.
+
+The CLI can also write an inclusive z12–z16 package range while processing one
+level at a time. A z12 local acceptance build emits 1,906,691 feature parts in
+70 terrain-bearing tiles; z12–z13 emits 3,828,480 parts in 307 tiles. These
+are unsimplified source geometries, so package size and rendering density are
+not yet suitable evidence for a production browser release.
 
 This is **not** a browser-ready London map or a production release. The lab
 now exercises a manifest-driven, demand-loading host contract with synthetic

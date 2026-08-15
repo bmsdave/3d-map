@@ -30,6 +30,7 @@ fn run(args: &[String]) -> Result<(), String> {
             build(descriptor, input, level, output)
         }
         [command, args @ ..] if command == "build-terrain-many" => build_terrain_many(args),
+        [command, args @ ..] if command == "build-terrain-range" => build_terrain_range(args),
         [command, osm_descriptor, osm_input, dem_descriptor, dem_input, west, south, level, output]
             if command == "build-terrain" => build_terrain(&TerrainBuildArgs {
                 osm_descriptor,
@@ -64,8 +65,9 @@ fn build(descriptor_path: &str, input_path: &str, level: &str, output: &str) -> 
     let level = level.parse::<u8>().map_err(|error| format!("invalid level {level}: {error}"))?;
     let features = resolve_osm_pbf(input_path, level).map_err(|error| error.to_string())?;
     let tiles = build_tiles(&features).map_err(|error| format!("cannot encode MT2: {error:?}"))?;
+    let ids = tile_ids(&tiles);
     write_tiles(Path::new(output), &tiles)?;
-    write_manifest(Path::new(output), &[&descriptor], level, features.len(), &tiles, 0)?;
+    write_manifest(Path::new(output), &[&descriptor], &[level], features.len(), &ids, 0)?;
     println!("{{\"features\":{},\"tiles\":{}}}", features.len(), tiles.len());
     Ok(())
 }
@@ -98,6 +100,17 @@ fn build_terrain_many(args: &[String]) -> Result<(), String> {
     let level = parse_level(level)?;
     let terrain = parse_terrain_inputs(terrain)?;
     write_terrain_package(&osm, osm_input, level, Path::new(output), &terrain)
+}
+
+fn build_terrain_range(args: &[String]) -> Result<(), String> {
+    let [osm_descriptor, osm_input, minimum, maximum, output, terrain @ ..] = args else {
+        return Err("build-terrain-range requires an OSM source, an inclusive zoom range, and DEM inputs".to_string());
+    };
+    let osm = load_kind(osm_descriptor, SourceKind::OsmPbf)?;
+    validate_input(&osm, osm_input)?;
+    let levels = parse_levels(minimum, maximum)?;
+    let terrain = parse_terrain_inputs(terrain)?;
+    write_terrain_levels(&osm, osm_input, &levels, Path::new(output), &terrain)
 }
 
 struct TerrainInput {
@@ -133,15 +146,32 @@ fn write_terrain_package(
     output: &Path,
     terrain: &[TerrainInput],
 ) -> Result<(), String> {
-    let features = resolve_osm_pbf(osm_input, level).map_err(|error| error.to_string())?;
+    write_terrain_levels(osm, osm_input, &[level], output, terrain)
+}
+
+fn write_terrain_levels(
+    osm: &SourceDescriptor,
+    osm_input: &str,
+    levels: &[u8],
+    output: &Path,
+    terrain: &[TerrainInput],
+) -> Result<(), String> {
     let grids = terrain.iter().map(|input| input.grid.clone()).collect::<Vec<_>>();
-    let tiles = build_tiles_with_terrains(&features, &grids).map_err(|error| format!("cannot encode MT2: {error:?}"))?;
-    let height_tiles = tiles.iter().filter(|(tile, _)| grids.iter().any(|grid| grid.covers_tile(*tile))).count();
+    let mut feature_count = 0;
+    let mut height_tile_count = 0;
+    let mut ids = Vec::new();
+    for level in levels {
+        let features = resolve_osm_pbf(osm_input, *level).map_err(|error| error.to_string())?;
+        let tiles = build_tiles_with_terrains(&features, &grids).map_err(|error| format!("cannot encode MT2: {error:?}"))?;
+        height_tile_count += tiles.iter().filter(|(tile, _)| grids.iter().any(|grid| grid.covers_tile(*tile))).count();
+        feature_count += features.len();
+        ids.extend(tile_ids(&tiles));
+        write_tiles(output, &tiles)?;
+    }
     let mut sources = vec![osm];
     sources.extend(terrain.iter().map(|input| &input.descriptor));
-    write_tiles(output, &tiles)?;
-    write_manifest(output, &sources, level, features.len(), &tiles, height_tiles)?;
-    println!("{{\"features\":{},\"tiles\":{},\"height_tiles\":{height_tiles}}}", features.len(), tiles.len());
+    write_manifest(output, &sources, levels, feature_count, &ids, height_tile_count)?;
+    println!("{{\"features\":{feature_count},\"tiles\":{},\"height_tiles\":{height_tile_count}}}", ids.len());
     Ok(())
 }
 
@@ -169,34 +199,42 @@ fn parse_level(value: &str) -> Result<u8, String> {
     value.parse::<u8>().map_err(|error| format!("invalid level {value}: {error}"))
 }
 
+fn parse_levels(minimum: &str, maximum: &str) -> Result<Vec<u8>, String> {
+    let start = parse_level(minimum)?;
+    let end = parse_level(maximum)?;
+    (start <= end)
+        .then(|| (start..=end).collect())
+        .ok_or_else(|| format!("minimum zoom {start} exceeds maximum zoom {end}"))
+}
+
 fn write_manifest(
     output: &Path,
     descriptors: &[&SourceDescriptor],
-    level: u8,
+    levels: &[u8],
     feature_count: usize,
-    tiles: &[(TileId, Vec<u8>)],
+    tile_ids: &[TileId],
     height_tile_count: usize,
 ) -> Result<(), String> {
-    let bytes = manifest_json(descriptors, level, feature_count, tiles, height_tile_count)?;
+    let bytes = manifest_json(descriptors, levels, feature_count, tile_ids, height_tile_count)?;
     let path = output.join("manifest.json");
     fs::write(&path, bytes).map_err(|error| format!("cannot write {}: {error}", path.display()))
 }
 
 fn manifest_json(
     descriptors: &[&SourceDescriptor],
-    level: u8,
+    levels: &[u8],
     feature_count: usize,
-    tiles: &[(TileId, Vec<u8>)],
+    tile_ids: &[TileId],
     height_tile_count: usize,
 ) -> Result<String, String> {
     serde_json::to_string_pretty(&json!({
         "format": "MT2",
         "format_version": maps2_tile::FORMAT_VERSION,
-        "level": level,
+        "levels": levels,
         "feature_count": feature_count,
-        "tile_count": tiles.len(),
-        "tiles": tile_paths(tiles),
-        "view": package_view(tiles),
+        "tile_count": tile_ids.len(),
+        "tiles": tile_paths(tile_ids),
+        "view": package_view(tile_ids),
         "height_tile_count": height_tile_count,
         "sources": descriptors.iter().map(|descriptor| json!({
             "name": descriptor.source.name(),
@@ -211,17 +249,21 @@ fn manifest_json(
     .map_err(|error| format!("cannot serialize manifest: {error}"))
 }
 
-fn tile_paths(tiles: &[(TileId, Vec<u8>)]) -> Vec<String> {
-    let mut ids = tiles.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+fn tile_ids(tiles: &[(TileId, Vec<u8>)]) -> Vec<TileId> {
+    tiles.iter().map(|(id, _)| *id).collect()
+}
+
+fn tile_paths(tile_ids: &[TileId]) -> Vec<String> {
+    let mut ids = tile_ids.to_vec();
     ids.sort_by_key(|id| (id.z, id.x, id.y));
     ids.into_iter().map(|id| format!("{}/{}/{}.mt2", id.z, id.x, id.y)).collect()
 }
 
-fn package_view(tiles: &[(TileId, Vec<u8>)]) -> Option<serde_json::Value> {
-    let first = tiles.first()?.0;
-    let (min_x, max_x, min_y, max_y) = tiles.iter().fold(
+fn package_view(tile_ids: &[TileId]) -> Option<serde_json::Value> {
+    let first = *tile_ids.first()?;
+    let (min_x, max_x, min_y, max_y) = tile_ids.iter().fold(
         (first.x, first.x, first.y, first.y),
-        |(min_x, max_x, min_y, max_y), (tile, _)| {
+        |(min_x, max_x, min_y, max_y), tile| {
             (min_x.min(tile.x), max_x.max(tile.x), min_y.min(tile.y), max_y.max(tile.y))
         },
     );
@@ -279,7 +321,7 @@ fn summary_json(summary: OsmSummary) -> String {
 
 fn print_help() {
     println!(
-        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>"
+        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest build-terrain-range <osm-source.toml> <osm.pbf> <min-level> <max-level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>"
     );
 }
 
@@ -305,13 +347,20 @@ attribution = "© OpenStreetMap contributors""#,
             (TileId { z: 16, x: 32737, y: 21791 }, Vec::new()),
             (TileId { z: 16, x: 32736, y: 21791 }, Vec::new()),
         ];
-        let manifest = manifest_json(&[&descriptor], 16, 10, &tiles, 0).expect("manifest JSON");
+        let manifest = manifest_json(&[&descriptor], &[16], 10, &tile_ids(&tiles), 0).expect("manifest JSON");
         assert!(manifest.contains("\"format_version\": 2"));
         assert!(manifest.contains("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"));
         assert!(manifest.contains("© OpenStreetMap contributors"));
 
         let value = serde_json::from_str::<serde_json::Value>(&manifest).expect("manifest JSON");
         assert_eq!(value["tiles"], serde_json::json!(["16/32736/21791.mt2", "16/32737/21791.mt2"]));
+        assert_eq!(value["levels"], serde_json::json!([16]));
         assert_eq!(value["view"]["zoom"], 16);
+    }
+
+    #[test]
+    fn level_range_is_inclusive_and_ascending() {
+        assert_eq!(parse_levels("12", "16").expect("valid range"), vec![12, 13, 14, 15, 16]);
+        assert!(parse_levels("16", "12").is_err());
     }
 }
