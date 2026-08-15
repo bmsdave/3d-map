@@ -11,6 +11,8 @@
 //! rasteriser's input — nothing above [`crate::Atlas`] knows the
 //! difference. Shaping, Cyrillic and CJK stay recorded debt either way.
 
+use num_traits::ToPrimitive;
+
 pub const CHARSET: &str =
     " !\"'(),-./0123456789:;?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
@@ -37,7 +39,7 @@ fn arc(centre: (f32, f32), radii: (f32, f32), from_deg: f32, to_deg: f32) -> Pol
     let steps = 16;
     (0..=steps)
         .map(|i| {
-            let t = (to_deg - from_deg).mul_add(i as f32 / steps as f32, from_deg);
+            let t = (to_deg - from_deg).mul_add(i.to_f32().unwrap_or_default() / steps.to_f32().unwrap_or(1.0), from_deg);
             let (sin, cos) = t.to_radians().sin_cos();
             (radii.0.mul_add(cos, centre.0), radii.1.mul_add(sin, centre.1))
         })

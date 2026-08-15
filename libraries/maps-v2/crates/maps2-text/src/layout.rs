@@ -4,6 +4,7 @@
 
 use crate::atlas::{Atlas, ATLAS_CELL_PX, CELL_ORIGIN_PX, EM_PX};
 use crate::font::{ASCENDER_EM, DESCENDER_EM};
+use num_traits::ToPrimitive;
 
 /// Height of one line in em units: the whole em box, ascender to
 /// descender.
@@ -42,7 +43,7 @@ pub fn measure_line(atlas: &Atlas, text: &str, size_px: f32) -> (f32, f32) {
 #[must_use]
 pub fn layout_line(atlas: &Atlas, text: &str, x: f32, y: f32, size_px: f32) -> Vec<GlyphQuad> {
     let scale = size_px / EM_PX;
-    let side = ATLAS_CELL_PX as f32 * scale;
+    let side = ATLAS_CELL_PX.to_f32().unwrap_or_default() * scale;
     let mut pen = x;
     let mut quads = Vec::new();
     for ch in text.chars() {

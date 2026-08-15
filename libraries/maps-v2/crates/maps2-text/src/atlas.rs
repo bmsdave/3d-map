@@ -5,6 +5,7 @@
 //! the very same bytes out as PNG plus metrics for eyeballing.
 
 use crate::font::{advance_em, strokes, CHARSET, STROKE_HALF_EM};
+use num_traits::ToPrimitive;
 
 /// Side of one glyph cell in atlas pixels.
 pub const ATLAS_CELL_PX: u32 = 32;
@@ -49,18 +50,18 @@ struct Skeleton {
 impl Atlas {
     #[must_use]
     pub fn build() -> Self {
-        let count = CHARSET.chars().count() as u32;
+        let count = CHARSET.chars().count().to_u32().unwrap_or_default();
         let rows = count.div_ceil(ATLAS_COLUMNS);
         let width = ATLAS_COLUMNS * ATLAS_CELL_PX;
         let height = rows * ATLAS_CELL_PX;
         let mut atlas = Self {
             width,
             height,
-            pixels: vec![0; (width * height) as usize],
-            glyphs: Vec::with_capacity(count as usize),
+            pixels: vec![0; usize::try_from(width * height).unwrap_or_default()],
+            glyphs: Vec::with_capacity(count.to_usize().unwrap_or_default()),
         };
         for (cell, ch) in CHARSET.chars().enumerate() {
-            let cell = cell as u32;
+            let cell = cell.to_u32().unwrap_or_default();
             atlas.glyphs.push(GlyphMetrics { ch, cell, advance: advance_em(ch) });
             atlas.draw_cell(cell, &skeleton(ch));
         }
@@ -79,12 +80,12 @@ impl Atlas {
     pub fn cell_uv(&self, cell: u32) -> (f32, f32, f32, f32) {
         let x = (cell % ATLAS_COLUMNS) * ATLAS_CELL_PX;
         let y = (cell / ATLAS_COLUMNS) * ATLAS_CELL_PX;
-        let (w, h) = (self.width as f32, self.height as f32);
+        let (w, h) = (self.width.to_f32().unwrap_or(1.0), self.height.to_f32().unwrap_or(1.0));
         (
-            x as f32 / w,
-            y as f32 / h,
-            (x + ATLAS_CELL_PX) as f32 / w,
-            (y + ATLAS_CELL_PX) as f32 / h,
+            x.to_f32().unwrap_or_default() / w,
+            y.to_f32().unwrap_or_default() / h,
+            (x + ATLAS_CELL_PX).to_f32().unwrap_or_default() / w,
+            (y + ATLAS_CELL_PX).to_f32().unwrap_or_default() / h,
         )
     }
 
@@ -100,10 +101,11 @@ impl Atlas {
         let base_x = (cell % ATLAS_COLUMNS) * ATLAS_CELL_PX;
         let base_y = (cell / ATLAS_COLUMNS) * ATLAS_CELL_PX;
         for (row, col) in cell_pixels() {
-            let Some(value) = skeleton.encoded_at((col as f32 + 0.5, row as f32 + 0.5)) else {
+            let Some(value) = skeleton.encoded_at((col.to_f32().unwrap_or_default() + 0.5, row.to_f32().unwrap_or_default() + 0.5)) else {
                 continue;
             };
-            self.pixels[((base_y + row) * self.width + base_x + col) as usize] = value;
+            let index = usize::try_from((base_y + row) * self.width + base_x + col).unwrap_or_default();
+            self.pixels[index] = value;
         }
     }
 }
@@ -129,7 +131,7 @@ impl Skeleton {
             .map(|(a, b)| distance_to_segment(point, *a, *b))
             .fold(f32::INFINITY, f32::min);
         let signed = STROKE_HALF_EM.mul_add(EM_PX, -nearest);
-        Some((signed / SDF_RANGE_PX).mul_add(127.0, 128.0).clamp(0.0, 255.0) as u8)
+        Some((signed / SDF_RANGE_PX).mul_add(127.0, 128.0).clamp(0.0, 255.0).to_u8().unwrap_or(u8::MAX))
     }
 }
 

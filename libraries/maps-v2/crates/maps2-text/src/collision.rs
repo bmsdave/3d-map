@@ -15,6 +15,8 @@
 
 use std::collections::HashMap;
 
+use num_traits::ToPrimitive;
+
 /// Side of the screen index cell, in pixels. Collision tests only look
 /// at the cells a box touches, so the cost is local to the box.
 pub const GRID_CELL_PX: f32 = 64.0;
@@ -236,7 +238,7 @@ struct Grid {
 
 impl Grid {
     fn span(bounds: ScreenBox) -> (i32, i32, i32, i32) {
-        let cell = |v: f32| (v / GRID_CELL_PX).floor() as i32;
+        let cell = |v: f32| (v / GRID_CELL_PX).floor().to_i32().unwrap_or_default();
         (cell(bounds.x0), cell(bounds.y0), cell(bounds.x1), cell(bounds.y1))
     }
 

@@ -360,6 +360,7 @@ name = "maps2-text"
 version = "0.1.0-alpha"
 dependencies = [
  "maps2-units",
+ "num-traits",
 ]
 
 [[package]]
