@@ -32,9 +32,9 @@ see [the beta plan](libraries/maps-v2/docs/real-data-beta-plan.md) and the
 
 The first ingest foundation can verify, scan, and build z16 vector MT2 tiles
 from the pinned Greater London OSM extract without committing it. It can also
-attach a pinned Copernicus height raster where one degree-cell covers the tile.
-It does not yet clip cross-tile geometry, cover all London terrain, or provide
-browser-ready real-data coverage. See the [pipeline guide](pipelines/maps-v2-ingest/README.md).
+attach pinned Copernicus height rasters to every currently generated London
+z16 tile. It does not yet clip cross-tile geometry or provide browser-ready
+real-data coverage. See the [pipeline guide](pipelines/maps-v2-ingest/README.md).
 
 ## Try the lab
 

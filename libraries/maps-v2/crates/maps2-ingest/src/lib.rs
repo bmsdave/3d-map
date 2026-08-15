@@ -606,7 +606,7 @@ pub fn prepare_feature(
 ///
 /// Returns [`TileError`] when the MT2 v1 size limits are exceeded.
 pub fn build_tiles(features: &[PreparedFeature]) -> Result<Vec<(TileId, Vec<u8>)>, TileError> {
-    build_tiles_inner(features, None)
+    build_tiles_inner(features, &[])
 }
 
 /// Builds deterministic MT2 tile bytes, attaching terrain where one grid covers a tile.
@@ -618,12 +618,24 @@ pub fn build_tiles_with_terrain(
     features: &[PreparedFeature],
     terrain: &DemGrid,
 ) -> Result<Vec<(TileId, Vec<u8>)>, TileError> {
-    build_tiles_inner(features, Some(terrain))
+    build_tiles_with_terrains(features, std::slice::from_ref(terrain))
+}
+
+/// Builds deterministic MT2 tile bytes, attaching the matching terrain grid.
+///
+/// # Errors
+///
+/// Returns [`TileError`] when the MT2 v1 size limits are exceeded.
+pub fn build_tiles_with_terrains(
+    features: &[PreparedFeature],
+    terrain: &[DemGrid],
+) -> Result<Vec<(TileId, Vec<u8>)>, TileError> {
+    build_tiles_inner(features, terrain)
 }
 
 fn build_tiles_inner(
     features: &[PreparedFeature],
-    terrain: Option<&DemGrid>,
+    terrain: &[DemGrid],
 ) -> Result<Vec<(TileId, Vec<u8>)>, TileError> {
     let mut grouped = HashMap::<TileId, Vec<&PreparedFeature>>::new();
     for feature in features {
@@ -637,7 +649,7 @@ fn build_tiles_inner(
 fn build_tile(
     id: TileId,
     features: &[&PreparedFeature],
-    terrain: Option<&DemGrid>,
+    terrain: &[DemGrid],
 ) -> Result<(TileId, Vec<u8>), TileError> {
     let mut features = features.to_vec();
     features.sort_by_key(|feature| (feature.class.code(), feature.feature.id));
@@ -645,7 +657,7 @@ fn build_tile(
     for feature in features {
         builder.push(feature.class.code(), feature.feature.clone());
     }
-    if let Some(grid) = terrain.filter(|grid| grid.covers_tile(id)) {
+    if let Some(grid) = terrain.iter().find(|grid| grid.covers_tile(id)) {
         builder.push_raster(CLASS_HEIGHTS, height_raster_for_tile(grid, id));
     }
     Ok((id, builder.build()?))
@@ -807,5 +819,39 @@ attribution = "© OpenStreetMap contributors""#,
         let tile = TileView::parse(&tiles[0].1).expect("valid MT2");
 
         assert!(tile.raster(CLASS_HEIGHTS).is_some());
+    }
+
+    #[test]
+    fn terrain_package_writer_uses_each_covering_degree_cell() {
+        let west = prepare_feature(
+            17,
+            &[("building", "yes")],
+            &[
+                Lonlat { lon: -0.1278, lat: 51.5074 },
+                Lonlat { lon: -0.1277, lat: 51.5074 },
+                Lonlat { lon: -0.1278, lat: 51.5074 },
+            ],
+            16,
+        )
+        .expect("western feature");
+        let east = prepare_feature(
+            18,
+            &[("building", "yes")],
+            &[
+                Lonlat { lon: 0.1278, lat: 51.5074 },
+                Lonlat { lon: 0.1279, lat: 51.5074 },
+                Lonlat { lon: 0.1278, lat: 51.5074 },
+            ],
+            16,
+        )
+        .expect("eastern feature");
+        let west_grid = DemGrid::new(-1.0, 51.0, 1, 1, vec![17.0]).expect("western grid");
+        let east_grid = DemGrid::new(0.0, 51.0, 1, 1, vec![23.0]).expect("eastern grid");
+
+        let tiles = build_tiles_with_terrains(&[west, east], &[west_grid, east_grid]).expect("terrain package");
+
+        assert!(tiles
+            .iter()
+            .all(|(_, bytes)| TileView::parse(bytes).expect("valid MT2").raster(CLASS_HEIGHTS).is_some()));
     }
 }

@@ -1,7 +1,7 @@
 use std::{env, fs, fs::File, path::Path, process::ExitCode};
 
 use maps2_ingest::{
-    SourceDescriptor, SourceKind, build_tiles, build_tiles_with_terrain, load_copernicus_dem, read_descriptor,
+    SourceDescriptor, SourceKind, build_tiles, build_tiles_with_terrains, load_copernicus_dem, read_descriptor,
     resolve_osm_pbf, scan_osm_pbf, validate_source_reader, OsmSummary,
 };
 use serde_json::json;
@@ -28,6 +28,7 @@ fn run(args: &[String]) -> Result<(), String> {
         [command, descriptor, input, level, output] if command == "build" => {
             build(descriptor, input, level, output)
         }
+        [command, args @ ..] if command == "build-terrain-many" => build_terrain_many(args),
         [command, osm_descriptor, osm_input, dem_descriptor, dem_input, west, south, level, output]
             if command == "build-terrain" => build_terrain(&TerrainBuildArgs {
                 osm_descriptor,
@@ -81,17 +82,64 @@ struct TerrainBuildArgs<'a> {
 
 fn build_terrain(args: &TerrainBuildArgs<'_>) -> Result<(), String> {
     let osm = load_kind(args.osm_descriptor, SourceKind::OsmPbf)?;
-    let dem = load_kind(args.dem_descriptor, SourceKind::CopernicusDem)?;
     validate_input(&osm, args.osm_input)?;
-    validate_input(&dem, args.dem_input)?;
-    let terrain = load_terrain(args.dem_input, args.west, args.south)?;
+    let terrain = load_terrain_input(args.dem_descriptor, args.dem_input, args.west, args.south)?;
     let level = parse_level(args.level)?;
-    let features = resolve_osm_pbf(args.osm_input, level).map_err(|error| error.to_string())?;
-    let tiles = build_tiles_with_terrain(&features, &terrain).map_err(|error| format!("cannot encode MT2: {error:?}"))?;
-    let height_tiles = tiles.iter().filter(|(tile, _)| terrain.covers_tile(*tile)).count();
-    let output = Path::new(args.output);
+    write_terrain_package(&osm, args.osm_input, level, Path::new(args.output), &[terrain])
+}
+
+fn build_terrain_many(args: &[String]) -> Result<(), String> {
+    let [osm_descriptor, osm_input, level, output, terrain @ ..] = args else {
+        return Err("build-terrain-many requires an OSM source and one or more DEM inputs".to_string());
+    };
+    let osm = load_kind(osm_descriptor, SourceKind::OsmPbf)?;
+    validate_input(&osm, osm_input)?;
+    let level = parse_level(level)?;
+    let terrain = parse_terrain_inputs(terrain)?;
+    write_terrain_package(&osm, osm_input, level, Path::new(output), &terrain)
+}
+
+struct TerrainInput {
+    descriptor: SourceDescriptor,
+    grid: maps2_ingest::DemGrid,
+}
+
+fn parse_terrain_inputs(args: &[String]) -> Result<Vec<TerrainInput>, String> {
+    if args.is_empty() || !args.len().is_multiple_of(4) {
+        return Err("each terrain input needs <dem-source.toml> <dem.tif> <west> <south>".to_string());
+    }
+    args.chunks_exact(4)
+        .map(|input| load_terrain_input(&input[0], &input[1], &input[2], &input[3]))
+        .collect()
+}
+
+fn load_terrain_input(
+    descriptor_path: &str,
+    input_path: &str,
+    west: &str,
+    south: &str,
+) -> Result<TerrainInput, String> {
+    let descriptor = load_kind(descriptor_path, SourceKind::CopernicusDem)?;
+    validate_input(&descriptor, input_path)?;
+    let grid = load_terrain(input_path, west, south)?;
+    Ok(TerrainInput { descriptor, grid })
+}
+
+fn write_terrain_package(
+    osm: &SourceDescriptor,
+    osm_input: &str,
+    level: u8,
+    output: &Path,
+    terrain: &[TerrainInput],
+) -> Result<(), String> {
+    let features = resolve_osm_pbf(osm_input, level).map_err(|error| error.to_string())?;
+    let grids = terrain.iter().map(|input| input.grid.clone()).collect::<Vec<_>>();
+    let tiles = build_tiles_with_terrains(&features, &grids).map_err(|error| format!("cannot encode MT2: {error:?}"))?;
+    let height_tiles = tiles.iter().filter(|(tile, _)| grids.iter().any(|grid| grid.covers_tile(*tile))).count();
+    let mut sources = vec![osm];
+    sources.extend(terrain.iter().map(|input| &input.descriptor));
     write_tiles(output, &tiles)?;
-    write_manifest(output, &[&osm, &dem], level, features.len(), tiles.len(), height_tiles)?;
+    write_manifest(output, &sources, level, features.len(), tiles.len(), height_tiles)?;
     println!("{{\"features\":{},\"tiles\":{},\"height_tiles\":{height_tiles}}}", features.len(), tiles.len());
     Ok(())
 }
@@ -207,7 +255,7 @@ fn summary_json(summary: OsmSummary) -> String {
 
 fn print_help() {
     println!(
-        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest dem-info <dem.tif> <west> <south>"
+        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>"
     );
 }
 

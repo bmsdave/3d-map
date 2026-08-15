@@ -37,9 +37,9 @@ and feature/tile counts.
 
 ## Terrain input
 
-`sources/london-dem-n51w001.toml` pins the public Copernicus GLO-30 COG that
-covers the western London degree cell. Validate decoding without storing it in
-the repository:
+`sources/london-dem-n51w001.toml` and `sources/london-dem-n51e000.toml` pin
+the public Copernicus GLO-30 COGs covering Greater London. Validate decoding
+without storing them in the repository:
 
 ```sh
 cd libraries/maps-v2
@@ -48,15 +48,14 @@ cargo run -p maps2-ingest -- dem-info /path/to/Copernicus_DSM_COG_10_N51_00_W001
 
 The decoder accepts the signed and floating elevation rasters used by
 Copernicus COGs. Build a terrain-bearing package with both independently
-verified descriptors:
+verified cells:
 
 ```sh
 cd libraries/maps-v2
-cargo run --release -p maps2-ingest -- build-terrain ../../pipelines/maps-v2-ingest/sources/london.toml /path/to/greater-london-260814.osm.pbf ../../pipelines/maps-v2-ingest/sources/london-dem-n51w001.toml /path/to/Copernicus_DSM_COG_10_N51_00_W001_00_DEM.tif -1 51 16 ../../pipelines/maps-v2-ingest/packages/london-z16-terrain
+cargo run --release -p maps2-ingest -- build-terrain-many ../../pipelines/maps-v2-ingest/sources/london.toml /path/to/greater-london-260814.osm.pbf 16 ../../pipelines/maps-v2-ingest/packages/london-z16-terrain ../../pipelines/maps-v2-ingest/sources/london-dem-n51w001.toml /path/to/Copernicus_DSM_COG_10_N51_00_W001_00_DEM.tif -1 51 ../../pipelines/maps-v2-ingest/sources/london-dem-n51e000.toml /path/to/Copernicus_DSM_COG_10_N51_00_E000_00_DEM.tif 0 51
 ```
 
-The resulting manifest records both sources and counts tiles carrying an MT2
-height raster. This descriptor covers only the western `N51/W001` degree cell,
-so terrain coverage is intentionally partial until the adjacent source cells
-are pinned and built. Copernicus GLO-30 is a surface model, so it is not yet
-appropriate to describe the output as ground-true terrain.
+The resulting manifest records all sources and counts tiles carrying an MT2
+height raster. The two pinned cells cover every current z16 Greater London
+vector tile. Copernicus GLO-30 is a surface model, so it is not yet appropriate
+to describe the output as ground-true terrain.

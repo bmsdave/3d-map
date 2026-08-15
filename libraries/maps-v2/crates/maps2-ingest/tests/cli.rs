@@ -14,4 +14,5 @@ fn help_describes_the_pbf_scan_command() {
     assert!(help.contains("build <source.toml> <osm.pbf> <level> <output-dir>"));
     assert!(help.contains("dem-info <dem.tif> <west> <south>"));
     assert!(help.contains("build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>"));
+    assert!(help.contains("build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>..."));
 }
