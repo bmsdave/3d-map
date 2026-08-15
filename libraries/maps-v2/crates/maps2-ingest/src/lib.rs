@@ -9,7 +9,7 @@ use std::{
 };
 
 use maps2_style::Class;
-use maps2_tile::{FeatureDraft, TileBuilder, TileError, HEIGHTS_BYTES, HEIGHTS_SIDE, encode_height};
+use maps2_tile::{CLASS_HEIGHTS, FeatureDraft, TileBuilder, TileError, HEIGHTS_BYTES, HEIGHTS_SIDE, encode_height};
 use maps2_units::{Lonlat, TileCoord, TileId, TilePoint, locate, to_lonlat};
 use num_traits::ToPrimitive;
 use osmpbfreader::{NodeId, OsmObj, OsmPbfReader};
@@ -501,6 +501,19 @@ impl DemGrid {
         let y = cell_index(self.south + 1.0 - lat, self.height);
         self.samples[y * usize::try_from(self.width).unwrap_or_default() + x]
     }
+
+    fn covers(&self, tile: TileId) -> bool {
+        let corners = [
+            TileCoord(0, 0),
+            TileCoord(u16::MAX, 0),
+            TileCoord(0, u16::MAX),
+            TileCoord(u16::MAX, u16::MAX),
+        ];
+        corners.into_iter().map(|coord| to_lonlat(TilePoint { tile, coord })).all(|point| {
+            (self.west..=self.west + 1.0).contains(&point.lon)
+                && (self.south..=self.south + 1.0).contains(&point.lat)
+        })
+    }
 }
 
 fn grid_len(width: u32, height: u32) -> Option<usize> {
@@ -591,21 +604,47 @@ pub fn prepare_feature(
 ///
 /// Returns [`TileError`] when the MT2 v1 size limits are exceeded.
 pub fn build_tiles(features: &[PreparedFeature]) -> Result<Vec<(TileId, Vec<u8>)>, TileError> {
+    build_tiles_inner(features, None)
+}
+
+/// Builds deterministic MT2 tile bytes, attaching terrain where one grid covers a tile.
+///
+/// # Errors
+///
+/// Returns [`TileError`] when the MT2 v1 size limits are exceeded.
+pub fn build_tiles_with_terrain(
+    features: &[PreparedFeature],
+    terrain: &DemGrid,
+) -> Result<Vec<(TileId, Vec<u8>)>, TileError> {
+    build_tiles_inner(features, Some(terrain))
+}
+
+fn build_tiles_inner(
+    features: &[PreparedFeature],
+    terrain: Option<&DemGrid>,
+) -> Result<Vec<(TileId, Vec<u8>)>, TileError> {
     let mut grouped = HashMap::<TileId, Vec<&PreparedFeature>>::new();
     for feature in features {
         grouped.entry(feature.tile).or_default().push(feature);
     }
     let mut ids = grouped.keys().copied().collect::<Vec<_>>();
     ids.sort_by_key(|id| (id.z, id.x, id.y));
-    ids.into_iter().map(|id| build_tile(id, &grouped[&id])).collect()
+    ids.into_iter().map(|id| build_tile(id, &grouped[&id], terrain)).collect()
 }
 
-fn build_tile(id: TileId, features: &[&PreparedFeature]) -> Result<(TileId, Vec<u8>), TileError> {
+fn build_tile(
+    id: TileId,
+    features: &[&PreparedFeature],
+    terrain: Option<&DemGrid>,
+) -> Result<(TileId, Vec<u8>), TileError> {
     let mut features = features.to_vec();
     features.sort_by_key(|feature| (feature.class.code(), feature.feature.id));
     let mut builder = TileBuilder::new(id);
     for feature in features {
         builder.push(feature.class.code(), feature.feature.clone());
+    }
+    if let Some(grid) = terrain.filter(|grid| grid.covers(id)) {
+        builder.push_raster(CLASS_HEIGHTS, height_raster_for_tile(grid, id));
     }
     Ok((id, builder.build()?))
 }
@@ -613,7 +652,7 @@ fn build_tile(id: TileId, features: &[&PreparedFeature]) -> Result<(TileId, Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use maps2_tile::{HeightsRaster, TileView};
+    use maps2_tile::{CLASS_HEIGHTS, HeightsRaster, TileView};
 
     const HELLO_WORLD_SHA256: &str = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
 
@@ -750,5 +789,21 @@ attribution = "© OpenStreetMap contributors""#,
 
         assert!((raster.metres(0, 0) - 17.0).abs() < f32::EPSILON);
         assert!((raster.metres(255, 255) - 17.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn terrain_package_writer_adds_heights_to_covered_vector_tiles() {
+        let vertices = [
+            Lonlat { lon: -0.1278, lat: 51.5074 },
+            Lonlat { lon: -0.1277, lat: 51.5074 },
+            Lonlat { lon: -0.1278, lat: 51.5074 },
+        ];
+        let feature = prepare_feature(17, &[("building", "yes")], &vertices, 16).expect("one tile");
+        let grid = DemGrid::new(-1.0, 51.0, 1, 1, vec![17.0]).expect("grid");
+
+        let tiles = build_tiles_with_terrain(&[feature], &grid).expect("terrain package");
+        let tile = TileView::parse(&tiles[0].1).expect("valid MT2");
+
+        assert!(tile.raster(CLASS_HEIGHTS).is_some());
     }
 }
