@@ -9,6 +9,7 @@ use maps2_fixtures::{
     ealing_tiles, ridge_tiles, roads_centre, roads_tiles, EALING, RIDGE_DETAIL_LEVEL, ROADS_ZOOM,
 };
 use maps2_units::{Lonlat, TileId};
+use sha2::{Digest, Sha256};
 
 fn main() {
     let Some(out) = env::args().nth(1).map(PathBuf::from) else {
@@ -51,11 +52,21 @@ fn package_manifest(tiles: &[(TileId, Vec<u8>)], centre: Lonlat, zoom: f64) -> S
     let mut levels = tiles.iter().map(|(id, _)| id.z).collect::<Vec<_>>();
     levels.sort_unstable();
     levels.dedup();
+    let mut digests = tiles
+        .iter()
+        .map(|(id, bytes)| (format!("{}/{}/{}.mt2", id.z, id.x, id.y), format!("{:x}", Sha256::digest(bytes))))
+        .collect::<Vec<_>>();
+    digests.sort_by(|left, right| left.0.cmp(&right.0));
+    let digests = digests
+        .iter()
+        .map(|(path, digest)| format!("{path:?}:{digest:?}"))
+        .collect::<Vec<_>>();
     format!(
-        "{{\"format\":\"MT2\",\"format_version\":{},\"levels\":{:?},\"tiles\":[{}],\"view\":{{\"lon\":{},\"lat\":{},\"zoom\":{zoom}}},\"sources\":[]}}",
+        "{{\"format\":\"MT2\",\"format_version\":{},\"levels\":{:?},\"tiles\":[{}],\"tile_digests\":{{{}}},\"view\":{{\"lon\":{},\"lat\":{},\"zoom\":{zoom}}},\"sources\":[]}}",
         maps2_tile::FORMAT_VERSION,
         levels,
         paths.join(","),
+        digests.join(","),
         centre.lon,
         centre.lat,
     )
@@ -73,6 +84,7 @@ mod tests {
 
         assert!(manifest.contains("\"format\":\"MT2\""));
         assert!(manifest.contains("\"tiles\":[\"16/32736/21791.mt2\"]"));
+        assert!(manifest.contains("\"tile_digests\""));
         assert!(manifest.contains("\"zoom\":16"));
     }
 }

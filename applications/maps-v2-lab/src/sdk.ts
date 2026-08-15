@@ -123,6 +123,7 @@ export interface TilePackageManifest {
   format: "MT2";
   format_version: number;
   tiles: string[];
+  tile_digests: Record<string, string>;
   view: PackCentre;
   sources: PackageSource[];
 }
@@ -161,6 +162,9 @@ function isTilePackageManifest(value: unknown): value is TilePackageManifest {
     && manifest.format_version === 2
     && Array.isArray(manifest.tiles)
     && manifest.tiles.every((path) => typeof path === "string" && /^\d+\/\d+\/\d+\.mt2$/.test(path))
+    && !!manifest.tile_digests
+    && typeof manifest.tile_digests === "object"
+    && manifest.tiles.every((path) => typeof manifest.tile_digests![path] === "string" && /^[0-9a-f]{64}$/.test(manifest.tile_digests![path]!))
     && !!manifest.view
     && Number.isFinite(manifest.view.lon)
     && Number.isFinite(manifest.view.lat)
@@ -180,10 +184,17 @@ function packageLevels(manifest: TilePackageManifest): number[] {
   return [...new Set(manifest.tiles.map((path) => Number(path.split("/")[0])))].sort((a, b) => a - b);
 }
 
-async function fetchTile(url: string): Promise<Uint8Array> {
+async function fetchTile(url: string, digest: string): Promise<Uint8Array> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`cannot load package tile: ${response.status}`);
-  return new Uint8Array(await response.arrayBuffer());
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (await sha256(bytes) !== digest) throw new Error("package tile checksum mismatch");
+  return bytes;
+}
+
+async function sha256(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", Uint8Array.from(bytes));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 /**
@@ -203,7 +214,7 @@ export async function createTilePackageLoader(map: MapHandle, manifestUrl: strin
       const requested = map.missingTiles();
       const available = requested.filter((path) => paths.has(path) && !loaded.has(path));
       const unavailable = requested.length - available.length;
-      const bytes = await Promise.all(available.map(async (path) => [path, await fetchTile(paths.get(path)!)] as const));
+      const bytes = await Promise.all(available.map(async (path) => [path, await fetchTile(paths.get(path)!, manifest.tile_digests[path]!)] as const));
       for (const [path, tile] of bytes) {
         map.loadTile(tile);
         loaded.add(path);

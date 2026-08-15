@@ -316,6 +316,7 @@ dependencies = [
  "maps2-tile",
  "maps2-units",
  "num-traits",
+ "sha2",
 ]
 
 [[package]]
