@@ -8,6 +8,7 @@ test("package loader: a manifest drives demand-loaded MT2 tiles", async ({ page 
   await expect(stage).toHaveAttribute("data-loaded", /[1-9]\d*/);
   await expect(page.getByTestId("readout-package-tiles")).toContainText(/[1-9]\d*/);
   await expect(page.getByTestId("readout-package-level")).toHaveText("12");
+  await expect(page.getByTestId("readout-package-attribution")).toContainText("Synthetic fixture");
 });
 
 test("package loader: rejects a tile whose bytes do not match the manifest", async ({ page }) => {

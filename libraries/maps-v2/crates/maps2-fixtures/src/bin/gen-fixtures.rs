@@ -62,7 +62,7 @@ fn package_manifest(tiles: &[(TileId, Vec<u8>)], centre: Lonlat, zoom: f64) -> S
         .map(|(path, digest)| format!("{path:?}:{digest:?}"))
         .collect::<Vec<_>>();
     format!(
-        "{{\"format\":\"MT2\",\"format_version\":{},\"levels\":{:?},\"tiles\":[{}],\"tile_digests\":{{{}}},\"view\":{{\"lon\":{},\"lat\":{},\"zoom\":{zoom}}},\"sources\":[]}}",
+        "{{\"format\":\"MT2\",\"format_version\":{},\"levels\":{:?},\"tiles\":[{}],\"tile_digests\":{{{}}},\"view\":{{\"lon\":{},\"lat\":{},\"zoom\":{zoom}}},\"sources\":[{{\"name\":\"Synthetic fixture\",\"attribution\":\"Synthetic fixture\",\"licence\":\"MIT\"}}]}}",
         maps2_tile::FORMAT_VERSION,
         levels,
         paths.join(","),

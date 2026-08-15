@@ -50,10 +50,12 @@ every tile before a package is accepted.
 This is **not** a browser-ready London map or a production release. The lab
 now exercises a manifest-driven, demand-loading host contract with synthetic
 tiles, but does not ship a real-data package. There is still no
-generalisation pipeline, global source set, attribution UI, release asset, or
-production performance and resilience evidence. Strict workspace Clippy now
-passes without suppressions; the remaining blockers are real-data quality and
-release operations rather than the Rust lint gate.
+generalisation pipeline, global source set, real-data attribution acceptance,
+release asset, or production performance and resilience evidence. The package
+loader visibly exposes manifest attribution; it has not yet been exercised
+with a real London package. Strict workspace Clippy now passes without
+suppressions; the remaining blockers are real-data quality and release
+operations rather than the Rust lint gate.
 
 ## Milestones
 

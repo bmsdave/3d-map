@@ -15,6 +15,7 @@ export const packageLoader: CardSpec = {
       { key: "package-tiles", label: "загружено из пакета" },
       { key: "package-level", label: "уровень пакета (SDK)" },
       { key: "package-missing", label: "вне покрытия" },
+      { key: "package-attribution", label: "атрибуция источника" },
     ]);
     const canvas = el("canvas", { width: "720", height: "480" });
     stage.replaceChildren(canvas);
@@ -30,6 +31,7 @@ export const packageLoader: CardSpec = {
         out.set("package-tiles", String(result.loaded));
         out.set("package-level", String(state.tile_level));
         out.set("package-missing", String(result.unavailable));
+        out.set("package-attribution", loader.manifest.sources.map((source) => source.attribution).join(" · "));
         panel.append(section("Пакет", out.root));
         stage.setAttribute("data-loaded", String(result.loaded));
         stage.setAttribute("data-state", "ready");
