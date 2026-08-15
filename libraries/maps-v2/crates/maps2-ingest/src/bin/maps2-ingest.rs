@@ -1,4 +1,4 @@
-use std::{env, fs, fs::File, path::Path, process::ExitCode};
+use std::{env, fs, fs::File, path::{Path, PathBuf}, process::{Command, ExitCode}};
 
 use maps2_ingest::{
     SourceDescriptor, SourceKind, build_tiles, build_tiles_with_terrains, load_copernicus_dem, read_descriptor,
@@ -26,6 +26,7 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         [command, path] if command == "scan" => scan(path),
         [command, descriptor, input] if command == "verify" => verify(descriptor, input),
+        [command, descriptor, output] if command == "fetch" => fetch(descriptor, output),
         [command, descriptor, input, level, output] if command == "build" => {
             build(descriptor, input, level, output)
         }
@@ -300,6 +301,44 @@ fn verify(descriptor_path: &str, input_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn fetch(descriptor_path: &str, output: &str) -> Result<(), String> {
+    let descriptor = load_descriptor(descriptor_path)?;
+    let output = Path::new(output);
+    let partial = partial_path(output)?;
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+    }
+    if output.exists() || partial.exists() {
+        return Err(format!("refusing to overwrite {} or {}", output.display(), partial.display()));
+    }
+    let status = Command::new("curl")
+        .args(fetch_arguments(&descriptor.url, &partial)?)
+        .status()
+        .map_err(|error| format!("cannot start curl: {error}"))?;
+    if !status.success() {
+        return Err(format!("download failed; partial file remains at {}", partial.display()));
+    }
+    validate_input(&descriptor, partial.to_str().ok_or_else(|| "download path is not UTF-8".to_string())?)?;
+    fs::rename(&partial, output).map_err(|error| format!("cannot finalize {}: {error}", output.display()))?;
+    println!("fetched and verified {}", output.display());
+    Ok(())
+}
+
+fn partial_path(output: &Path) -> Result<PathBuf, String> {
+    let name = output.file_name().ok_or_else(|| "download output needs a filename".to_string())?;
+    Ok(output.with_file_name(format!("{}.part", name.to_string_lossy())))
+}
+
+fn fetch_arguments(url: &str, output: &Path) -> Result<Vec<String>, String> {
+    if !url.starts_with("https://") {
+        return Err("source URL must use HTTPS".to_string());
+    }
+    Ok(vec![
+        "--fail".to_string(), "--location".to_string(), "--proto".to_string(), "=https".to_string(),
+        "--output".to_string(), output.display().to_string(), url.to_string(),
+    ])
+}
+
 fn load_descriptor(path: &str) -> Result<maps2_ingest::SourceDescriptor, String> {
     let toml_text = fs::read_to_string(path).map_err(|error| format!("cannot read {path}: {error}"))?;
     read_descriptor(&toml_text).map_err(|error| error.to_string())
@@ -321,7 +360,7 @@ fn summary_json(summary: OsmSummary) -> String {
 
 fn print_help() {
     println!(
-        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest build-terrain-range <osm-source.toml> <osm.pbf> <min-level> <max-level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>"
+        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest fetch <source.toml> <output>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest build-terrain-range <osm-source.toml> <osm.pbf> <min-level> <max-level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>"
     );
 }
 
@@ -362,5 +401,15 @@ attribution = "© OpenStreetMap contributors""#,
     fn level_range_is_inclusive_and_ascending() {
         assert_eq!(parse_levels("12", "16").expect("valid range"), vec![12, 13, 14, 15, 16]);
         assert!(parse_levels("16", "12").is_err());
+    }
+
+    #[test]
+    fn source_download_uses_https_and_leaves_a_partial_file() {
+        let output = Path::new("/tmp/london.osm.pbf.part");
+
+        let arguments = fetch_arguments("https://example.test/london.osm.pbf", output).expect("HTTPS URL");
+
+        assert_eq!(arguments, vec!["--fail", "--location", "--proto", "=https", "--output", "/tmp/london.osm.pbf.part", "https://example.test/london.osm.pbf"]);
+        assert!(fetch_arguments("http://example.test/london.osm.pbf", output).is_err());
     }
 }

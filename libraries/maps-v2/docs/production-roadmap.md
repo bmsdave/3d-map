@@ -22,8 +22,9 @@ pipeline then produces the global package.
 ## Current position (2026-08-15)
 
 The project has the beginnings of the London path: pinned Greater London OSM
-and two Copernicus DEM descriptors, checksum validation, deterministic MT2 v2
-encoding, terrain rasters, OSM building-height fallbacks, and deterministic
+and two Copernicus DEM descriptors, HTTPS-only atomic source acquisition with
+checksum validation, deterministic MT2 v2 encoding, terrain rasters, OSM
+building-height fallbacks, and deterministic
 tile-border clipping, outer-ring multipolygon relations, named places, and
 amenity points. A local z16 London rebuild currently emits 2,128,113 feature
 parts in 11,944 terrain-bearing tiles from those validated inputs. MT2's

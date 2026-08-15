@@ -13,11 +13,11 @@
 ## Excluded
 
 This is not a map of London or the world. The local Stage-8 foundation can
-validate pinned OSM/DEM inputs and build untracked Greater London MT2 packages
-at one level or an inclusive level range, carrying source provenance and
-attribution in the manifest. It does not provide automated source acquisition,
-a published London/world package, cartographic generalisation, full
-multipolygon-hole support, or a `roads-real` browser surface. Line labels and
+fetch HTTPS OSM/DEM inputs with checksum validation and build untracked Greater
+London MT2 packages at one level or an inclusive level range, carrying source
+provenance and attribution in the manifest. It does not provide a published
+London/world package, cartographic generalisation, full multipolygon-hole
+support, or a `roads-real` browser surface. Line labels and
 POI icon-plus-text labels are planned but not implemented. Text is a
 deterministic Latin fixture atlas, not a general Unicode shaping system.
 

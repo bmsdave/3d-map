@@ -2,23 +2,26 @@
 
 The pipeline keeps source data, caches, and generated packages out of Git.
 Only versioned source descriptors and code belong in this repository.
+Source acquisition requires `curl` with HTTPS support.
 
 ## Verify Greater London input
 
-Download the URL from `sources/london.toml` to an untracked directory, then
-run the verifier and PBF scanner from a clean checkout:
+Fetch the pinned source to an untracked cache, then run the PBF scanner from a
+clean checkout. `fetch` accepts HTTPS descriptors only, downloads to a sibling
+`.part` file, verifies SHA-256 before renaming, and never overwrites either
+file:
 
 ```sh
 cd libraries/maps-v2
-cargo run -p maps2-ingest -- verify ../../pipelines/maps-v2-ingest/sources/london.toml /path/to/greater-london-260814.osm.pbf
-cargo run -p maps2-ingest -- scan /path/to/greater-london-260814.osm.pbf
+cargo run -p maps2-ingest -- fetch ../../pipelines/maps-v2-ingest/sources/london.toml /path/to/cache/greater-london-260814.osm.pbf
+cargo run -p maps2-ingest -- scan /path/to/cache/greater-london-260814.osm.pbf
 ```
 
-`verify` streams SHA-256 and rejects a changed file. `scan` streams the PBF and
-reports the candidate feature counts that the next geometry and tile stages
-must account for. The descriptor carries its upstream URL, date, licence, and
-required attribution; downstream packages will copy those values into their
-own manifest and host-facing attribution surface.
+`verify` remains available when a source is already cached. `scan` streams the
+PBF and reports the candidate feature counts that the next geometry and tile
+stages must account for. The descriptor carries its upstream URL, date,
+licence, and required attribution; downstream packages copy those values into
+their own manifest and host-facing attribution surface.
 
 ## Build the first London vector tiles
 
@@ -53,7 +56,8 @@ without storing them in the repository:
 
 ```sh
 cd libraries/maps-v2
-cargo run -p maps2-ingest -- dem-info /path/to/Copernicus_DSM_COG_10_N51_00_W001_00_DEM.tif -1 51
+cargo run -p maps2-ingest -- fetch ../../pipelines/maps-v2-ingest/sources/london-dem-n51w001.toml /path/to/cache/Copernicus_DSM_COG_10_N51_00_W001_00_DEM.tif
+cargo run -p maps2-ingest -- dem-info /path/to/cache/Copernicus_DSM_COG_10_N51_00_W001_00_DEM.tif -1 51
 ```
 
 The decoder accepts the signed and floating elevation rasters used by
