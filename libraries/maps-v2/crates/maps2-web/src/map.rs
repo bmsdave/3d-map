@@ -7,7 +7,7 @@ use web_sys::WebGl2RenderingContext as Gl;
 
 use maps2_camera::{Camera, CameraPatch, Globeness};
 use maps2_render::{
-    build_fill_bucket, build_label_bucket, build_line_bucket, plan_residency, road_passes,
+    build_building_bucket, build_fill_bucket, build_label_bucket, build_line_bucket, plan_residency, road_passes,
     shading_z_factor, target_level, texel_metres, tile_frame, FillBucket, LabelBucket,
     LineOptions, Pass, RoadLevel, RoadPass, MITER_LIMIT_MAX, View,
 };
@@ -20,6 +20,7 @@ use maps2_tile::{HeightsRaster, TileView, CLASS_HEIGHTS, HEIGHTS_SIDE};
 use maps2_units::{locate, Lonlat, TileId, Zoom};
 
 use crate::gl::{FillProgram, GpuBucket};
+use crate::gl_building::{BuildingProgram, GpuBuildingBucket};
 use crate::gl_terrain::{GroundMeshGpu, HeightTexture, TerrainProgram, TerrainSettings};
 use crate::gl_view::TilePixels;
 use crate::input::Input;
@@ -36,6 +37,7 @@ const SOURCE_LEVELS: [u8; 7] = [0, 5, 8, 10, 12, 14, 16];
 pub struct Map {
     gl: Gl,
     program: FillProgram,
+    building_program: BuildingProgram,
     line_program: LineProgram,
     text: TextProgram,
     boxes: BoxProgram,
@@ -49,6 +51,7 @@ pub struct Map {
     /// Every tile the host handed in, as CPU meshes.
     cpu: HashMap<TileId, FillBucket>,
     lines: HashMap<TileId, maps2_render::LineBucket>,
+    buildings: HashMap<TileId, maps2_render::BuildingBucket>,
     /// Names of every tile the host handed in. Cheap, so they are not
     /// evicted with the GPU buffers — the placement pass filters by
     /// residency instead.
@@ -56,6 +59,7 @@ pub struct Map {
     /// Only what residency admits lives on the GPU.
     gpu: HashMap<TileId, GpuBucket>,
     gpu_lines: HashMap<TileId, GpuLineBucket>,
+    gpu_buildings: HashMap<TileId, GpuBuildingBucket>,
     /// Heights follow the same two lives as the meshes: the bytes stay,
     /// the texture comes and goes with residency.
     heights: HashMap<TileId, Vec<u8>>,
@@ -156,6 +160,7 @@ impl Map {
             .ok_or("webgl2 unavailable")?
             .dyn_into::<Gl>()?;
         let program = FillProgram::link(&gl)?;
+        let building_program = BuildingProgram::link(&gl)?;
         let line_program = LineProgram::link(&gl)?;
         let terrain = TerrainProgram::link(&gl)?;
         let ground = GroundMeshGpu::upload(&gl)?;
@@ -170,6 +175,7 @@ impl Map {
         Ok(Map {
             gl,
             program,
+            building_program,
             line_program,
             text,
             boxes,
@@ -180,9 +186,11 @@ impl Map {
             tiles: HashMap::new(),
             cpu: HashMap::new(),
             lines: HashMap::new(),
+            buildings: HashMap::new(),
             names: HashMap::new(),
             gpu: HashMap::new(),
             gpu_lines: HashMap::new(),
+            gpu_buildings: HashMap::new(),
             heights: HashMap::new(),
             height_textures: HashMap::new(),
             viewport,
@@ -318,10 +326,12 @@ impl Map {
         let view = TileView::parse(bytes).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
         let id = view.header().id;
         let fills = build_fill_bucket(&view).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
+        let buildings = build_building_bucket(&view).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
         let roads = build_line_bucket(&view, self.line_options)
             .map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
         let names = build_label_bucket(&view).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
         self.cpu.insert(id, fills);
+        self.buildings.insert(id, buildings);
         self.lines.insert(id, roads);
         self.names.insert(id, names);
         self.tiles.insert(id, bytes.to_vec());
@@ -427,6 +437,7 @@ impl Map {
         }
         let draw = self.apply_residency();
         self.draw_ground(&draw);
+        self.draw_buildings(&draw);
         self.program.bind(&self.gl);
         self.program.view.set_view(&self.gl, &self.view());
         for id in &draw {
@@ -619,6 +630,40 @@ impl Map {
         }
     }
 
+    fn draw_buildings(&mut self, draw: &[TileId]) {
+        self.building_program.bind(
+            &self.gl,
+            self.metres_to_pixels(),
+            self.camera.tilt_deg(),
+        );
+        self.building_program.view.set_view(&self.gl, &self.view());
+        let colour = fill_color(Class::Building);
+        self.gl.uniform4f(
+            Some(&self.building_program.color),
+            f32::from(colour[0]) / 255.0,
+            f32::from(colour[1]) / 255.0,
+            f32::from(colour[2]) / 255.0,
+            f32::from(colour[3]) / 255.0,
+        );
+        for id in draw {
+            let Some(bucket) = self.gpu_buildings.get(id) else {
+                continue;
+            };
+            self.building_program
+                .view
+                .set_tile(&self.gl, tile_frame(*id), self.tile_pixels(*id));
+            self.building_program
+                .bind_heights(&self.gl, self.height_textures.get(id));
+            bucket.draw(&self.gl, &self.building_program);
+            self.frame_draw_calls += 1;
+        }
+    }
+
+    fn metres_to_pixels(&self) -> f32 {
+        let cos_lat = self.camera.centre().lat.to_radians().cos().max(0.01);
+        (self.camera.zoom().world_pixels() / (maps2_units::EARTH_CIRCUMFERENCE_METRES * cos_lat)) as f32
+    }
+
     /// Height in metres under the camera centre, when a resident tile
     /// can answer. The terrain card's readout, and the cheapest proof
     /// that the raster arrived and is addressed correctly.
@@ -672,6 +717,9 @@ impl Map {
             if let Some(bucket) = self.gpu_lines.remove(id) {
                 bucket.delete(&self.gl);
             }
+            if let Some(bucket) = self.gpu_buildings.remove(id) {
+                bucket.delete(&self.gl);
+            }
             if let Some(texture) = self.height_textures.remove(id) {
                 texture.delete(&self.gl);
             }
@@ -686,6 +734,12 @@ impl Map {
                 && let Ok(gpu) = GpuLineBucket::upload(&self.gl, cpu)
             {
                 self.gpu_lines.insert(*id, gpu);
+            }
+            if let Some(cpu) = self.buildings.get(id)
+                && !cpu.indices.is_empty()
+                && let Ok(gpu) = GpuBuildingBucket::upload(&self.gl, cpu)
+            {
+                self.gpu_buildings.insert(*id, gpu);
             }
             if let Some(bytes) = self.heights.get(id)
                 && let Ok(texture) = HeightTexture::upload(&self.gl, bytes)
@@ -812,7 +866,7 @@ impl Map {
         for (range, alpha) in passes {
             // The ground surface already drew the land, tessellated —
             // a four-corner land rectangle would cut the globe flat.
-            if alpha < 0.004 || range.class == Class::Land {
+            if alpha < 0.004 || range.class == Class::Land || range.class == Class::Building {
                 continue;
             }
             let gl = &self.gl;

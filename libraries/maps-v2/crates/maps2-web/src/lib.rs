@@ -20,6 +20,9 @@ pub use transform::{place_tile, TilePlacement};
 mod gl;
 
 #[cfg(target_arch = "wasm32")]
+mod gl_building;
+
+#[cfg(target_arch = "wasm32")]
 mod line_gl;
 
 #[cfg(target_arch = "wasm32")]

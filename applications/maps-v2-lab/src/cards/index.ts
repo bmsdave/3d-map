@@ -1,5 +1,6 @@
 import { TRANSITIONS } from "../bands";
 import { bandToggleCard } from "./bandToggle";
+import { buildings3d } from "./buildings3d";
 import { globeRelief } from "./globeRelief";
 import { globeTransition } from "./globeTransition";
 import { inputFlat } from "./inputFlat";
@@ -15,6 +16,7 @@ import { zoomBands } from "./zoomBands";
 export const CARDS: readonly CardSpec[] = [
   zoomBands,
   roadsMicro,
+  buildings3d,
   typeSpecimen,
   labelsCollision,
   poiDensity,

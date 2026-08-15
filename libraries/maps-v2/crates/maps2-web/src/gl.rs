@@ -115,6 +115,7 @@ pub(crate) mod bytemuck_like {
     impl Pod for u16 {}
     impl Pod for u32 {}
     impl Pod for maps2_render::LineVertex {}
+    impl Pod for maps2_render::BuildingVertex {}
 }
 
 pub(crate) fn link_program(gl: &Gl, vertex: &str, fragment: &str) -> Result<WebGlProgram, JsValue> {

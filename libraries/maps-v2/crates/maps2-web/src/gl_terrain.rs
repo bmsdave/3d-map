@@ -236,7 +236,7 @@ fn set_constants(
 
 /// One tile's heights on the GPU, wire values untouched.
 pub struct HeightTexture {
-    texture: WebGlTexture,
+    pub(crate) texture: WebGlTexture,
 }
 
 impl HeightTexture {
