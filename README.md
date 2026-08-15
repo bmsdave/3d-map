@@ -33,7 +33,8 @@ see [the beta plan](libraries/maps-v2/docs/real-data-beta-plan.md) and the
 The first ingest foundation can verify, scan, and build z16 vector MT2 tiles
 from the pinned Greater London OSM extract without committing it. It includes
 roads, building footprints, water, parks, outer multipolygon rings, named
-places and amenity points, and attaches pinned Copernicus height rasters to
+places and amenity points. Road bridge/tunnel flags are preserved for the
+renderer, and pinned Copernicus height rasters attach to
 every generated London z16 tile. It clips cross-tile geometry deterministically,
 but does not yet provide browser-ready real-data coverage. See the [pipeline
 guide](pipelines/maps-v2-ingest/README.md).

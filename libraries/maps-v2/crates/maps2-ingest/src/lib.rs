@@ -8,7 +8,7 @@ use std::{
     path::Path,
 };
 
-use maps2_style::Class;
+use maps2_style::{Class, FLAG_BRIDGE, FLAG_TUNNEL};
 use maps2_tile::{
     CLASS_HEIGHTS, BuildingDraft, FeatureDraft, TileBuilder, TileError, HEIGHTS_BYTES, HEIGHTS_SIDE,
     encode_height,
@@ -249,6 +249,12 @@ fn parse_metres(value: &str) -> Option<f32> {
 
 fn parse_positive(value: &str) -> Option<f32> {
     value.parse::<f32>().ok().filter(|number| number.is_finite() && *number > 0.0)
+}
+
+fn osm_flags(tags: &[(&str, &str)]) -> u8 {
+    let bridge = u8::from(tag(tags, "bridge").is_some_and(|value| value != "no"));
+    let tunnel = u8::from(tag(tags, "tunnel").is_some_and(|value| value != "no"));
+    (bridge * FLAG_BRIDGE) | (tunnel * FLAG_TUNNEL)
 }
 
 /// Maps the supported OSM feature tags to their MT2 class.
@@ -727,7 +733,7 @@ pub fn prepare_feature(
     }
     let feature = FeatureDraft {
         id,
-        flags: 0,
+        flags: osm_flags(tags),
         rank: 0,
         name: tag(tags, "name").unwrap_or_default().to_string(),
         vertices: points.into_iter().map(|point| point.coord).collect(),
@@ -756,15 +762,16 @@ pub fn prepare_features(
     let points = grid_points(vertices, level);
     let height = (class == Class::Building).then(|| building_height_m(tags));
     let name = tag(tags, "name").unwrap_or_default();
+    let flags = osm_flags(tags);
     let tiles = covered_tiles(&points, level);
     if is_area(class) {
         tiles.into_iter().filter_map(|tile| {
-            prepared_part(id, class, tile, clip_polygon(&points, tile), height, name)
+            prepared_part(PartInput { id, class, tile, points: clip_polygon(&points, tile), building_height: height, flags, name })
         }).collect()
     } else {
         tiles.into_iter().flat_map(|tile| {
             clipped_line_parts(&points, tile).into_iter().filter_map(move |part| {
-                prepared_part(id, class, tile, part, height, name)
+                prepared_part(PartInput { id, class, tile, points: part, building_height: height, flags, name })
             })
         }).collect()
     }
@@ -906,9 +913,18 @@ fn horizontal_intersection(a: GridPoint, b: GridPoint, y: f64) -> GridPoint {
     point_on(a, b.x - a.x, b.y - a.y, (y - a.y) / (b.y - a.y))
 }
 
-fn prepared_part(
-    id: u32, class: Class, tile: TileId, points: Vec<GridPoint>, building_height: Option<BuildingHeight>, name: &str,
-) -> Option<PreparedFeature> {
+struct PartInput<'a> {
+    id: u32,
+    class: Class,
+    tile: TileId,
+    points: Vec<GridPoint>,
+    building_height: Option<BuildingHeight>,
+    flags: u8,
+    name: &'a str,
+}
+
+fn prepared_part(part: PartInput<'_>) -> Option<PreparedFeature> {
+    let PartInput { id, class, tile, points, building_height, flags, name } = part;
     let mut vertices = points.into_iter().map(|point| tile_coord(point, tile)).collect::<Vec<_>>();
     vertices.dedup();
     if is_area(class) && vertices.first() != vertices.last() {
@@ -917,7 +933,7 @@ fn prepared_part(
     let required = if is_area(class) { 4 } else { 2 };
     (vertices.len() >= required).then(|| PreparedFeature {
         tile, class, building_height,
-        feature: FeatureDraft { id, flags: 0, rank: 0, name: name.to_string(), vertices },
+        feature: FeatureDraft { id, flags, rank: 0, name: name.to_string(), vertices },
     })
 }
 
@@ -1064,6 +1080,14 @@ mod tests {
     }
 
     #[test]
+    fn osm_road_flags_preserve_bridges_and_tunnels() {
+        assert_eq!(osm_flags(&[("bridge", "yes")]), maps2_style::FLAG_BRIDGE);
+        assert_eq!(osm_flags(&[("tunnel", "yes")]), maps2_style::FLAG_TUNNEL);
+        assert_eq!(osm_flags(&[("bridge", "yes"), ("tunnel", "yes")]), maps2_style::FLAG_BRIDGE | maps2_style::FLAG_TUNNEL);
+        assert_eq!(osm_flags(&[("bridge", "no")]), 0);
+    }
+
+    #[test]
     fn geometry_adapter_keeps_a_named_point_feature() {
         let point = Lonlat { lon: -0.1278, lat: 51.5074 };
 
@@ -1162,6 +1186,19 @@ attribution = "© OpenStreetMap contributors""#,
         assert_eq!(features[0].feature.vertices.len(), 3);
         assert_eq!(features[1].feature.vertices.len(), 2);
         assert!(features.iter().all(|feature| feature.feature.name == "Boundary Road"));
+    }
+
+    #[test]
+    fn geometry_adapter_carries_road_structure_flags_into_tiles() {
+        let vertices = [
+            Lonlat { lon: -0.1278, lat: 51.5074 },
+            Lonlat { lon: -0.1277, lat: 51.5074 },
+        ];
+
+        let features = prepare_features(21, &[("highway", "primary"), ("bridge", "yes")], &vertices, 16);
+
+        assert_eq!(features.len(), 1);
+        assert_eq!(features[0].feature.flags, maps2_style::FLAG_BRIDGE);
     }
 
     #[test]
