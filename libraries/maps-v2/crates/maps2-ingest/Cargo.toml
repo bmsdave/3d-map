@@ -7,6 +7,8 @@ license = "MIT"
 
 [dependencies]
 maps2-style = { path = "../maps2-style" }
+maps2-tile = { path = "../maps2-tile" }
+maps2-units = { path = "../maps2-units" }
 osmpbfreader = "0.19.1"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"

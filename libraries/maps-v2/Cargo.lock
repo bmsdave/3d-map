@@ -293,6 +293,8 @@ name = "maps2-ingest"
 version = "0.1.0-alpha"
 dependencies = [
  "maps2-style",
+ "maps2-tile",
+ "maps2-units",
  "osmpbfreader",
  "serde",
  "sha2",

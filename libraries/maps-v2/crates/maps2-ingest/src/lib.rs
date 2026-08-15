@@ -3,6 +3,8 @@
 use std::{fmt, io::Read};
 
 use maps2_style::Class;
+use maps2_tile::FeatureDraft;
+use maps2_units::{Lonlat, TileId, locate};
 use osmpbfreader::OsmPbfReader;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -314,6 +316,48 @@ fn count_class(summary: &mut OsmSummary, class: Option<Class>) {
     }
 }
 
+/// A classified OSM feature expressed on the MT2 coordinate grid.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PreparedFeature {
+    /// The single tile that owns all feature vertices.
+    pub tile: TileId,
+    /// The MT2 section class.
+    pub class: Class,
+    /// The MT2 feature payload.
+    pub feature: FeatureDraft,
+    /// The normalized height source, only for buildings.
+    pub building_height: Option<BuildingHeight>,
+}
+
+/// Converts a classified OSM geometry that fits one tile to its MT2 form.
+///
+/// Returns `None` for unsupported tags, empty geometry, or geometry that
+/// crosses a tile boundary. Boundary clipping is deliberately performed by
+/// the package tiler, not by this coordinate adapter.
+#[must_use]
+pub fn prepare_feature(
+    id: u32,
+    tags: &[(&str, &str)],
+    vertices: &[Lonlat],
+    level: u8,
+) -> Option<PreparedFeature> {
+    let class = classify_osm_tags(tags)?;
+    let points = vertices.iter().copied().map(|point| locate(point, level)).collect::<Vec<_>>();
+    let tile = points.first()?.tile;
+    if points.iter().any(|point| point.tile != tile) {
+        return None;
+    }
+    let feature = FeatureDraft {
+        id,
+        flags: 0,
+        rank: 0,
+        name: tag(tags, "name").unwrap_or_default().to_string(),
+        vertices: points.into_iter().map(|point| point.coord).collect(),
+    };
+    let building_height = (class == Class::Building).then(|| building_height_m(tags));
+    Some(PreparedFeature { tile, class, feature, building_height })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -386,5 +430,21 @@ attribution = "© OpenStreetMap contributors""#,
 
         assert_eq!(descriptor.source.name(), "london.osm.pbf");
         assert_eq!(descriptor.kind, SourceKind::OsmPbf);
+    }
+
+    #[test]
+    fn geometry_adapter_keeps_a_building_in_its_mt2_tile() {
+        let vertices = [
+            Lonlat { lon: -0.1278, lat: 51.5074 },
+            Lonlat { lon: -0.1277, lat: 51.5074 },
+            Lonlat { lon: -0.1277, lat: 51.5075 },
+            Lonlat { lon: -0.1278, lat: 51.5074 },
+        ];
+        let feature = prepare_feature(17, &[("building", "yes"), ("height", "42")], &vertices, 16)
+            .expect("a small building fits one tile");
+
+        assert_eq!(feature.class, Class::Building);
+        assert_eq!(feature.feature.vertices.len(), vertices.len());
+        assert_eq!(feature.building_height, Some(BuildingHeight::Explicit(42.0)));
     }
 }
