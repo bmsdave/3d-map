@@ -1,9 +1,9 @@
 //! Reproducible input validation for map-data builds.
 
-use std::{fmt, io::Read};
+use std::{collections::HashMap, fmt, io::Read};
 
 use maps2_style::Class;
-use maps2_tile::FeatureDraft;
+use maps2_tile::{FeatureDraft, TileBuilder, TileError};
 use maps2_units::{Lonlat, TileId, locate};
 use osmpbfreader::OsmPbfReader;
 use serde::Deserialize;
@@ -358,9 +358,35 @@ pub fn prepare_feature(
     Some(PreparedFeature { tile, class, feature, building_height })
 }
 
+/// Builds deterministic MT2 tile bytes from single-tile prepared features.
+///
+/// # Errors
+///
+/// Returns [`TileError`] when the MT2 v1 size limits are exceeded.
+pub fn build_tiles(features: &[PreparedFeature]) -> Result<Vec<(TileId, Vec<u8>)>, TileError> {
+    let mut grouped = HashMap::<TileId, Vec<&PreparedFeature>>::new();
+    for feature in features {
+        grouped.entry(feature.tile).or_default().push(feature);
+    }
+    let mut ids = grouped.keys().copied().collect::<Vec<_>>();
+    ids.sort_by_key(|id| (id.z, id.x, id.y));
+    ids.into_iter().map(|id| build_tile(id, &grouped[&id])).collect()
+}
+
+fn build_tile(id: TileId, features: &[&PreparedFeature]) -> Result<(TileId, Vec<u8>), TileError> {
+    let mut features = features.to_vec();
+    features.sort_by_key(|feature| (feature.class.code(), feature.feature.id));
+    let mut builder = TileBuilder::new(id);
+    for feature in features {
+        builder.push(feature.class.code(), feature.feature.clone());
+    }
+    Ok((id, builder.build()?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use maps2_tile::TileView;
 
     const HELLO_WORLD_SHA256: &str = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
 
@@ -446,5 +472,21 @@ attribution = "© OpenStreetMap contributors""#,
         assert_eq!(feature.class, Class::Building);
         assert_eq!(feature.feature.vertices.len(), vertices.len());
         assert_eq!(feature.building_height, Some(BuildingHeight::Explicit(42.0)));
+    }
+
+    #[test]
+    fn package_writer_groups_prepared_features_into_deterministic_mt2_tiles() {
+        let vertices = [
+            Lonlat { lon: -0.1278, lat: 51.5074 },
+            Lonlat { lon: -0.1277, lat: 51.5074 },
+            Lonlat { lon: -0.1278, lat: 51.5074 },
+        ];
+        let feature = prepare_feature(17, &[("building", "yes")], &vertices, 16).expect("one tile");
+
+        let tiles = build_tiles(&[feature]).expect("tile package");
+
+        assert_eq!(tiles.len(), 1);
+        let tile = TileView::parse(&tiles[0].1).expect("valid MT2");
+        assert!(tile.section(Class::Building.code()).is_some());
     }
 }
