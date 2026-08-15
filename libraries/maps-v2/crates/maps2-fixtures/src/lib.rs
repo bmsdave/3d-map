@@ -18,6 +18,7 @@ pub use ridge::{
 use maps2_style::{Class, entry_band};
 use maps2_tile::{FeatureDraft, TileBuilder};
 use maps2_units::{Lonlat, TileCoord, TileId, Zoom, locate, world_position_px};
+use num_traits::ToPrimitive;
 
 mod roads;
 
@@ -81,7 +82,7 @@ fn to_local(value: f64, w0: f64, w1: f64) -> f64 {
 }
 
 fn quantise(value: f64) -> u16 {
-    value.round().clamp(0.0, 65535.0) as u16
+    value.round().clamp(0.0, 65535.0).to_u16().unwrap_or(u16::MAX)
 }
 
 /// A world rect clipped into a tile; None when nothing visible remains.
@@ -118,21 +119,22 @@ pub fn coverage() -> Vec<TileId> {
     for level in COVERAGE_LEVELS {
         let centre = locate(EALING, level).tile;
         let max = (1_u32 << level) - 1;
-        for dy in -1_i64..=1 {
-            for dx in -1_i64..=1 {
-                let x = i64::from(centre.x) + dx;
-                let y = i64::from(centre.y) + dy;
-                if x < 0 || y < 0 || x > i64::from(max) || y > i64::from(max) {
-                    continue;
-                }
-                let id = TileId { z: level, x: x as u32, y: y as u32 };
-                if !out.contains(&id) {
-                    out.push(id);
-                }
-            }
+        for id in (-1_i64..=1)
+            .flat_map(|dy| (-1_i64..=1).map(move |dx| coverage_tile(level, centre, max, dx, dy)))
+            .flatten()
+        {
+            if !out.contains(&id) { out.push(id); }
         }
     }
     out
+}
+
+fn coverage_tile(level: u8, centre: TileId, max: u32, dx: i64, dy: i64) -> Option<TileId> {
+    let x = i64::from(centre.x) + dx;
+    let y = i64::from(centre.y) + dy;
+    (0..=i64::from(max)).contains(&x).then_some(())?;
+    (0..=i64::from(max)).contains(&y).then_some(())?;
+    Some(TileId { z: level, x: u32::try_from(x).ok()?, y: u32::try_from(y).ok()? })
 }
 
 /// The whole package, deterministically.
@@ -142,6 +144,10 @@ pub fn ealing_tiles() -> Vec<(TileId, Vec<u8>)> {
 }
 
 /// One tile of the synthetic world.
+///
+/// # Panics
+///
+/// Panics only if this bounded synthetic fixture cannot fit MT2.
 #[must_use]
 pub fn tile_bytes(id: TileId) -> Vec<u8> {
     let mut builder = TileBuilder::new(id);
@@ -183,7 +189,7 @@ fn push_places(builder: &mut TileBuilder, window: WorldRect) {
     let named = PLACES
         .iter()
         .enumerate()
-        .map(|(i, (name, rank, dx, dy))| (50 + i as u32, *name, *rank, xc + dx, yc + dy))
+        .map(|(i, (name, rank, dx, dy))| (50 + u32::try_from(i).unwrap_or_default(), *name, *rank, xc + dx, yc + dy))
         .chain([(BOUNDARY_ID, "Boundary Oak", 4_u8, corner.0, corner.1)]);
     for (id, name, rank, x, y) in named {
         let Some(coord) = place_in(window, x, y) else {
@@ -269,7 +275,7 @@ fn poi_rank(global: (u32, u32)) -> u8 {
 
 fn poi_name(global: (u32, u32)) -> String {
     let base = POI_NAMES[(global.0.wrapping_add(global.1.wrapping_mul(3)) as usize) % 14];
-    if (global.0 + global.1) % 5 == 0 {
+    if (global.0 + global.1).is_multiple_of(5) {
         format!("{base} {}", (global.0.wrapping_mul(3).wrapping_add(global.1)) % 90 + 10)
     } else {
         base.to_string()
@@ -309,16 +315,16 @@ fn push_roads(builder: &mut TileBuilder, level: u8, window: WorldRect) {
 
 fn push_street_grid(builder: &mut TileBuilder, window: WorldRect) {
     let mut id = 100;
-    let mut k = (window.x0 / STREET_SPACING).ceil() as i64;
-    while (k as f64) * STREET_SPACING < window.x1 {
-        let x = quantise(to_local((k as f64) * STREET_SPACING, window.x0, window.x1));
+    let mut k = (window.x0 / STREET_SPACING).ceil().to_i64().unwrap_or_default();
+    while k.to_f64().unwrap_or_default() * STREET_SPACING < window.x1 {
+        let x = quantise(to_local(k.to_f64().unwrap_or_default() * STREET_SPACING, window.x0, window.x1));
         builder.push(Class::RoadResidential.code(), line(id, TileCoord(x, 0), TileCoord(x, 65535)));
         id += 1;
         k += 1;
     }
-    let mut k = (window.y0 / STREET_SPACING).ceil() as i64;
-    while (k as f64) * STREET_SPACING < window.y1 {
-        let y = quantise(to_local((k as f64) * STREET_SPACING, window.y0, window.y1));
+    let mut k = (window.y0 / STREET_SPACING).ceil().to_i64().unwrap_or_default();
+    while k.to_f64().unwrap_or_default() * STREET_SPACING < window.y1 {
+        let y = quantise(to_local(k.to_f64().unwrap_or_default() * STREET_SPACING, window.y0, window.y1));
         builder.push(Class::RoadResidential.code(), line(id, TileCoord(0, y), TileCoord(65535, y)));
         id += 1;
         k += 1;

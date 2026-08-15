@@ -9,6 +9,7 @@ license = "MIT"
 maps2-units = { path = "../maps2-units" }
 maps2-tile = { path = "../maps2-tile" }
 maps2-style = { path = "../maps2-style" }
+num-traits = "0.2"
 
 [lints]
 workspace = true
