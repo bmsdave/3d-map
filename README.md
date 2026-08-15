@@ -24,15 +24,16 @@ terrain, and globe relief.
 
 ## What is not included
 
-No OSM/DEM-to-MT2 package build, real-world London/world package, `roads-real`, routing,
+No complete OSM/DEM-to-MT2 package build, real-world London/world package, `roads-real`, routing,
 geocoding, search, production data hosting, mobile host, line labels, POI icon
 labels, or full Unicode shaping is included. Real-world data is a beta goal;
 see [the beta plan](libraries/maps-v2/docs/real-data-beta-plan.md) and the
 [production roadmap](libraries/maps-v2/docs/production-roadmap.md).
 
-The first ingest foundation can verify and scan the pinned Greater London OSM
-extract without committing it; it does not yet emit browser tiles. See the
-[pipeline guide](pipelines/maps-v2-ingest/README.md).
+The first ingest foundation can verify, scan, and build z16 vector MT2 tiles
+from the pinned Greater London OSM extract without committing it. It does not
+yet clip cross-tile geometry, ingest DEM, or provide browser-ready coverage.
+See the [pipeline guide](pipelines/maps-v2-ingest/README.md).
 
 ## Try the lab
 

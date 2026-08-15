@@ -1,11 +1,17 @@
 //! Reproducible input validation for map-data builds.
 
-use std::{collections::HashMap, fmt, io::Read};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    fs::File,
+    io::Read,
+    path::Path,
+};
 
 use maps2_style::Class;
 use maps2_tile::{FeatureDraft, TileBuilder, TileError};
 use maps2_units::{Lonlat, TileId, locate};
-use osmpbfreader::OsmPbfReader;
+use osmpbfreader::{NodeId, OsmObj, OsmPbfReader};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -275,13 +281,26 @@ pub struct OsmSummary {
     pub pois: u64,
 }
 
-/// The OSM PBF reader rejected an input stream.
+/// The OSM PBF reader or resolver rejected an input stream.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OsmError(String);
+pub enum OsmError {
+    /// The PBF file could not be read or decoded.
+    Read(String),
+    /// An OSM way ID cannot fit the MT2 v1 feature-ID field.
+    WayIdOutOfRange(i64),
+    /// A classified way refers to a node missing from the PBF stream.
+    MissingNode { way_id: u32, node_id: i64 },
+}
 
 impl fmt::Display for OsmError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid OSM PBF: {}", self.0)
+        match self {
+            Self::Read(error) => write!(f, "invalid OSM PBF: {error}"),
+            Self::WayIdOutOfRange(id) => write!(f, "OSM way ID {id} exceeds MT2 v1"),
+            Self::MissingNode { way_id, node_id } => {
+                write!(f, "OSM way {way_id} references missing node {node_id}")
+            }
+        }
     }
 }
 
@@ -296,12 +315,91 @@ pub fn scan_osm_pbf(input: impl Read) -> Result<OsmSummary, OsmError> {
     let mut reader = OsmPbfReader::new(input);
     let mut summary = OsmSummary::default();
     for object in reader.iter() {
-        let object = object.map_err(|error| OsmError(error.to_string()))?;
+        let object = object.map_err(|error| OsmError::Read(error.to_string()))?;
         summary.objects += 1;
         let tags = object.tags().iter().map(|(key, value)| (key.as_str(), value.as_str())).collect::<Vec<_>>();
         count_class(&mut summary, classify_osm_tags(&tags));
     }
     Ok(summary)
+}
+
+#[derive(Clone, Debug)]
+struct RawWay {
+    id: u32,
+    tags: Vec<(String, String)>,
+    nodes: Vec<NodeId>,
+}
+
+/// Resolves classified OSM ways to MT2-ready geometry using two PBF passes.
+///
+/// # Errors
+///
+/// Returns [`OsmError`] for unreadable PBF input, missing nodes, or an OSM ID
+/// that cannot be represented by MT2 v1.
+pub fn resolve_osm_pbf(path: impl AsRef<Path>, level: u8) -> Result<Vec<PreparedFeature>, OsmError> {
+    let path = path.as_ref();
+    let ways = read_classified_ways(path)?;
+    let nodes = read_referenced_nodes(path, &referenced_nodes(&ways))?;
+    prepare_ways(&ways, &nodes, level)
+}
+
+fn read_classified_ways(path: &Path) -> Result<Vec<RawWay>, OsmError> {
+    let input = File::open(path).map_err(|error| OsmError::Read(error.to_string()))?;
+    let mut reader = OsmPbfReader::new(input);
+    let mut ways = Vec::new();
+    for object in reader.iter() {
+        let OsmObj::Way(way) = object.map_err(|error| OsmError::Read(error.to_string()))? else {
+            continue;
+        };
+        let tags = owned_tags(&way.tags);
+        if classify_osm_tags(&tag_refs(&tags)).is_none() {
+            continue;
+        }
+        let id = u32::try_from(way.id.0).map_err(|_| OsmError::WayIdOutOfRange(way.id.0))?;
+        ways.push(RawWay { id, tags, nodes: way.nodes });
+    }
+    Ok(ways)
+}
+
+fn referenced_nodes(ways: &[RawWay]) -> HashSet<NodeId> {
+    ways.iter().flat_map(|way| way.nodes.iter().copied()).collect()
+}
+
+fn read_referenced_nodes(path: &Path, wanted: &HashSet<NodeId>) -> Result<HashMap<NodeId, Lonlat>, OsmError> {
+    let input = File::open(path).map_err(|error| OsmError::Read(error.to_string()))?;
+    let mut reader = OsmPbfReader::new(input);
+    let mut nodes = HashMap::with_capacity(wanted.len());
+    for object in reader.iter() {
+        let OsmObj::Node(node) = object.map_err(|error| OsmError::Read(error.to_string()))? else {
+            continue;
+        };
+        if wanted.contains(&node.id) {
+            nodes.insert(node.id, Lonlat { lon: node.lon(), lat: node.lat() });
+        }
+    }
+    Ok(nodes)
+}
+
+fn prepare_ways(ways: &[RawWay], nodes: &HashMap<NodeId, Lonlat>, level: u8) -> Result<Vec<PreparedFeature>, OsmError> {
+    ways.iter().map(|way| prepare_way(way, nodes, level)).collect::<Result<Vec<_>, _>>()
+        .map(|features| features.into_iter().flatten().collect())
+}
+
+fn prepare_way(way: &RawWay, nodes: &HashMap<NodeId, Lonlat>, level: u8) -> Result<Option<PreparedFeature>, OsmError> {
+    let vertices = way
+        .nodes
+        .iter()
+        .map(|node| nodes.get(node).copied().ok_or(OsmError::MissingNode { way_id: way.id, node_id: node.0 }))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(prepare_feature(way.id, &tag_refs(&way.tags), &vertices, level))
+}
+
+fn owned_tags(tags: &osmpbfreader::Tags) -> Vec<(String, String)> {
+    tags.iter().map(|(key, value)| (key.to_string(), value.to_string())).collect()
+}
+
+fn tag_refs(tags: &[(String, String)]) -> Vec<(&str, &str)> {
+    tags.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect()
 }
 
 fn count_class(summary: &mut OsmSummary, class: Option<Class>) {
@@ -488,5 +586,13 @@ attribution = "© OpenStreetMap contributors""#,
         assert_eq!(tiles.len(), 1);
         let tile = TileView::parse(&tiles[0].1).expect("valid MT2");
         assert!(tile.section(Class::Building.code()).is_some());
+    }
+
+    #[test]
+    fn resolver_rejects_a_corrupt_pbf_file() {
+        let file = tempfile::NamedTempFile::new().expect("temporary PBF");
+        std::fs::write(file.path(), b"not an osm pbf").expect("write corrupt bytes");
+
+        assert!(resolve_osm_pbf(file.path(), 16).is_err());
     }
 }

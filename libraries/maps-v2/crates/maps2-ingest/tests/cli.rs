@@ -11,4 +11,5 @@ fn help_describes_the_pbf_scan_command() {
     let help = String::from_utf8_lossy(&output.stdout);
     assert!(help.contains("scan <osm.pbf>"));
     assert!(help.contains("verify <source.toml> <input>"));
+    assert!(help.contains("build <source.toml> <osm.pbf> <level> <output-dir>"));
 }
