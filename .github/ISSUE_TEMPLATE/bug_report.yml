@@ -1,0 +1,28 @@
+name: Bug report
+description: Report a reproducible Maps SDK v2 alpha issue
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Please do not include proprietary data, secrets, or the Muse model payload."
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include the lab card URL, commands, and expected versus actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, browser version, Rust, Node, and GPU/WebGL details if relevant.
+    validations:
+      required: true

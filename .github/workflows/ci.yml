@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust:
+    name: Rust SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: libraries/maps-v2
+      - run: cargo test --manifest-path libraries/maps-v2/Cargo.toml --workspace
+      - run: cargo clippy --manifest-path libraries/maps-v2/Cargo.toml --workspace --all-targets -- -D warnings
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: ./scripts/check-coverage.sh maps2
+
+  lab:
+    name: Browser lab
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: libraries/maps-v2
+      - uses: jetli/wasm-pack-action@v0.4.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: applications/maps-v2-lab/package-lock.json
+      - working-directory: applications/maps-v2-lab
+        run: npm ci
+      - working-directory: applications/maps-v2-lab
+        run: npm run build
+      - working-directory: applications/maps-v2-lab
+        run: npx playwright install --with-deps chromium
+      - working-directory: applications/maps-v2-lab
+        run: npm run test:e2e

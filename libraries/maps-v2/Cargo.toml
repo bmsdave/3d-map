@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "crates/maps2-units",
+    "crates/maps2-camera",
+    "crates/maps2-tile",
+    "crates/maps2-style",
+    "crates/maps2-text",
+    "crates/maps2-fixtures",
+    "crates/maps2-render",
+    "crates/maps2-web",
+]
+resolver = "2"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }

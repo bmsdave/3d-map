@@ -1,0 +1,14 @@
+[package]
+name = "maps2-fixtures"
+version = "0.1.0-alpha"
+edition = "2024"
+description = "Deterministic synthetic world packages for the Maps SDK v2 lab"
+license = "Apache-2.0"
+
+[dependencies]
+maps2-units = { path = "../maps2-units" }
+maps2-tile = { path = "../maps2-tile" }
+maps2-style = { path = "../maps2-style" }
+
+[lints]
+workspace = true

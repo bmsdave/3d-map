@@ -1,0 +1,9 @@
+.DS_Store
+libraries/maps-v2/target/
+applications/maps-v2-lab/node_modules/
+applications/maps-v2-lab/dist/
+applications/maps-v2-lab/.vite/
+applications/maps-v2-lab/src/generated/
+applications/maps-v2-lab/public/fixtures/
+test-results/
+.coverage/

@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose a scoped Maps SDK v2 improvement
+title: "feature: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or SDK need does this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed outcome
+      description: Include API, tile-format, fixture, and test implications.
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope acknowledgement
+      options:
+        - label: This does not assume real-world data support exists in the alpha.
+          required: true

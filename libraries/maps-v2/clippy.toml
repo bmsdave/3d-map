@@ -1,0 +1,8 @@
+# A long function is not explained by a comment above it; it is split into named
+# steps. These thresholds are what make that not a matter of taste.
+too-many-lines-threshold = 40
+# Six, not five, because clippy counts the receiver: a method gets five real
+# parameters, the same as ESLint, detekt and SwiftLint allow.
+too-many-arguments-threshold = 6
+excessive-nesting-threshold = 4
+cognitive-complexity-threshold = 15

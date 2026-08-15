@@ -1,0 +1,121 @@
+// roads-micro: сцена патологий на живом SDK. Утверждения — про стыки,
+// казинг и ширины из debug(), а не про пиксели; пиксели проверяет
+// единственный golden-скриншот в конце.
+
+import { expect, test, type Page } from "@playwright/test";
+
+async function openRoads(page: Page) {
+  await page.goto("/#/card/roads-micro");
+  const stage = page.getByTestId("stage");
+  await expect(stage).toHaveAttribute("data-state", "ready");
+  return stage;
+}
+
+function joins(page: Page) {
+  return page.getByTestId("readout-joins");
+}
+
+test("сцена собирается со стыками обоих видов", async ({ page }) => {
+  await openRoads(page);
+  // Круг митрится весь, острый угол и шикана — бевелятся.
+  await expect(joins(page)).toContainText(/митра [1-9]\d*/);
+  await expect(joins(page)).toContainText(/бевел [1-9]\d*/);
+});
+
+test("предел митры превращает бевелы в митры", async ({ page }) => {
+  const stage = await openRoads(page);
+  const bevels = async () => {
+    const text = (await joins(page).textContent()) ?? "";
+    return Number(/бевел (\d+)/.exec(text)?.[1] ?? -1);
+  };
+
+  // Сцена держит по углу на каждое положение ручки: 40° (митра 2.9) и
+  // 75° (митра 1.6) плюс острый угол, который не спрямляется никаким
+  // пределом. Поэтому счёт бевелов строго падает с ростом предела.
+  await page.getByTestId("miter-limit").selectOption("1.5");
+  await expect(stage).toHaveAttribute("data-miter-limit", "1.5");
+  expect(await bevels()).toBe(3);
+
+  await page.getByTestId("miter-limit").selectOption("2");
+  expect(await bevels()).toBe(2);
+
+  await page.getByTestId("miter-limit").selectOption("4");
+  await expect(stage).toHaveAttribute("data-miter-limit", "4.0");
+  expect(await bevels()).toBe(1);
+});
+
+test("тогл казинга снимает нижний проход", async ({ page }) => {
+  const stage = await openRoads(page);
+  await expect(stage).toHaveAttribute("data-casing", "true");
+  await expect(page.getByTestId("readout-casing")).toHaveText("включён");
+
+  await page.getByTestId("casing-toggle").uncheck();
+  await expect(stage).toHaveAttribute("data-casing", "false");
+  await expect(page.getByTestId("readout-casing")).toHaveText("выключен");
+});
+
+test("ширина дороги задаётся в экранных пикселях", async ({ page }) => {
+  await openRoads(page);
+  const widths = page.getByTestId("readout-widths");
+  // Рампа стиля на z17: магистраль заметно шире улицы.
+  await expect(widths).toContainText("магистраль 12.0");
+  await expect(widths).toContainText("улица 4.5");
+
+  await page.getByTestId("width-motorway").fill("20");
+  await page.getByTestId("width-motorway").blur();
+  await expect(widths).toContainText("магистраль 20.0");
+});
+
+// Столбец пикселей поперёк магистрали: земля → казинг → заливка →
+// казинг → земля. Проба — хук вне горячего пути, кадр за неё не платит.
+async function columnAcrossMotorway(page: Page): Promise<number[]> {
+  return page.evaluate(() => {
+    const map = (
+      window as unknown as {
+        maps2: { render(): void; samplePixel(x: number, y: number): number[] };
+      }
+    ).maps2;
+    map.render();
+    const brightness: number[] = [];
+    for (let y = 230; y <= 270; y++) {
+      const [r, g, b] = map.samplePixel(360, y);
+      brightness.push((r ?? 0) + (g ?? 0) + (b ?? 0));
+    }
+    return brightness;
+  });
+}
+
+const CENTRE_INDEX = 249 - 230;
+
+test("казинг темнее заливки, центр ленты — цвет заливки", async ({ page }) => {
+  await openRoads(page);
+  const column = await columnAcrossMotorway(page);
+  const land = column[0] ?? 0;
+  const centre = column[CENTRE_INDEX] ?? 0;
+
+  expect(centre).toBeGreaterThan(land);
+  const rim = Math.min(...column);
+  expect(rim).toBeLessThan(land);
+
+  // Тёмная кромка обязана быть по обе стороны от центра, иначе это не
+  // казинг, а случайно попавший в пробу сосед.
+  const dark = column.flatMap((v, i) => (v < land ? [i] : []));
+  expect(Math.min(...dark)).toBeLessThan(CENTRE_INDEX);
+  expect(Math.max(...dark)).toBeGreaterThan(CENTRE_INDEX);
+});
+
+test("снятый казинг убирает тёмную кромку с ленты", async ({ page }) => {
+  await openRoads(page);
+  await page.getByTestId("casing-toggle").uncheck();
+  const column = await columnAcrossMotorway(page);
+  const land = column[0] ?? 0;
+  expect(column[CENTRE_INDEX]).toBeGreaterThan(land);
+  expect(Math.min(...column)).toBeGreaterThanOrEqual(land);
+});
+
+test("roads-micro: эталонный кадр", async ({ page }) => {
+  const stage = await openRoads(page);
+  await expect(stage.locator("canvas")).toHaveScreenshot("roads-micro.png", {
+    maxDiffPixelRatio: 0.002,
+  });
+});

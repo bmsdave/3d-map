@@ -1,0 +1,25 @@
+{
+  "name": "maps-v2-lab",
+  "version": "0.1.0-alpha",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "npm run build:sdk && vite",
+    "build": "npm run build:sdk && npm run typecheck && vite build",
+    "build:sdk": "npm run build:wasm && npm run build:fixtures",
+    "build:wasm": "wasm-pack build ../../libraries/maps-v2/crates/maps2-web --target web --out-dir ../../../../applications/maps-v2-lab/src/generated/maps2-web --release --no-typescript",
+    "build:fixtures": "cargo run --quiet --manifest-path ../../libraries/maps-v2/Cargo.toml --bin gen-fixtures -- public/fixtures",
+    "preview": "vite preview",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "typescript": "5.9.3",
+    "vite": "8.0.13"
+  }
+}

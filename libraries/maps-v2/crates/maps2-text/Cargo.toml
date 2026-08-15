@@ -1,0 +1,12 @@
+[package]
+name = "maps2-text"
+version = "0.1.0-alpha"
+edition = "2024"
+description = "Glyph atlas, screen-space text layout and label collision for the Maps SDK v2"
+license = "Apache-2.0"
+
+[dependencies]
+maps2-units = { path = "../maps2-units" }
+
+[lints]
+workspace = true

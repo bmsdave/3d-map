@@ -1,0 +1,32 @@
+# v0.1.0-alpha release boundary
+
+## Included
+
+- Rust workspace crates for units, camera, MT2 v1 tile reading, style, fixture
+  generation, rendering, text placement, and the WebGL2/Wasm boundary.
+- A deterministic synthetic fixture set and browser lab cards for zoom bands,
+  roads, point-label collision, density, input, globe transition, terrain, and
+  globe relief.
+- Rust tests, Playwright visual/interaction checks, and an on-demand p95
+  rendering-card frame-budget check of 10 ms or less.
+
+## Excluded
+
+This is not a map of London or the world. Stage-8 real-data work is absent:
+there is no OSM/DEM ingestion, reproducible source acquisition, provenance and
+attribution handling, London/world package, or `roads-real` surface. Line
+labels and POI icon-plus-text labels are planned but not implemented. Text is a
+deterministic Latin fixture atlas, not a general Unicode shaping system.
+
+The alpha also excludes production availability, mobile host support, search,
+routing, geocoding, analytics layers, and a data-hosting service.
+
+## Compatibility and release policy
+
+MT2 v1 is frozen. The browser API and fixture content remain alpha APIs and may
+change before beta. Goldens are deterministic fixtures: update them only with a
+documented rendering reason. Real-world data support is explicitly a beta
+milestone; its delivery plan is [real-data-beta-plan.md](real-data-beta-plan.md).
+
+This source is licensed under Apache-2.0. The alpha's API and data limitations
+remain unchanged by that license choice.
