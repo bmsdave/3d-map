@@ -765,7 +765,7 @@ pub fn prepare_features(
     if matches!(class, Class::Poi | Class::Label) && vertices.len() == 1 {
         return prepare_feature(id, tags, vertices, level).into_iter().collect();
     }
-    let points = grid_points(vertices, level);
+    let points = simplify_road(grid_points(vertices, level), class, level);
     let height = (class == Class::Building).then(|| building_height_m(tags));
     let name = tag(tags, "name").unwrap_or_default();
     let flags = osm_flags(tags);
@@ -795,6 +795,37 @@ fn grid_points(vertices: &[Lonlat], level: u8) -> Vec<GridPoint> {
         let (x, y) = world_position_px(*point, zoom);
         GridPoint { x: x / 256.0, y: y / 256.0 }
     }).collect()
+}
+
+fn simplify_road(points: Vec<GridPoint>, class: Class, level: u8) -> Vec<GridPoint> {
+    if class.road_rank().is_none() || level >= 16 || points.len() < 3 {
+        return points;
+    }
+    let tolerance = generalisation_tolerance(level);
+    let mut simplified = vec![points[0]];
+    for index in 1..points.len() - 1 {
+        let previous = *simplified.last().expect("first point remains");
+        if point_distance(points[index], previous, points[index + 1]) > tolerance {
+            simplified.push(points[index]);
+        }
+    }
+    simplified.push(*points.last().expect("nonempty road"));
+    simplified
+}
+
+fn generalisation_tolerance(level: u8) -> f64 {
+    let scale = 1_u32 << u32::from(16_u8.saturating_sub(level));
+    f64::from(scale * 2) / f64::from(u16::MAX)
+}
+
+fn point_distance(point: GridPoint, start: GridPoint, end: GridPoint) -> f64 {
+    let (dx, dy) = (end.x - start.x, end.y - start.y);
+    let length = dx.mul_add(dx, dy * dy);
+    if length <= f64::EPSILON {
+        return (point.x - start.x).hypot(point.y - start.y);
+    }
+    let t = ((point.x - start.x).mul_add(dx, (point.y - start.y) * dy) / length).clamp(0.0, 1.0);
+    (point.x - start.x - t * dx).hypot(point.y - start.y - t * dy)
 }
 
 fn is_area(class: Class) -> bool {
@@ -1117,6 +1148,21 @@ mod tests {
 
         assert!(prepare_features(20, &[("building", "yes")], &building, 12).is_empty());
         assert_eq!(prepare_features(20, &[("building", "yes")], &building, 16).len(), 1);
+    }
+
+    #[test]
+    fn low_zoom_roads_drop_nearly_collinear_vertices() {
+        let tile = locate(Lonlat { lon: -0.1278, lat: 51.5074 }, 12).tile;
+        let road = [
+            to_lonlat(TilePoint { tile, coord: TileCoord(100, 100) }),
+            to_lonlat(TilePoint { tile, coord: TileCoord(300, 101) }),
+            to_lonlat(TilePoint { tile, coord: TileCoord(500, 100) }),
+        ];
+
+        let features = prepare_features(22, &[("highway", "primary")], &road, 12);
+
+        assert_eq!(features.len(), 1);
+        assert_eq!(features[0].feature.vertices.len(), 2);
     }
 
     #[test]
