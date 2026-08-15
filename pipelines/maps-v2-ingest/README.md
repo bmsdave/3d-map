@@ -38,6 +38,17 @@ licence, attribution, levels, feature/tile counts, a SHA-256 value for every
 tile, and an aggregate package SHA-256. Hashes let an independent build
 compare exact package contents without committing derived data.
 
+Validate a completed package before handing it to a browser host or release
+process:
+
+```sh
+cd libraries/maps-v2
+cargo run -p maps2-ingest -- verify-package ../../pipelines/maps-v2-ingest/packages/london-z12-z16
+```
+
+The verifier rejects changed tile bytes, a modified digest table, and unsafe
+tile paths in the manifest.
+
 For a browser package that can begin at city zoom and load detail on demand,
 build an inclusive level range. Levels are resolved and written one at a time,
 so a package build does not retain the whole range in memory:

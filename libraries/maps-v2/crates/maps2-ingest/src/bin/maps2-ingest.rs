@@ -5,6 +5,7 @@ use maps2_ingest::{
     resolve_osm_pbf, scan_osm_pbf, validate_source_reader, OsmSummary,
 };
 use maps2_units::{TileCoord, TileId, TilePoint, to_lonlat};
+use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -27,6 +28,7 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         [command, path] if command == "scan" => scan(path),
         [command, descriptor, input] if command == "verify" => verify(descriptor, input),
+        [command, package] if command == "verify-package" => verify_package(package),
         [command, descriptor, output] if command == "fetch" => fetch(descriptor, output),
         [command, descriptor, input, level, output] if command == "build" => {
             build(descriptor, input, level, output)
@@ -278,8 +280,12 @@ fn digest_map(digests: &[TileDigest]) -> BTreeMap<String, String> {
 }
 
 fn package_sha256(digests: &[TileDigest]) -> String {
+    package_sha256_map(&digest_map(digests))
+}
+
+fn package_sha256_map(digests: &BTreeMap<String, String>) -> String {
     let mut hasher = Sha256::new();
-    for (path, digest) in digest_map(digests) {
+    for (path, digest) in digests {
         hasher.update(path.as_bytes());
         hasher.update([0]);
         hasher.update(digest.as_bytes());
@@ -332,6 +338,49 @@ fn verify(descriptor_path: &str, input_path: &str) -> Result<(), String> {
     validate_source_reader(&descriptor.source, input).map_err(|error| error.to_string())?;
     println!("verified {}", descriptor.source.name());
     Ok(())
+}
+
+#[derive(Deserialize)]
+struct PackageIntegrity {
+    tile_digests: BTreeMap<String, String>,
+    package_sha256: String,
+}
+
+fn verify_package(path: &str) -> Result<(), String> {
+    let root = Path::new(path);
+    let manifest = fs::read_to_string(root.join("manifest.json"))
+        .map_err(|error| format!("cannot read package manifest: {error}"))?;
+    let integrity = serde_json::from_str::<PackageIntegrity>(&manifest)
+        .map_err(|error| format!("invalid package manifest: {error}"))?;
+    verify_package_contents(root, &integrity.tile_digests, &integrity.package_sha256)?;
+    println!("verified package {}", root.display());
+    Ok(())
+}
+
+fn verify_package_contents(
+    root: &Path,
+    digests: &BTreeMap<String, String>,
+    package_hash: &str,
+) -> Result<(), String> {
+    if package_sha256_map(digests) != package_hash {
+        return Err("package hash does not match tile digest manifest".to_string());
+    }
+    for (path, expected) in digests {
+        let tile = package_tile_path(root, path)?;
+        let bytes = fs::read(&tile).map_err(|error| format!("cannot read {}: {error}", tile.display()))?;
+        if sha256(&bytes) != *expected {
+            return Err(format!("tile hash does not match {path}"));
+        }
+    }
+    Ok(())
+}
+
+fn package_tile_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    let path = Path::new(relative);
+    if path.is_absolute() || path.components().any(|component| !matches!(component, std::path::Component::Normal(_))) {
+        return Err(format!("invalid package tile path {relative}"));
+    }
+    Ok(root.join(path))
 }
 
 fn fetch(descriptor_path: &str, output: &str) -> Result<(), String> {
@@ -393,7 +442,7 @@ fn summary_json(summary: OsmSummary) -> String {
 
 fn print_help() {
     println!(
-        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest fetch <source.toml> <output>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest build-terrain-range <osm-source.toml> <osm.pbf> <min-level> <max-level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>"
+        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest verify-package <package-dir>\n  maps2-ingest fetch <source.toml> <output>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest build-terrain-range <osm-source.toml> <osm.pbf> <min-level> <max-level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>"
     );
 }
 
@@ -451,5 +500,21 @@ attribution = "© OpenStreetMap contributors""#,
 
         assert_eq!(arguments, vec!["--fail", "--location", "--proto", "=https", "--output", "/tmp/london.osm.pbf.part", "https://example.test/london.osm.pbf"]);
         assert!(fetch_arguments("http://example.test/london.osm.pbf", output).is_err());
+    }
+
+    #[test]
+    fn package_integrity_rejects_changed_tile_bytes() {
+        let root = tempfile::tempdir().expect("temporary package");
+        let path = "12/2047/1365.mt2";
+        let tile = root.path().join(path);
+        fs::create_dir_all(tile.parent().expect("tile parent")).expect("create tile parent");
+        fs::write(&tile, b"original").expect("write tile");
+        let digests = BTreeMap::from([(path.to_string(), sha256(b"original"))]);
+        let package_hash = package_sha256_map(&digests);
+
+        assert!(verify_package_contents(root.path(), &digests, &package_hash).is_ok());
+
+        fs::write(tile, b"changed").expect("change tile");
+        assert!(verify_package_contents(root.path(), &digests, &package_hash).is_err());
     }
 }

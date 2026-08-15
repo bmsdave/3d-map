@@ -41,15 +41,16 @@ not yet suitable evidence for a production browser release.
 
 Every generated manifest carries per-tile SHA-256 values plus an aggregate
 package SHA-256, so independent package builds can compare exact bytes without
-committing derived data.
+committing derived data. The ingest CLI verifies the manifest digest table and
+every tile before a package is accepted.
 
 This is **not** a browser-ready London map or a production release. The lab
 now exercises a manifest-driven, demand-loading host contract with synthetic
 tiles, but does not ship a real-data package. There is still no
 generalisation pipeline, global source set, attribution UI, release asset, or
-production performance and resilience evidence. Strict workspace Clippy also
-remains an explicit release blocker until the inherited lint backlog is fixed
-without suppressions.
+production performance and resilience evidence. Strict workspace Clippy now
+passes without suppressions; the remaining blockers are real-data quality and
+release operations rather than the Rust lint gate.
 
 ## Milestones
 
