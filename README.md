@@ -47,6 +47,39 @@ Open `http://localhost:5178`. Direct routes make each renderer concern easy to
 inspect, for example `/#/showcase`, `/#/card/roads-micro`, and
 `/#/card/globe-relief`. The showcase contains twenty animated, live SDK studies.
 
+## 20 animated studies
+
+Launch the full gallery at `/#/showcase`. Every study is a live WebGL2 canvas
+driven by the SDK, with a shared pause/play control — not a video, GIF, or
+mockup. The scenes use only the committed deterministic fixture packages.
+
+| # | Study | Focus |
+| --- | --- | --- |
+| 01 | First light | Globe-scale synthetic relief |
+| 02 | Blue hour | Globe-to-city transition |
+| 03 | Contour | Terrain perspective |
+| 04 | Ribbon | Animated road line |
+| 05 | Long shadow | Hillshade and relief |
+| 06 | Crossfade | Flat/globe blend |
+| 07 | Junction | Road join geometry |
+| 08 | Atlas | Collision-managed labels |
+| 09 | Orbit | Low-altitude globe arc |
+| 10 | Green room | Park and land composition |
+| 11 | Switchback | Sharp road turns |
+| 12 | Highlands | Relief exaggeration |
+| 13 | Northbound | Camera movement |
+| 14 | Roundabout | Continuous circular road |
+| 15 | Far side | Globe curvature |
+| 16 | Density | Label placement under load |
+| 17 | Overpass | Bridges and tunnels |
+| 18 | Rise | Globe-only terrain displacement |
+| 19 | City pulse | Continuous zoom bands |
+| 20 | Afterglow | Terrain exit pass |
+
+The older direct-link cards remain available for technical inspection and
+regression testing. The showcase is the polished presentation surface; the
+cards are the engineering workbench behind it.
+
 ## Verify a clean checkout
 
 ```sh
