@@ -45,7 +45,8 @@ pub use heights::{
 pub use view::{FeatureView, SectionView, TileView};
 
 pub const MAGIC: [u8; 4] = *b"MT2\0";
-pub const FORMAT_VERSION: u16 = 2;
+pub const FORMAT_VERSION: u16 = 3;
+pub const PREVIOUS_FORMAT_VERSION: u16 = 2;
 pub const LEGACY_FORMAT_VERSION: u16 = 1;
 
 /// Class codes from here up are raster sections: opaque payloads, no
@@ -89,6 +90,7 @@ pub struct FeatureDraft {
     pub rank: u8,
     pub name: String,
     pub vertices: Vec<TileCoord>,
+    pub holes: Vec<Vec<TileCoord>>,
 }
 
 /// A building's vertical extent, in decimetres above the terrain datum.
@@ -111,7 +113,7 @@ impl BuildingData {
     }
 }
 
-/// The roof form exposed by MT2 v2.
+/// The roof form exposed by MT2 v2 and later.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RoofType {
@@ -137,7 +139,15 @@ impl FeatureDraft {
     /// A nameless, rankless geometry feature.
     #[must_use]
     pub fn geometry(id: u32, flags: FeatureFlags, vertices: Vec<TileCoord>) -> Self {
-        Self { id, flags, rank: 0, name: String::new(), vertices }
+        Self { id, flags, rank: 0, name: String::new(), vertices, holes: Vec::new() }
+    }
+
+    /// A polygon whose interior rings are excluded from its fill.
+    #[must_use]
+    pub fn polygon_with_holes(
+        id: u32, flags: FeatureFlags, vertices: Vec<TileCoord>, holes: Vec<Vec<TileCoord>>,
+    ) -> Self {
+        Self { id, flags, rank: 0, name: String::new(), vertices, holes }
     }
 }
 
@@ -174,6 +184,7 @@ mod tests {
                 rank: 2,
                 name: "Пожарная станция".to_string(),
                 vertices: vec![TileCoord(5, 5)],
+                holes: Vec::new(),
             },
             FeatureDraft {
                 id: 41,
@@ -181,6 +192,7 @@ mod tests {
                 rank: 7,
                 name: String::new(),
                 vertices: vec![TileCoord(60000, 12)],
+                holes: Vec::new(),
             },
         ]
     }
@@ -205,6 +217,7 @@ mod tests {
                     rank: f.rank,
                     name: f.name.to_string(),
                     vertices: f.vertices().collect::<Result<Vec<_>, _>>().expect("vertices decode"),
+                    holes: f.holes().map(|hole| hole.and_then(Iterator::collect)).collect::<Result<Vec<_>, _>>().expect("holes decode"),
                 }
             })
             .collect()
@@ -236,6 +249,23 @@ mod tests {
         let bytes = builder.build().expect("feature fits MT2");
         let tile = TileView::parse(&bytes).expect("parses");
         assert_eq!(collect(tile.section(0).expect("section")), vec![feature]);
+    }
+
+    #[test]
+    fn a_polygon_hole_survives_the_round_trip() {
+        let feature = FeatureDraft::polygon_with_holes(
+            9,
+            0,
+            vec![TileCoord(0, 0), TileCoord(10, 0), TileCoord(10, 10), TileCoord(0, 0)],
+            vec![vec![TileCoord(2, 2), TileCoord(8, 2), TileCoord(8, 8), TileCoord(2, 2)]],
+        );
+        let mut builder = TileBuilder::new(TileId { z: 12, x: 1, y: 2 });
+        builder.push(1, feature);
+        let bytes = builder.build().expect("tile");
+        let tile = TileView::parse(&bytes).expect("view");
+        let feature = tile.section(1).expect("section").features().next().expect("feature").expect("valid");
+
+        assert_eq!(feature.holes().collect::<Result<Vec<_>, _>>().expect("holes").len(), 1);
     }
 
     #[test]

@@ -20,7 +20,7 @@ pub struct BuildingBucket {
     pub indices: Vec<u32>,
 }
 
-/// Builds terrain-relative roofs and walls from MT2 v2 building features.
+/// Builds terrain-relative roofs and walls from MT2 v2/v3 building features.
 ///
 /// # Errors
 ///

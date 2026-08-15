@@ -9,7 +9,7 @@ export const buildings3d: CardSpec = {
   id: "buildings-3d",
   title: "Здания: крыши и стены",
   purpose:
-    "Высоты из MT2 v2 поднимают замкнутые стены и крыши над terrain; наклон камеры делает вертикаль наблюдаемой.",
+    "Высоты из MT2 v3 поднимают замкнутые стены и крыши над terrain; наклон камеры делает вертикаль наблюдаемой.",
   group: "Здания",
   mount(stage, panel) {
     const out = readout([

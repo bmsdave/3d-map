@@ -383,6 +383,7 @@ struct RawRelation {
     id: u32,
     tags: Vec<(String, String)>,
     outer: Vec<WayId>,
+    inner: Vec<WayId>,
 }
 
 /// Resolves classified OSM ways to MT2-ready geometry using two PBF passes.
@@ -415,8 +416,10 @@ fn read_classified_relations(path: &Path) -> Result<Vec<RawRelation>, OsmError> 
             let tags = owned_tags(&relation.tags);
             let outer = relation.refs.iter().filter(|member| member.role == "outer" || member.role.is_empty())
                 .filter_map(|member| match member.member { OsmId::Way(id) => Some(id), _ => None }).collect::<Vec<_>>();
+            let inner = relation.refs.iter().filter(|member| member.role == "inner")
+                .filter_map(|member| match member.member { OsmId::Way(id) => Some(id), _ => None }).collect::<Vec<_>>();
             classify_osm_tags(&tag_refs(&tags)).filter(|_| !outer.is_empty()).map(|_| {
-                u32::try_from(relation.id.0).map(|id| RawRelation { id, tags, outer })
+                u32::try_from(relation.id.0).map(|id| RawRelation { id, tags, outer, inner })
                     .map_err(|_| OsmError::WayIdOutOfRange(relation.id.0))
             })
         }
@@ -428,7 +431,7 @@ fn read_classified_ways(path: &Path, relations: &[RawRelation]) -> Result<Vec<Ra
     let input = File::open(path).map_err(|error| OsmError::Read(error.to_string()))?;
     let mut reader = OsmPbfReader::new(input);
     let mut ways = Vec::new();
-    let relation_ways = relations.iter().flat_map(|relation| relation.outer.iter().copied()).collect::<HashSet<_>>();
+    let relation_ways = relations.iter().flat_map(|relation| relation.outer.iter().chain(&relation.inner).copied()).collect::<HashSet<_>>();
     for object in reader.iter() {
         let OsmObj::Way(way) = object.map_err(|error| OsmError::Read(error.to_string()))? else {
             continue;
@@ -514,13 +517,38 @@ fn prepare_relations(
 ) -> Result<Vec<PreparedFeature>, OsmError> {
     let index = ways.iter().map(|way| (WayId(i64::from(way.id)), way)).collect::<HashMap<_, _>>();
     relations.iter().map(|relation| {
-        let members = relation.outer.iter().filter_map(|id| index.get(id).map(|way| way.nodes.clone())).collect();
-        stitch_rings(members).into_iter().map(|ring| {
-            let vertices = ring.iter().map(|node| nodes.get(node).copied().ok_or(OsmError::MissingNode { way_id: relation.id, node_id: node.0 }))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(prepare_features(relation.id, &tag_refs(&relation.tags), &vertices, level))
-        }).collect::<Result<Vec<_>, OsmError>>().map(|parts| parts.into_iter().flatten().collect::<Vec<_>>())
+        let outer = relation_rings(&relation.outer, &index, nodes, relation.id)?;
+        let inner = relation_rings(&relation.inner, &index, nodes, relation.id)?;
+        let tags = tag_refs(&relation.tags);
+        let is_polygon = classify_osm_tags(&tags).is_some_and(is_area);
+        Ok(outer.into_iter().flat_map(|ring| {
+            let holes = inner.iter().filter(|hole| hole.first().is_some_and(|point| point_in_ring(*point, &ring)))
+                .map(Vec::as_slice).collect::<Vec<_>>();
+            if is_polygon {
+                prepare_polygon_with_holes(relation.id, &tags, &ring, &holes, level)
+            } else {
+                prepare_features(relation.id, &tags, &ring, level)
+            }
+        }).collect::<Vec<_>>())
     }).collect::<Result<Vec<_>, _>>().map(|parts| parts.into_iter().flatten().collect())
+}
+
+fn relation_rings(
+    ids: &[WayId], index: &HashMap<WayId, &RawWay>, nodes: &HashMap<NodeId, Lonlat>, relation_id: u32,
+) -> Result<Vec<Vec<Lonlat>>, OsmError> {
+    stitch_rings(ids.iter().filter_map(|id| index.get(id).map(|way| way.nodes.clone())).collect())
+        .into_iter().map(|ring| ring.into_iter().map(|node| {
+            nodes.get(&node).copied().ok_or(OsmError::MissingNode { way_id: relation_id, node_id: node.0 })
+        }).collect()).collect()
+}
+
+fn point_in_ring(point: Lonlat, ring: &[Lonlat]) -> bool {
+    ring.windows(2).fold(false, |inside, edge| {
+        let (a, b) = (edge[0], edge[1]);
+        let crosses = (a.lat > point.lat) != (b.lat > point.lat)
+            && point.lon < (b.lon - a.lon) * (point.lat - a.lat) / (b.lat - a.lat) + a.lon;
+        inside ^ crosses
+    })
 }
 
 /// Stitches unordered OSM member ways into canonical closed rings.
@@ -763,6 +791,7 @@ pub fn prepare_feature(
         rank: osm_rank(tags),
         name: tag(tags, "name").unwrap_or_default().to_string(),
         vertices: points.into_iter().map(|point| point.coord).collect(),
+        holes: Vec::new(),
     };
     let building_height = (class == Class::Building).then(|| building_height_m(tags));
     Some(PreparedFeature { tile, class, feature, building_height })
@@ -788,23 +817,46 @@ pub fn prepare_features(
     if matches!(class, Class::Poi | Class::Label) && vertices.len() == 1 {
         return prepare_feature(id, tags, vertices, level).into_iter().collect();
     }
+    if is_area(class) {
+        return prepare_polygon_with_holes(id, tags, vertices, &[], level);
+    }
     let points = simplify_road(grid_points(vertices, level), class, level);
     let height = (class == Class::Building).then(|| building_height_m(tags));
     let name = tag(tags, "name").unwrap_or_default();
     let flags = osm_flags(tags);
     let rank = osm_rank(tags);
     let tiles = covered_tiles(&points, level);
-    if is_area(class) {
-        tiles.into_iter().filter_map(|tile| {
-            prepared_part(PartInput { id, class, tile, points: clip_polygon(&points, tile), building_height: height, flags, rank, name })
-        }).collect()
-    } else {
-        tiles.into_iter().flat_map(|tile| {
-            clipped_line_parts(&points, tile).into_iter().filter_map(move |part| {
-                prepared_part(PartInput { id, class, tile, points: part, building_height: height, flags, rank, name })
-            })
-        }).collect()
+    tiles.into_iter().flat_map(|tile| {
+        clipped_line_parts(&points, tile).into_iter().filter_map(move |part| {
+            prepared_part(PartInput { id, class, tile, points: part, building_height: height, flags, rank, name })
+        })
+    }).collect()
+}
+
+/// Clips a classified area and its interior rings into every MT2 tile it covers.
+#[must_use]
+pub fn prepare_polygon_with_holes(
+    id: u32, tags: &[(&str, &str)], outer: &[Lonlat], holes: &[&[Lonlat]], level: u8,
+) -> Vec<PreparedFeature> {
+    let Some(class) = classify_osm_tags(tags) else { return Vec::new(); };
+    if !is_area(class) || !is_eligible(class, tags, level) {
+        return Vec::new();
     }
+    let outer_points = grid_points(outer, level);
+    let hole_points = holes.iter().map(|ring| grid_points(ring, level)).collect::<Vec<_>>();
+    let height = (class == Class::Building).then(|| building_height_m(tags));
+    let name = tag(tags, "name").unwrap_or_default();
+    let flags = osm_flags(tags);
+    let rank = osm_rank(tags);
+    covered_tiles(&outer_points, level).into_iter().filter_map(|tile| {
+        let mut part = prepared_part(PartInput {
+            id, class, tile, points: clip_polygon(&outer_points, tile), building_height: height, flags, rank, name,
+        })?;
+        part.feature.holes = hole_points.iter().filter_map(|ring| {
+            polygon_tile_vertices(clip_polygon(ring, tile), tile)
+        }).collect();
+        Some(part)
+    }).collect()
 }
 
 #[derive(Clone, Copy)]
@@ -995,8 +1047,17 @@ fn prepared_part(part: PartInput<'_>) -> Option<PreparedFeature> {
     let required = if is_area(class) { 4 } else { 2 };
     (vertices.len() >= required).then(|| PreparedFeature {
         tile, class, building_height,
-        feature: FeatureDraft { id, flags, rank, name: name.to_string(), vertices },
+        feature: FeatureDraft { id, flags, rank, name: name.to_string(), vertices, holes: Vec::new() },
     })
+}
+
+fn polygon_tile_vertices(points: Vec<GridPoint>, tile: TileId) -> Option<Vec<TileCoord>> {
+    let mut vertices = points.into_iter().map(|point| tile_coord(point, tile)).collect::<Vec<_>>();
+    vertices.dedup();
+    if vertices.first() != vertices.last() {
+        vertices.push(*vertices.first()?);
+    }
+    (vertices.len() >= 4).then_some(vertices)
 }
 
 fn tile_coord(point: GridPoint, tile: TileId) -> TileCoord {
@@ -1329,6 +1390,25 @@ attribution = "© OpenStreetMap contributors""#,
         let rings = stitch_rings(ways);
 
         assert_eq!(rings, vec![vec![NodeId(1), NodeId(2), NodeId(3), NodeId(4), NodeId(1)]]);
+    }
+
+    #[test]
+    fn a_polygon_hole_is_clipped_into_the_same_tile_part_as_its_outer_ring() {
+        let outer = [
+            Lonlat { lon: -0.1280, lat: 51.5070 }, Lonlat { lon: -0.1270, lat: 51.5070 },
+            Lonlat { lon: -0.1270, lat: 51.5080 }, Lonlat { lon: -0.1280, lat: 51.5080 },
+            Lonlat { lon: -0.1280, lat: 51.5070 },
+        ];
+        let hole = [
+            Lonlat { lon: -0.1278, lat: 51.5072 }, Lonlat { lon: -0.1272, lat: 51.5072 },
+            Lonlat { lon: -0.1272, lat: 51.5078 }, Lonlat { lon: -0.1278, lat: 51.5078 },
+            Lonlat { lon: -0.1278, lat: 51.5072 },
+        ];
+
+        let parts = prepare_polygon_with_holes(42, &[("natural", "water")], &outer, &[&hole], 16);
+
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].feature.holes.len(), 1);
     }
 
     #[test]

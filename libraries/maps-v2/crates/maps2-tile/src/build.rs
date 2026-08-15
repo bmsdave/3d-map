@@ -125,11 +125,21 @@ fn encode_feature(
     encode_building(out, building)?;
     out.extend_from_slice(&checked_u16(feature.name.len())?.to_le_bytes());
     out.extend_from_slice(feature.name.as_bytes());
-    out.extend_from_slice(&checked_u16(feature.vertices.len())?.to_le_bytes());
+    encode_geometry(out, &feature.vertices, first)?;
+    out.extend_from_slice(&checked_u16(feature.holes.len())?.to_le_bytes());
+    for hole in &feature.holes {
+        let first = *hole.first().ok_or(TileError::EmptyGeometry)?;
+        encode_geometry(out, hole, first)?;
+    }
+    Ok(())
+}
+
+fn encode_geometry(out: &mut Vec<u8>, vertices: &[maps2_units::TileCoord], first: maps2_units::TileCoord) -> Result<(), TileError> {
+    out.extend_from_slice(&checked_u16(vertices.len())?.to_le_bytes());
     out.extend_from_slice(&first.0.to_le_bytes());
     out.extend_from_slice(&first.1.to_le_bytes());
     let mut prev = first;
-    for vertex in &feature.vertices[1..] {
+    for vertex in &vertices[1..] {
         write_varint(out, zigzag_encode(i32::from(vertex.0) - i32::from(prev.0)));
         write_varint(out, zigzag_encode(i32::from(vertex.1) - i32::from(prev.1)));
         prev = *vertex;

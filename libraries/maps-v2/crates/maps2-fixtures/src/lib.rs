@@ -197,7 +197,7 @@ fn push_places(builder: &mut TileBuilder, window: WorldRect) {
         };
         builder.push(
             Class::Label.code(),
-            FeatureDraft { id, flags: 0, rank, name: name.to_string(), vertices: vec![coord] },
+            FeatureDraft { id, flags: 0, rank, name: name.to_string(), vertices: vec![coord], holes: Vec::new() },
         );
     }
 }
@@ -262,6 +262,7 @@ fn push_poi(builder: &mut TileBuilder, id: TileId) {
                         quantise((f64::from(i) + 0.5) * step),
                         quantise((f64::from(j) + 0.5) * step),
                     )],
+                    holes: Vec::new(),
                 },
             );
         }
@@ -387,7 +388,7 @@ mod tests {
     /// change shows up as a hash change and is made knowingly.
     ///
     /// Changed when the micro fixture gained deterministic building heights.
-    const GOLDEN_FNV1A: u64 = 0xB836_99B5_93C0_B551;
+    const GOLDEN_FNV1A: u64 = 0x13C8_DA50_C8E7_B543;
 
     fn fnv1a(bytes: &[u8], mut hash: u64) -> u64 {
         for byte in bytes {

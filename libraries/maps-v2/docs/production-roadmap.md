@@ -19,26 +19,28 @@ pipeline then produces the global package.
 - Derived packages, downloaded source data, and pipeline caches are ignored by
   Git. Small synthetic fixtures remain the only committed map content.
 
-## Current position (2026-08-15)
+## Current position (2026-08-16)
 
 The project has the beginnings of the London path: pinned Greater London OSM
 and two Copernicus DEM descriptors, HTTPS-only atomic source acquisition with
-checksum validation, deterministic MT2 v2 encoding, terrain rasters, OSM
+checksum validation, deterministic MT2 v3 encoding with v1/v2 readers, terrain rasters, OSM
 building-height fallbacks, and deterministic
-tile-border clipping, outer-ring multipolygon relations, named places,
+tile-border clipping, outer/inner-ring multipolygon relations, named places,
 bridge/tunnel road structure flags, and
 amenity points. A local z16 London rebuild currently emits 2,128,113 feature
 parts in 11,944 terrain-bearing tiles from those validated inputs. MT2's
 current 32-bit feature IDs require a deterministic fallback for oversized OSM node
 IDs; collision-free 64-bit source identity is a production-format milestone.
-Inner relation rings and holes remain unfinished.
+MT2 v3 carries interior rings and the renderer excludes them from fills; complex
+relation topology and geometry repair remain unfinished.
 
 The CLI can also write an inclusive z12–z16 package range while processing one
 level at a time. Ingest omits classes below their established style entry zoom:
 a z12 local acceptance build emits 161,638 feature parts in 70 terrain-bearing
 tiles (17 MB), rather than buildings and address-level detail that cannot be
 rendered at z12. Conservative line simplification then reduces nearly
-collinear road vertices: the current z12 package is 161,479 parts and 15 MB.
+collinear road vertices: a current local v3 z12 rebuild emits 159,605 parts in
+70 terrain-bearing tiles and verifies its aggregate and per-tile hashes.
 Area geometry and larger road turns remain unsimplified, so this is not yet
 production-quality cartographic generalisation.
 

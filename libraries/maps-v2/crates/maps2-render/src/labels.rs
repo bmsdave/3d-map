@@ -65,7 +65,7 @@ mod tests {
     use maps2_units::TileId;
 
     fn named(id: u32, rank: u8, name: &str, at: TileCoord) -> FeatureDraft {
-        FeatureDraft { id, flags: 0, rank, name: name.to_string(), vertices: vec![at] }
+        FeatureDraft { id, flags: 0, rank, name: name.to_string(), vertices: vec![at], holes: Vec::new() }
     }
 
     fn sample() -> Vec<u8> {

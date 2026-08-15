@@ -29,7 +29,7 @@ pub use terrain::{
     gradient_at, HIGHLIGHT_GAIN, ground_mesh, relative_shade, relief_radius_scale, shading_z_factor, texel_metres,
     GroundMesh, GROUND_MESH_CELLS,
 };
-pub use triangulate::{ring_area, triangles_area, triangulate, Point};
+pub use triangulate::{ring_area, triangles_area, triangulate, triangulate_with_holes, Point};
 
 /// Fill draw order, bottom to top. Roads are not fills — they get
 /// their own bucket and passes at stage 4.
@@ -88,30 +88,37 @@ fn append_polygon(
     bucket: &mut FillBucket,
     feature: &maps2_tile::FeatureView<'_>,
 ) -> Result<(), TileError> {
-    let mut ring: Vec<Point> = Vec::new();
-    let mut coords = Vec::new();
-    for vertex in feature.vertices() {
-        let v = vertex?;
-        ring.push((f64::from(v.0), f64::from(v.1)));
-        coords.push(v);
-    }
-    // The wire format closes rings with a duplicate vertex; the
-    // triangulator wants them open.
-    if ring.len() > 1 && ring.first() == ring.last() {
-        ring.pop();
-        coords.pop();
-    }
-    if ring.len() < 3 {
+    let outer = open_tile_ring(feature.vertices().collect::<Result<Vec<_>, _>>()?);
+    if outer.len() < 3 {
         return Ok(());
     }
+    let holes = feature.holes().map(|hole| hole?.collect::<Result<Vec<_>, _>>().map(open_tile_ring))
+        .collect::<Result<Vec<Vec<maps2_units::TileCoord>>, TileError>>()?;
+    let ring = points(&outer);
+    let hole_points = holes.iter().map(|hole| points(hole)).collect::<Vec<_>>();
+    let mut coords = outer;
+    coords.extend(holes.into_iter().flatten());
+    let hole_refs = hole_points.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    let (_, triangles) = triangulate_with_holes(&ring, &hole_refs);
     let base = u32::try_from(bucket.vertices.len()).map_err(|_| TileError::TooLarge)?;
     bucket
         .vertices
         .extend(coords.iter().map(|v| FillVertex { x: v.0, y: v.1 }));
-    for triangle in triangulate(&ring) {
+    for triangle in triangles {
         bucket.indices.extend(triangle.iter().map(|i| base + i));
     }
     Ok(())
+}
+
+fn open_tile_ring(mut ring: Vec<maps2_units::TileCoord>) -> Vec<maps2_units::TileCoord> {
+    if ring.len() > 1 && ring.first() == ring.last() {
+        ring.pop();
+    }
+    ring
+}
+
+fn points(ring: &[maps2_units::TileCoord]) -> Vec<Point> {
+    ring.iter().map(|v| (f64::from(v.0), f64::from(v.1))).collect()
 }
 
 #[cfg(test)]
@@ -138,6 +145,30 @@ mod tests {
             let diff = (triangles_area(&ring, &triangles) - ring_area(&ring)).abs();
             assert!(diff < 1e-9, "area drifted by {diff}");
         }
+    }
+
+    #[test]
+    fn fill_bucket_excludes_a_feature_hole() {
+        let feature = maps2_tile::FeatureDraft::polygon_with_holes(
+            1,
+            0,
+            vec![
+                maps2_units::TileCoord(0, 0), maps2_units::TileCoord(10, 0),
+                maps2_units::TileCoord(10, 10), maps2_units::TileCoord(0, 10), maps2_units::TileCoord(0, 0),
+            ],
+            vec![vec![
+                maps2_units::TileCoord(3, 3), maps2_units::TileCoord(7, 3),
+                maps2_units::TileCoord(7, 7), maps2_units::TileCoord(3, 7), maps2_units::TileCoord(3, 3),
+            ]],
+        );
+        let mut builder = maps2_tile::TileBuilder::new(maps2_units::TileId { z: 12, x: 0, y: 0 });
+        builder.push(Class::Water.code(), feature);
+        let bytes = builder.build().expect("tile");
+        let bucket = build_fill_bucket(&TileView::parse(&bytes).expect("view")).expect("bucket");
+        let points = bucket.vertices.iter().map(|vertex| (f64::from(vertex.x), f64::from(vertex.y))).collect::<Vec<_>>();
+        let triangles = bucket.indices.chunks_exact(3).map(|triangle| [triangle[0], triangle[1], triangle[2]]).collect::<Vec<_>>();
+
+        assert!((triangles_area(&points, &triangles) - 84.0).abs() < f64::EPSILON);
     }
 
     #[test]

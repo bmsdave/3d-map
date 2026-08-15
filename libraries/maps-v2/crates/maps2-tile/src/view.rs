@@ -6,7 +6,7 @@ use maps2_units::{TileCoord, TileId};
 
 use crate::varint::{read_varint, zigzag_decode};
 use crate::{
-    BuildingView, ClassCode, FeatureFlags, LEGACY_FORMAT_VERSION, RoofType, TileError, TileHeader,
+    BuildingView, ClassCode, FeatureFlags, LEGACY_FORMAT_VERSION, PREVIOUS_FORMAT_VERSION, RoofType, TileError, TileHeader,
     FORMAT_VERSION, MAGIC, RASTER_CLASS_BASE,
 };
 
@@ -35,7 +35,7 @@ impl<'a> TileView<'a> {
             return Err(TileError::BadMagic);
         }
         let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-        if version != LEGACY_FORMAT_VERSION && version != FORMAT_VERSION {
+        if version != LEGACY_FORMAT_VERSION && version != PREVIOUS_FORMAT_VERSION && version != FORMAT_VERSION {
             return Err(TileError::UnsupportedVersion(version));
         }
         let id = TileId {
@@ -166,14 +166,9 @@ impl<'a> FeaturesIter<'a> {
             .ok_or(TileError::Truncated)?;
         let name = std::str::from_utf8(name_bytes).map_err(|_| TileError::BadText)?;
         self.pos += name_len;
-        let count_bytes = self
-            .bytes
-            .get(self.pos..self.pos + 2)
-            .ok_or(TileError::Truncated)?;
-        let vertex_count = usize::from(u16::from_le_bytes([count_bytes[0], count_bytes[1]]));
-        self.pos += 2;
-        let geometry_start = self.pos;
-        skip_geometry(self.bytes, &mut self.pos, vertex_count)?;
+        let (vertex_count, geometry, hole_count, holes) = decode_geometry(
+            self.version, self.bytes, &mut self.pos,
+        )?;
         Ok(FeatureView {
             id,
             flags,
@@ -181,7 +176,9 @@ impl<'a> FeaturesIter<'a> {
             building,
             name,
             vertex_count,
-            geometry: &self.bytes[geometry_start..self.pos],
+            geometry: &self.bytes[geometry],
+            holes: &self.bytes[holes],
+            hole_count,
         })
     }
 }
@@ -225,6 +222,31 @@ fn skip_geometry(bytes: &[u8], pos: &mut usize, vertex_count: usize) -> Result<(
     Ok(())
 }
 
+fn read_u16(bytes: &[u8], pos: &mut usize) -> Result<u16, TileError> {
+    let values = bytes.get(*pos..*pos + 2).ok_or(TileError::Truncated)?;
+    *pos += 2;
+    Ok(u16::from_le_bytes([values[0], values[1]]))
+}
+
+fn decode_geometry(
+    version: u16, bytes: &[u8], pos: &mut usize,
+) -> Result<(usize, Range<usize>, usize, Range<usize>), TileError> {
+    let vertex_count = usize::from(read_u16(bytes, pos)?);
+    let geometry_start = *pos;
+    skip_geometry(bytes, pos, vertex_count)?;
+    let geometry = geometry_start..*pos;
+    if version != FORMAT_VERSION {
+        return Ok((vertex_count, geometry, 0, 0..0));
+    }
+    let hole_count = usize::from(read_u16(bytes, pos)?);
+    let holes_start = *pos;
+    for _ in 0..hole_count {
+        let vertices = usize::from(read_u16(bytes, pos)?);
+        skip_geometry(bytes, pos, vertices)?;
+    }
+    Ok((vertex_count, geometry, hole_count, holes_start..*pos))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FeatureView<'a> {
     pub id: u32,
@@ -234,6 +256,8 @@ pub struct FeatureView<'a> {
     pub name: &'a str,
     vertex_count: usize,
     geometry: &'a [u8],
+    holes: &'a [u8],
+    hole_count: usize,
 }
 
 impl<'a> FeatureView<'a> {
@@ -246,6 +270,38 @@ impl<'a> FeatureView<'a> {
             remaining: self.vertex_count,
             prev: None,
         }
+    }
+
+    /// Lazily decodes the feature's interior rings.
+    #[must_use]
+    pub fn holes(&self) -> HolesIter<'a> {
+        HolesIter { bytes: self.holes, pos: 0, remaining: self.hole_count }
+    }
+}
+
+pub struct HolesIter<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+    remaining: usize,
+}
+
+impl<'a> Iterator for HolesIter<'a> {
+    type Item = Result<VerticesIter<'a>, TileError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        let count = match read_u16(self.bytes, &mut self.pos) {
+            Ok(count) => usize::from(count),
+            Err(error) => return Some(Err(error)),
+        };
+        let start = self.pos;
+        if let Err(error) = skip_geometry(self.bytes, &mut self.pos, count) {
+            return Some(Err(error));
+        }
+        Some(Ok(VerticesIter { bytes: &self.bytes[start..self.pos], pos: 0, remaining: count, prev: None }))
     }
 }
 
