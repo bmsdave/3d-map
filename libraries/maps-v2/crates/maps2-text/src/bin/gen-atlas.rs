@@ -71,15 +71,16 @@ fn png_grey(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
     ihdr.extend_from_slice(&width.to_be_bytes());
     ihdr.extend_from_slice(&height.to_be_bytes());
     ihdr.extend_from_slice(&[8, 0, 0, 0, 0]); // 8-bit greyscale
-    push_chunk(&mut png, b"IHDR", &ihdr);
-    push_chunk(&mut png, b"IDAT", &zlib_stored(&raw));
-    push_chunk(&mut png, b"IEND", &[]);
+    push_chunk(&mut png, *b"IHDR", &ihdr);
+    push_chunk(&mut png, *b"IDAT", &zlib_stored(&raw));
+    push_chunk(&mut png, *b"IEND", &[]);
     png
 }
 
-fn push_chunk(out: &mut Vec<u8>, kind: &[u8; 4], body: &[u8]) {
-    out.extend_from_slice(&(body.len() as u32).to_be_bytes());
-    out.extend_from_slice(kind);
+fn push_chunk(out: &mut Vec<u8>, kind: [u8; 4], body: &[u8]) {
+    let length = u32::try_from(body.len()).expect("PNG chunk exceeds u32 length");
+    out.extend_from_slice(&length.to_be_bytes());
+    out.extend_from_slice(&kind);
     out.extend_from_slice(body);
     let mut crc_input = kind.to_vec();
     crc_input.extend_from_slice(body);
@@ -90,9 +91,10 @@ fn zlib_stored(data: &[u8]) -> Vec<u8> {
     let mut out = vec![0x78, 0x01];
     for (i, block) in data.chunks(65535).enumerate() {
         let last = u8::from((i + 1) * 65535 >= data.len());
+        let length = u16::try_from(block.len()).expect("stored deflate block exceeds u16 length");
         out.push(last);
-        out.extend_from_slice(&(block.len() as u16).to_le_bytes());
-        out.extend_from_slice(&(!(block.len() as u16)).to_le_bytes());
+        out.extend_from_slice(&length.to_le_bytes());
+        out.extend_from_slice(&(!length).to_le_bytes());
         out.extend_from_slice(block);
     }
     out.extend_from_slice(&adler32(data).to_be_bytes());
