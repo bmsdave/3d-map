@@ -11,6 +11,8 @@ terrain, and globe relief.
 
 ![Synthetic globe-relief fixture](applications/maps-v2-lab/e2e/terrain.spec.ts-snapshots/globe-relief-darwin.png)
 
+![Animated Maps SDK showcase](applications/maps-v2-lab/assets/showcase.gif)
+
 ## What is included
 
 - Rust crates for units, camera math, MT2 tile parsing, style, rendering, text,

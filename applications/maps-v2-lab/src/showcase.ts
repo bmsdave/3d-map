@@ -12,10 +12,17 @@ interface Scene {
   relief: boolean;
 }
 
+interface ShowcaseState {
+  playing: boolean;
+  destroyed: boolean;
+  generation: number;
+  reel: number;
+}
+
 const SCENES: readonly Scene[] = [
   ["First light", "A slow climb from the synthetic horizon", "ridge", 3.2, 12, 12, true],
   ["Blue hour", "A globe rotates into a quiet city", "ealing", 4.0, 24, 10, false],
-  ["Contour", "Terrain breathes above the datum", "ridge", 6.2, 38, 28, true],
+  ["Contour", "Terrain breathes above the datum", "ridge", 3.9, 38, 28, true],
   ["Ribbon", "A road line finds its rhythm", "roads", 17, 0, 18, false],
   ["Long shadow", "North-west light moves over relief", "ridge", 8.2, 52, 42, true],
   ["Crossfade", "The globe eases into the sheet", "ealing", 4.4, 68, 8, false],
@@ -43,39 +50,64 @@ const SCENES: readonly Scene[] = [
   relief: relief as boolean,
 }));
 
-let activeState: { playing: boolean; destroyed: boolean } | null = null;
+const REEL_SIZE = 4;
+let activeState: ShowcaseState | null = null;
 
 export function showcase(): HTMLElement {
-  const root = el("main", { class: "showcase", "data-testid": "showcase", "data-playing": "true" });
+  const root = el("main", { class: "showcase", "data-testid": "showcase", "data-playing": "true", "data-demo-count": String(SCENES.length), "data-reel": "1" });
   const toggle = el("button", { class: "showcase-toggle", "data-testid": "showcase-toggle", type: "button" }, ["Pause motion"]);
+  const previous = el("button", { class: "reel-button", type: "button" }, ["← Previous"]);
+  const next = el("button", { class: "reel-button", "data-testid": "showcase-next", type: "button" }, ["Next reel →"]);
+  const reelLabel = el("span", { class: "reel-label" }, []);
   const grid = el("div", { class: "showcase-grid" });
-  const state = { playing: true, destroyed: false };
+  const state: ShowcaseState = { playing: true, destroyed: false, generation: 0, reel: 0 };
   activeState = state;
   toggle.addEventListener("click", () => toggleMotion(root, toggle, state));
-  root.append(showcaseIntro(toggle), grid);
-  SCENES.forEach((scene, index) => grid.append(mountScene(scene, index, state)));
+  previous.addEventListener("click", () => changeReel(root, grid, reelLabel, state, -1));
+  next.addEventListener("click", () => changeReel(root, grid, reelLabel, state, 1));
+  root.append(showcaseIntro(toggle, previous, reelLabel, next), grid);
+  renderReel(root, grid, reelLabel, state);
   return root;
 }
 
-function showcaseIntro(toggle: HTMLButtonElement): HTMLElement {
+function showcaseIntro(toggle: HTMLButtonElement, previous: HTMLButtonElement, reelLabel: HTMLElement, next: HTMLButtonElement): HTMLElement {
   return el("section", { class: "showcase-hero" }, [
     el("p", { class: "eyebrow" }, ["3D Maps SDK v2 · alpha experiments"]),
     el("h1", {}, ["Twenty moving studies of the same deterministic world."]),
     el("p", { class: "showcase-copy" }, ["Every tile below is rendered by the SDK. No video, no image mockups, no real-world data." ]),
-    toggle,
+    el("div", { class: "showcase-actions" }, [toggle, el("div", { class: "reel-nav" }, [previous, reelLabel, next])]),
   ]);
 }
 
-function mountScene(scene: Scene, index: number, state: { playing: boolean; destroyed: boolean }): HTMLElement {
+function renderReel(root: HTMLElement, grid: HTMLElement, label: HTMLElement, state: ShowcaseState): void {
+  releaseContexts(grid);
+  state.generation += 1;
+  const start = state.reel * REEL_SIZE;
+  grid.replaceChildren(...SCENES.slice(start, start + REEL_SIZE).map((scene, offset) => mountScene(scene, start + offset, state, state.generation)));
+  root.setAttribute("data-reel", String(state.reel + 1));
+  label.textContent = `Reel ${state.reel + 1} / ${SCENES.length / REEL_SIZE}`;
+}
+
+function changeReel(root: HTMLElement, grid: HTMLElement, label: HTMLElement, state: ShowcaseState, delta: number): void {
+  const count = SCENES.length / REEL_SIZE;
+  state.reel = (state.reel + delta + count) % count;
+  renderReel(root, grid, label, state);
+}
+
+function releaseContexts(grid: HTMLElement): void {
+  grid.querySelectorAll("canvas").forEach((canvas) => canvas.getContext("webgl2")?.getExtension("WEBGL_lose_context")?.loseContext());
+}
+
+function mountScene(scene: Scene, index: number, state: ShowcaseState, generation: number): HTMLElement {
   const stage = el("article", { class: "showcase-card", "data-testid": "showcase-demo", "data-state": "loading" });
   const canvas = el("canvas", { width: "480", height: "320" });
   const copy = el("div", { class: "showcase-card-copy" }, [el("span", { class: "showcase-index" }, [`${String(index + 1).padStart(2, "0")}`]), el("h2", {}, [scene.title]), el("p", {}, [scene.caption])]);
   stage.append(canvas, copy);
-  void createSceneMap(canvas, scene, index, state, stage);
+  void createSceneMap(canvas, scene, index, state, generation, stage);
   return stage;
 }
 
-async function createSceneMap(canvas: HTMLCanvasElement, scene: Scene, index: number, state: { playing: boolean; destroyed: boolean }, stage: HTMLElement): Promise<void> {
+async function createSceneMap(canvas: HTMLCanvasElement, scene: Scene, index: number, state: ShowcaseState, generation: number, stage: HTMLElement): Promise<void> {
   try {
     const map = await createMap(canvas, scene.pack);
     map.setCentre(FIXED_CENTRE.lon, FIXED_CENTRE.lat);
@@ -83,16 +115,16 @@ async function createSceneMap(canvas: HTMLCanvasElement, scene: Scene, index: nu
     map.setHypsometric(scene.relief);
     map.setReliefExaggeration(scene.relief ? 44 : 0);
     stage.setAttribute("data-state", "ready");
-    animateScene(map, scene, index, state, stage);
+    animateScene(map, scene, index, state, generation, stage);
   } catch (error) {
     stage.setAttribute("data-state", "error");
     stage.setAttribute("data-error", String(error));
   }
 }
 
-function animateScene(map: MapHandle, scene: Scene, index: number, state: { playing: boolean; destroyed: boolean }, stage: HTMLElement): void {
+function animateScene(map: MapHandle, scene: Scene, index: number, state: ShowcaseState, generation: number, stage: HTMLElement): void {
   const draw = (now: number) => {
-    if (state.destroyed) return;
+    if (state.destroyed || state.generation !== generation) return;
     if (state.playing) drawScene(map, scene, index, now, stage);
     requestAnimationFrame(draw);
   };
@@ -108,7 +140,7 @@ function drawScene(map: MapHandle, scene: Scene, index: number, now: number, sta
   stage.setAttribute("data-frame", String(Math.floor(now)));
 }
 
-function toggleMotion(root: HTMLElement, toggle: HTMLButtonElement, state: { playing: boolean }): void {
+function toggleMotion(root: HTMLElement, toggle: HTMLButtonElement, state: ShowcaseState): void {
   state.playing = !state.playing;
   root.setAttribute("data-playing", String(state.playing));
   toggle.textContent = state.playing ? "Pause motion" : "Play motion";

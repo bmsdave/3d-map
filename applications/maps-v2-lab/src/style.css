@@ -361,6 +361,11 @@ a:hover {
   font: inherit;
 }
 
+.showcase-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 18px; }
+.reel-nav { display: inline-flex; align-items: center; gap: 7px; }
+.reel-button { padding: 8px 11px; border: 1px solid #d7dbe8; border-radius: 999px; background: white; color: #18213a; cursor: pointer; font: inherit; font-size: 13px; }
+.reel-label { min-width: 72px; color: var(--muted); font-size: 12px; text-align: center; }
+
 .showcase-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 
 .showcase-card {
