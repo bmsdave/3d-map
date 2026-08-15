@@ -343,6 +343,7 @@ dependencies = [
  "maps2-style",
  "maps2-tile",
  "maps2-units",
+ "num-traits",
 ]
 
 [[package]]

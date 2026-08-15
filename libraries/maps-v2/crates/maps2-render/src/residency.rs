@@ -3,10 +3,11 @@
 //! module decides which tiles are *resident* — v1 only did the first,
 //! and buildings fetched at z16 stayed on screen at z6.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, hash::BuildHasher};
 
 use maps2_camera::Camera;
 use maps2_units::{world_position_px, TileId};
+use num_traits::ToPrimitive;
 
 /// One extra ring of tiles kept around the viewport so small pans do
 /// not immediately evict and refetch the same neighbours.
@@ -58,26 +59,30 @@ fn tile_span(camera: &Camera, level: u8, viewport: (f64, f64)) -> (i64, i64, i64
     let world = camera.zoom().world_pixels();
     let tile_px = world / f64::from(1_u32 << level);
     let (cx, cy) = world_position_px(camera.centre(), camera.zoom());
-    let x0 = ((cx - viewport.0 / 2.0) / tile_px).floor() as i64;
-    let x1 = ((cx + viewport.0 / 2.0) / tile_px).floor() as i64;
-    let y0 = ((cy - viewport.1 / 2.0) / tile_px).floor() as i64;
-    let y1 = ((cy + viewport.1 / 2.0) / tile_px).floor() as i64;
+    let x0 = tile_edge(cx - viewport.0 / 2.0, tile_px);
+    let x1 = tile_edge(cx + viewport.0 / 2.0, tile_px);
+    let y0 = tile_edge(cy - viewport.1 / 2.0, tile_px);
+    let y1 = tile_edge(cy + viewport.1 / 2.0, tile_px);
     (x0, y0, x1, y1)
+}
+
+fn tile_edge(position: f64, tile_px: f64) -> i64 {
+    (position / tile_px).floor().to_i64().unwrap_or_default()
 }
 
 fn clamp_tile(value: i64, level: u8) -> Option<u32> {
     let max = i64::from((1_u32 << level) - 1);
-    (0..=max).contains(&value).then_some(value as u32)
+    (0..=max).contains(&value).then(|| u32::try_from(value).unwrap_or_default())
 }
 
 /// Decides draw, evict and missing for one frame. Pure — the caller
 /// owns the resident set and applies the plan.
 #[must_use]
-pub fn plan_residency(
+pub fn plan_residency<S: BuildHasher>(
     camera: &Camera,
     viewport: (f64, f64),
     source_levels: &[u8],
-    resident: &HashSet<TileId>,
+    resident: &HashSet<TileId, S>,
 ) -> ResidencyPlan {
     let level = target_level(camera.zoom().value(), source_levels);
     let (x0, y0, x1, y1) = tile_span(camera, level, viewport);
