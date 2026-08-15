@@ -257,6 +257,29 @@ fn osm_flags(tags: &[(&str, &str)]) -> u8 {
     (bridge * FLAG_BRIDGE) | (tunnel * FLAG_TUNNEL)
 }
 
+fn osm_rank(tags: &[(&str, &str)]) -> u8 {
+    match tag(tags, "place") {
+        Some("city") => 0,
+        Some("town") => 1,
+        Some("village" | "borough" | "suburb") => 2,
+        _ => 3,
+    }
+}
+
+fn is_eligible(class: Class, tags: &[(&str, &str)], level: u8) -> bool {
+    f64::from(level) >= entry_band(class).entry_zoom()
+        && (class != Class::Label || osm_rank(tags) <= label_rank_limit(level))
+}
+
+fn label_rank_limit(level: u8) -> u8 {
+    match level {
+        0..=5 => 0,
+        6..=10 => 1,
+        11..=13 => 2,
+        _ => 3,
+    }
+}
+
 /// Maps the supported OSM feature tags to their MT2 class.
 #[must_use]
 pub fn classify_osm_tags(tags: &[(&str, &str)]) -> Option<Class> {
@@ -726,7 +749,7 @@ pub fn prepare_feature(
     level: u8,
 ) -> Option<PreparedFeature> {
     let class = classify_osm_tags(tags)?;
-    if f64::from(level) < entry_band(class).entry_zoom() {
+    if !is_eligible(class, tags, level) {
         return None;
     }
     let points = vertices.iter().copied().map(|point| locate(point, level)).collect::<Vec<_>>();
@@ -737,7 +760,7 @@ pub fn prepare_feature(
     let feature = FeatureDraft {
         id,
         flags: osm_flags(tags),
-        rank: 0,
+        rank: osm_rank(tags),
         name: tag(tags, "name").unwrap_or_default().to_string(),
         vertices: points.into_iter().map(|point| point.coord).collect(),
     };
@@ -759,7 +782,7 @@ pub fn prepare_features(
     let Some(class) = classify_osm_tags(tags) else {
         return Vec::new();
     };
-    if f64::from(level) < entry_band(class).entry_zoom() {
+    if !is_eligible(class, tags, level) {
         return Vec::new();
     }
     if matches!(class, Class::Poi | Class::Label) && vertices.len() == 1 {
@@ -769,15 +792,16 @@ pub fn prepare_features(
     let height = (class == Class::Building).then(|| building_height_m(tags));
     let name = tag(tags, "name").unwrap_or_default();
     let flags = osm_flags(tags);
+    let rank = osm_rank(tags);
     let tiles = covered_tiles(&points, level);
     if is_area(class) {
         tiles.into_iter().filter_map(|tile| {
-            prepared_part(PartInput { id, class, tile, points: clip_polygon(&points, tile), building_height: height, flags, name })
+            prepared_part(PartInput { id, class, tile, points: clip_polygon(&points, tile), building_height: height, flags, rank, name })
         }).collect()
     } else {
         tiles.into_iter().flat_map(|tile| {
             clipped_line_parts(&points, tile).into_iter().filter_map(move |part| {
-                prepared_part(PartInput { id, class, tile, points: part, building_height: height, flags, name })
+                prepared_part(PartInput { id, class, tile, points: part, building_height: height, flags, rank, name })
             })
         }).collect()
     }
@@ -957,11 +981,12 @@ struct PartInput<'a> {
     points: Vec<GridPoint>,
     building_height: Option<BuildingHeight>,
     flags: u8,
+    rank: u8,
     name: &'a str,
 }
 
 fn prepared_part(part: PartInput<'_>) -> Option<PreparedFeature> {
-    let PartInput { id, class, tile, points, building_height, flags, name } = part;
+    let PartInput { id, class, tile, points, building_height, flags, rank, name } = part;
     let mut vertices = points.into_iter().map(|point| tile_coord(point, tile)).collect::<Vec<_>>();
     vertices.dedup();
     if is_area(class) && vertices.first() != vertices.last() {
@@ -970,7 +995,7 @@ fn prepared_part(part: PartInput<'_>) -> Option<PreparedFeature> {
     let required = if is_area(class) { 4 } else { 2 };
     (vertices.len() >= required).then(|| PreparedFeature {
         tile, class, building_height,
-        feature: FeatureDraft { id, flags, rank: 0, name: name.to_string(), vertices },
+        feature: FeatureDraft { id, flags, rank, name: name.to_string(), vertices },
     })
 }
 
@@ -1122,6 +1147,14 @@ mod tests {
         assert_eq!(osm_flags(&[("tunnel", "yes")]), maps2_style::FLAG_TUNNEL);
         assert_eq!(osm_flags(&[("bridge", "yes"), ("tunnel", "yes")]), maps2_style::FLAG_BRIDGE | maps2_style::FLAG_TUNNEL);
         assert_eq!(osm_flags(&[("bridge", "no")]), 0);
+    }
+
+    #[test]
+    fn osm_label_rank_prioritises_larger_settlements() {
+        assert_eq!(osm_rank(&[("place", "city")]), 0);
+        assert_eq!(osm_rank(&[("place", "town")]), 1);
+        assert_eq!(osm_rank(&[("place", "village")]), 2);
+        assert_eq!(osm_rank(&[("place", "neighbourhood")]), 3);
     }
 
     #[test]

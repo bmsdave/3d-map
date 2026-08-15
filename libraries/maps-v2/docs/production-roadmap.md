@@ -42,6 +42,10 @@ collinear road vertices: the current z12 package is 161,479 parts and 15 MB.
 Area geometry and larger road turns remain unsimplified, so this is not yet
 production-quality cartographic generalisation.
 
+Named OSM places now carry deterministic settlement ranks: cities, towns,
+villages/suburbs, then local places. Low zooms admit only the appropriate rank,
+so text collision prioritizes map-scale names over neighbourhood detail.
+
 Every generated manifest carries per-tile SHA-256 values plus an aggregate
 package SHA-256, so independent package builds can compare exact bytes without
 committing derived data. The ingest CLI verifies the manifest digest table and
