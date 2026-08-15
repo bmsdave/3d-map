@@ -260,6 +260,7 @@ pub fn classify_osm_tags(tags: &[(&str, &str)]) -> Option<Class> {
         .or_else(|| tag(tags, "natural").filter(|value| *value == "water").map(|_| Class::Water))
         .or_else(|| tag(tags, "leisure").filter(|value| *value == "park").map(|_| Class::Park))
         .or_else(|| tag(tags, "amenity").map(|_| Class::Poi))
+        .or_else(|| tag(tags, "place").map(|_| Class::Label))
 }
 
 fn road_class(highway: Option<&str>) -> Option<Class> {
@@ -342,6 +343,13 @@ struct RawWay {
 }
 
 #[derive(Clone, Debug)]
+struct RawNode {
+    id: u32,
+    tags: Vec<(String, String)>,
+    point: Lonlat,
+}
+
+#[derive(Clone, Debug)]
 struct RawRelation {
     id: u32,
     tags: Vec<(String, String)>,
@@ -358,9 +366,11 @@ pub fn resolve_osm_pbf(path: impl AsRef<Path>, level: u8) -> Result<Vec<Prepared
     let path = path.as_ref();
     let relations = read_classified_relations(path)?;
     let ways = read_classified_ways(path, &relations)?;
+    let point_features = read_classified_nodes(path)?;
     let nodes = read_referenced_nodes(path, &referenced_nodes(&ways))?;
     let mut features = prepare_ways(&ways, &nodes, level)?;
     features.extend(prepare_relations(&relations, &ways, &nodes, level)?);
+    features.extend(prepare_nodes(&point_features, level));
     Ok(features)
 }
 
@@ -404,6 +414,24 @@ fn read_classified_ways(path: &Path, relations: &[RawRelation]) -> Result<Vec<Ra
     Ok(ways)
 }
 
+fn read_classified_nodes(path: &Path) -> Result<Vec<RawNode>, OsmError> {
+    let input = File::open(path).map_err(|error| OsmError::Read(error.to_string()))?;
+    let mut reader = OsmPbfReader::new(input);
+    let mut nodes = Vec::new();
+    for object in reader.iter() {
+        let OsmObj::Node(node) = object.map_err(|error| OsmError::Read(error.to_string()))? else {
+            continue;
+        };
+        let tags = owned_tags(&node.tags);
+        if !matches!(classify_osm_tags(&tag_refs(&tags)), Some(Class::Poi | Class::Label)) {
+            continue;
+        }
+        let id = feature_id(node.id.0);
+        nodes.push(RawNode { id, tags, point: Lonlat { lon: node.lon(), lat: node.lat() } });
+    }
+    Ok(nodes)
+}
+
 fn referenced_nodes(ways: &[RawWay]) -> HashSet<NodeId> {
     ways.iter().flat_map(|way| way.nodes.iter().copied()).collect()
 }
@@ -426,6 +454,21 @@ fn read_referenced_nodes(path: &Path, wanted: &HashSet<NodeId>) -> Result<HashMa
 fn prepare_ways(ways: &[RawWay], nodes: &HashMap<NodeId, Lonlat>, level: u8) -> Result<Vec<PreparedFeature>, OsmError> {
     ways.iter().map(|way| prepare_way(way, nodes, level)).collect::<Result<Vec<_>, _>>()
         .map(|features| features.into_iter().flatten().collect())
+}
+
+fn prepare_nodes(nodes: &[RawNode], level: u8) -> Vec<PreparedFeature> {
+    nodes.iter().flat_map(|node| {
+        prepare_features(node.id, &tag_refs(&node.tags), std::slice::from_ref(&node.point), level)
+    }).collect()
+}
+
+fn feature_id(source_id: i64) -> u32 {
+    if let Ok(id) = u32::try_from(source_id) {
+        return id;
+    }
+    source_id.to_le_bytes().into_iter().fold(0x811c_9dc5_u32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+    })
 }
 
 fn prepare_way(way: &RawWay, nodes: &HashMap<NodeId, Lonlat>, level: u8) -> Result<Vec<PreparedFeature>, OsmError> {
@@ -707,6 +750,9 @@ pub fn prepare_features(
     let Some(class) = classify_osm_tags(tags) else {
         return Vec::new();
     };
+    if matches!(class, Class::Poi | Class::Label) && vertices.len() == 1 {
+        return prepare_feature(id, tags, vertices, level).into_iter().collect();
+    }
     let points = grid_points(vertices, level);
     let height = (class == Class::Building).then(|| building_height_m(tags));
     let name = tag(tags, "name").unwrap_or_default();
@@ -1013,7 +1059,46 @@ mod tests {
         assert_eq!(classify_osm_tags(&[("building", "yes")]), Some(Class::Building));
         assert_eq!(classify_osm_tags(&[("natural", "water")]), Some(Class::Water));
         assert_eq!(classify_osm_tags(&[("amenity", "cafe")]), Some(Class::Poi));
+        assert_eq!(classify_osm_tags(&[("place", "city")]), Some(Class::Label));
         assert_eq!(classify_osm_tags(&[("highway", "footway")]), Some(Class::RoadPath));
+    }
+
+    #[test]
+    fn geometry_adapter_keeps_a_named_point_feature() {
+        let point = Lonlat { lon: -0.1278, lat: 51.5074 };
+
+        let features = prepare_features(19, &[("amenity", "library"), ("name", "City Library")], &[point], 16);
+
+        assert_eq!(features.len(), 1);
+        assert_eq!(features[0].class, Class::Poi);
+        assert_eq!(features[0].feature.vertices.len(), 1);
+        assert_eq!(features[0].feature.name, "City Library");
+    }
+
+    #[test]
+    fn node_adapter_emits_named_osm_places() {
+        let nodes = vec![RawNode {
+            id: 20,
+            tags: vec![("place".to_string(), "city".to_string()), ("name".to_string(), "London".to_string())],
+            point: Lonlat { lon: -0.1278, lat: 51.5074 },
+        }];
+
+        let features = prepare_nodes(&nodes, 16);
+
+        assert_eq!(features.len(), 1);
+        assert_eq!(features[0].class, Class::Label);
+        assert_eq!(features[0].feature.name, "London");
+    }
+
+    #[test]
+    fn oversized_osm_ids_get_a_stable_tile_feature_id() {
+        let source_id = 4_296_598_207;
+
+        let first = feature_id(source_id);
+        let second = feature_id(source_id);
+
+        assert_eq!(first, second);
+        assert_ne!(first, feature_id(1));
     }
 
     #[test]

@@ -24,10 +24,12 @@ pipeline then produces the global package.
 The project has the beginnings of the London path: pinned Greater London OSM
 and two Copernicus DEM descriptors, checksum validation, deterministic MT2 v2
 encoding, terrain rasters, OSM building-height fallbacks, and deterministic
-tile-border clipping, and outer-ring multipolygon relations. A local z16
-London rebuild currently emits 2,015,439 feature parts in 11,885
-terrain-bearing tiles from those validated inputs. Inner relation rings and
-holes remain unfinished.
+tile-border clipping, outer-ring multipolygon relations, named places, and
+amenity points. A local z16 London rebuild currently emits 2,128,113 feature
+parts in 11,944 terrain-bearing tiles from those validated inputs. MT2 v1's
+32-bit feature IDs require a deterministic fallback for oversized OSM node
+IDs; collision-free 64-bit source identity is a production-format milestone.
+Inner relation rings and holes remain unfinished.
 
 This is **not** a browser-ready London map or a production release. The lab
 now exercises a manifest-driven, demand-loading host contract with synthetic
