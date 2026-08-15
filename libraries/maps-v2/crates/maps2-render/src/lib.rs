@@ -9,6 +9,7 @@ use maps2_style::Class;
 use maps2_tile::{TileError, TileView};
 
 mod line;
+mod building;
 mod labels;
 mod globe;
 mod residency;
@@ -20,6 +21,7 @@ pub use line::{
     LineRange, LineVertex, Pass, RoadLevel, RoadPass, LINESOFAR_STEP, MITER_LIMIT_MAX,
     NORMAL_SCALE, POS_BIAS, ROAD_LEVELS, ROAD_ORDER, ROUND_CAP_SEGMENTS,
 };
+pub use building::{BuildingBucket, BuildingVertex, build_building_bucket};
 pub use labels::{build_label_bucket, LabelBucket, LabelPoint, LABEL_CLASSES};
 pub use globe::{project_normalised, tile_frame, Projected, TileFrame, View};
 pub use residency::{plan_residency, target_level, ResidencyPlan};
@@ -185,5 +187,32 @@ mod tests {
             .sum();
         let full = 65535.0_f64 * 65535.0;
         assert!((area - full).abs() / full < 1e-9, "land area {area} vs {full}");
+    }
+
+    #[test]
+    fn a_building_bucket_has_a_roof_and_closed_walls() {
+        let mut builder = maps2_tile::TileBuilder::new(maps2_units::TileId { z: 16, x: 0, y: 0 });
+        builder.push_building(
+            Class::Building.code(),
+            maps2_tile::FeatureDraft::geometry(
+                17,
+                0,
+                vec![
+                    maps2_units::TileCoord(10, 10),
+                    maps2_units::TileCoord(30, 10),
+                    maps2_units::TileCoord(20, 30),
+                    maps2_units::TileCoord(10, 10),
+                ],
+            ),
+            maps2_tile::BuildingDraft::flat(0, 120),
+        );
+        let bytes = builder.build().expect("building tile");
+        let tile = TileView::parse(&bytes).expect("tile parses");
+
+        let bucket = build_building_bucket(&tile).expect("building bucket");
+
+        assert_eq!(bucket.indices.len(), 21);
+        assert!(bucket.vertices.iter().any(|vertex| vertex.height_dm == 0));
+        assert!(bucket.vertices.iter().any(|vertex| vertex.height_dm == 120));
     }
 }
