@@ -151,7 +151,7 @@ pub fn tile_bytes(id: TileId) -> Vec<u8> {
     push_buildings(&mut builder, id.z, window);
     push_places(&mut builder, window);
     push_poi(&mut builder, id);
-    builder.build()
+        builder.build().expect("fixture tile fits MT2")
 }
 
 /// Named places: offsets from the fixed centre in normalised world

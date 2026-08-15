@@ -22,6 +22,10 @@ pub struct TileView<'a> {
 impl<'a> TileView<'a> {
     /// Validates the header and the section table only; section
     /// payloads are touched lazily, when iterated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TileError`] when the header or section table is malformed.
     pub fn parse(bytes: &'a [u8]) -> Result<Self, TileError> {
         if bytes.len() < HEADER_BYTES {
             return Err(TileError::TooShort);
@@ -106,6 +110,7 @@ pub struct SectionView<'a> {
 }
 
 impl<'a> SectionView<'a> {
+    #[must_use]
     pub fn features(&self) -> FeaturesIter<'a> {
         if self.bytes.len() < 2 {
             return FeaturesIter { bytes: self.bytes, pos: 0, remaining: 0, damaged: true };
@@ -202,6 +207,7 @@ pub struct FeatureView<'a> {
 
 impl<'a> FeatureView<'a> {
     /// Lazily decodes vertices from the delta stream.
+    #[must_use]
     pub fn vertices(&self) -> VerticesIter<'a> {
         VerticesIter {
             bytes: self.geometry,

@@ -70,7 +70,7 @@ mod tests {
         builder.push(Class::Poi.code(), FeatureDraft::geometry(21, 0, vec![TileCoord(5, 5)]));
         builder.push(Class::Label.code(), named(10, 1, "Ealing", TileCoord(300, 400)));
         builder.push(Class::Water.code(), rect(99));
-        builder.build()
+        builder.build().expect("label fixture fits MT2")
     }
 
     fn rect(id: u32) -> FeatureDraft {
@@ -111,7 +111,7 @@ mod tests {
     fn a_tile_of_pure_geometry_has_no_labels() {
         let mut builder = TileBuilder::new(TileId { z: 8, x: 1, y: 2 });
         builder.push(Class::Water.code(), rect(1));
-        let bytes = builder.build();
+        let bytes = builder.build().expect("label fixture fits MT2");
         let tile = TileView::parse(&bytes).expect("parses");
         assert_eq!(build_label_bucket(&tile).expect("builds"), LabelBucket::default());
     }

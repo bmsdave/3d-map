@@ -3,7 +3,7 @@
 use maps2_units::TileId;
 
 use crate::varint::{write_varint, zigzag_encode};
-use crate::{ClassCode, FeatureDraft, FORMAT_VERSION, MAGIC, RASTER_CLASS_BASE};
+use crate::{ClassCode, FeatureDraft, TileError, FORMAT_VERSION, MAGIC, RASTER_CLASS_BASE};
 
 const SECTION_ENTRY_BYTES: usize = 10;
 
@@ -44,21 +44,26 @@ impl TileBuilder {
         self.sections.push((class, SectionDraft::Raster(payload)));
     }
 
-    #[must_use]
-    pub fn build(&self) -> Vec<u8> {
-        let payloads: Vec<Vec<u8>> = self
+    /// # Errors
+    ///
+    /// Returns [`TileError::TooLarge`] when a v1 length field cannot encode
+    /// the supplied data, or [`TileError::EmptyGeometry`] for a feature with
+    /// no first vertex.
+    pub fn build(&self) -> Result<Vec<u8>, TileError> {
+        let payloads: Result<Vec<Vec<u8>>, TileError> = self
             .sections
             .iter()
             .map(|(_, section)| match section {
                 SectionDraft::Vector(features) => encode_section(features),
-                SectionDraft::Raster(payload) => payload.clone(),
+                SectionDraft::Raster(payload) => Ok(payload.clone()),
             })
             .collect();
-        let mut out = header_and_table(self.id, &self.sections, &payloads);
+        let payloads = payloads?;
+        let mut out = header_and_table(self.id, &self.sections, &payloads)?;
         for payload in &payloads {
             out.extend_from_slice(payload);
         }
-        out
+        Ok(out)
     }
 }
 
@@ -66,7 +71,7 @@ fn header_and_table(
     id: TileId,
     sections: &[(ClassCode, SectionDraft)],
     payloads: &[Vec<u8>],
-) -> Vec<u8> {
+) -> Result<Vec<u8>, TileError> {
     let mut out = Vec::new();
     out.extend_from_slice(&MAGIC);
     out.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
@@ -74,36 +79,37 @@ fn header_and_table(
     out.push(0);
     out.extend_from_slice(&id.x.to_le_bytes());
     out.extend_from_slice(&id.y.to_le_bytes());
-    out.extend_from_slice(&(sections.len() as u16).to_le_bytes());
+    out.extend_from_slice(&checked_u16(sections.len())?.to_le_bytes());
     out.extend_from_slice(&0_u16.to_le_bytes());
     let mut offset: u32 = 0;
     for ((class, _), payload) in sections.iter().zip(payloads) {
         out.extend_from_slice(&class.to_le_bytes());
         out.extend_from_slice(&offset.to_le_bytes());
-        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        offset += payload.len() as u32;
+        let length = checked_u32(payload.len())?;
+        out.extend_from_slice(&length.to_le_bytes());
+        offset = offset.checked_add(length).ok_or(TileError::TooLarge)?;
     }
     debug_assert_eq!(out.len(), 20 + sections.len() * SECTION_ENTRY_BYTES);
-    out
+    Ok(out)
 }
 
-fn encode_section(features: &[FeatureDraft]) -> Vec<u8> {
+fn encode_section(features: &[FeatureDraft]) -> Result<Vec<u8>, TileError> {
     let mut out = Vec::new();
-    out.extend_from_slice(&(features.len() as u16).to_le_bytes());
+    out.extend_from_slice(&checked_u16(features.len())?.to_le_bytes());
     for feature in features {
-        encode_feature(&mut out, feature);
+        encode_feature(&mut out, feature)?;
     }
-    out
+    Ok(out)
 }
 
-fn encode_feature(out: &mut Vec<u8>, feature: &FeatureDraft) {
+fn encode_feature(out: &mut Vec<u8>, feature: &FeatureDraft) -> Result<(), TileError> {
+    let first = *feature.vertices.first().ok_or(TileError::EmptyGeometry)?;
     out.extend_from_slice(&feature.id.to_le_bytes());
     out.push(feature.flags);
     out.push(feature.rank);
-    out.extend_from_slice(&(feature.name.len() as u16).to_le_bytes());
+    out.extend_from_slice(&checked_u16(feature.name.len())?.to_le_bytes());
     out.extend_from_slice(feature.name.as_bytes());
-    out.extend_from_slice(&(feature.vertices.len() as u16).to_le_bytes());
-    let first = feature.vertices[0];
+    out.extend_from_slice(&checked_u16(feature.vertices.len())?.to_le_bytes());
     out.extend_from_slice(&first.0.to_le_bytes());
     out.extend_from_slice(&first.1.to_le_bytes());
     let mut prev = first;
@@ -111,5 +117,31 @@ fn encode_feature(out: &mut Vec<u8>, feature: &FeatureDraft) {
         write_varint(out, zigzag_encode(i32::from(vertex.0) - i32::from(prev.0)));
         write_varint(out, zigzag_encode(i32::from(vertex.1) - i32::from(prev.1)));
         prev = *vertex;
+    }
+    Ok(())
+}
+
+fn checked_u16(value: usize) -> Result<u16, TileError> {
+    u16::try_from(value).map_err(|_| TileError::TooLarge)
+}
+
+fn checked_u32(value: usize) -> Result<u32, TileError> {
+    u32::try_from(value).map_err(|_| TileError::TooLarge)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TileError;
+    use maps2_units::TileCoord;
+
+    #[test]
+    fn build_rejects_a_section_with_more_than_u16_max_features() {
+        let mut builder = TileBuilder::new(TileId { z: 0, x: 0, y: 0 });
+        for id in 0..=u16::MAX {
+            builder.push(1, FeatureDraft::geometry(u32::from(id), 0, vec![TileCoord(0, 0)]));
+        }
+
+        assert_eq!(builder.build(), Err(TileError::TooLarge));
     }
 }

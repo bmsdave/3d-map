@@ -3,11 +3,11 @@
 use crate::TileError;
 
 pub fn zigzag_encode(value: i32) -> u32 {
-    ((value << 1) ^ (value >> 31)) as u32
+    ((value << 1) ^ (value >> 31)).cast_unsigned()
 }
 
 pub fn zigzag_decode(value: u32) -> i32 {
-    ((value >> 1) as i32) ^ -((value & 1) as i32)
+    (value >> 1).cast_signed() ^ -(value & 1).cast_signed()
 }
 
 pub fn write_varint(out: &mut Vec<u8>, mut value: u32) {

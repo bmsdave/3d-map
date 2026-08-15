@@ -71,6 +71,8 @@ pub enum TileError {
     BadVarint,
     DeltaOutOfRange,
     BadText,
+    TooLarge,
+    EmptyGeometry,
 }
 
 /// One feature as fed to the builder; the reading side never allocates
@@ -144,7 +146,7 @@ mod tests {
         for poi in poi_features() {
             builder.push(9, poi);
         }
-        builder.build()
+        builder.build().expect("sample fits MT2")
     }
 
     fn collect(section: SectionView<'_>) -> Vec<FeatureDraft> {
@@ -186,7 +188,7 @@ mod tests {
         );
         let mut builder = TileBuilder::new(TileId { z: 0, x: 0, y: 0 });
         builder.push(0, feature.clone());
-        let bytes = builder.build();
+        let bytes = builder.build().expect("feature fits MT2");
         let tile = TileView::parse(&bytes).expect("parses");
         assert_eq!(collect(tile.section(0).expect("section")), vec![feature]);
     }
@@ -240,9 +242,9 @@ mod tests {
     fn a_raster_section_round_trips_and_is_not_a_vector_section() {
         let mut builder = TileBuilder::new(TileId { z: 10, x: 1, y: 2 });
         builder.push(0, water_feature());
-        let heights: Vec<u8> = (0..512_u32).flat_map(|v| (v as u16).to_le_bytes()).collect();
+        let heights: Vec<u8> = (0_u16..512).flat_map(u16::to_le_bytes).collect();
         builder.push_raster(CLASS_HEIGHTS, heights.clone());
-        let bytes = builder.build();
+        let bytes = builder.build().expect("raster fits MT2");
         let tile = TileView::parse(&bytes).expect("parses");
         assert_eq!(tile.raster(CLASS_HEIGHTS), Some(heights.as_slice()));
         assert_eq!(tile.section(CLASS_HEIGHTS), None, "raster is not features");

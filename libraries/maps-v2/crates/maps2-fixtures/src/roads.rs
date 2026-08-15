@@ -54,7 +54,7 @@ pub fn roads_tile_bytes() -> Vec<u8> {
     for (class, feature) in scene() {
         builder.push(class.code(), feature);
     }
-    builder.build()
+    builder.build().expect("roads fixture fits MT2")
 }
 
 fn road(id: u32, flags: u8, points: &[(u16, u16)]) -> FeatureDraft {

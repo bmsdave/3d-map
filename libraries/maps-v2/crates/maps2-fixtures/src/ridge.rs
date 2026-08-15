@@ -178,7 +178,7 @@ pub fn ridge_tile_bytes(id: TileId) -> Vec<u8> {
     let mut builder = TileBuilder::new(id);
     builder.push(Class::Land.code(), rect_polygon(1, (0, 0, 65535, 65535)));
     builder.push_raster(CLASS_HEIGHTS, heights_raster(id));
-    builder.build()
+    builder.build().expect("ridge fixture fits MT2")
 }
 
 #[cfg(test)]
