@@ -44,7 +44,8 @@ npm run dev
 ```
 
 Open `http://localhost:5178`. Direct routes make each renderer concern easy to
-inspect, for example `/#/card/roads-micro` and `/#/card/globe-relief`.
+inspect, for example `/#/showcase`, `/#/card/roads-micro`, and
+`/#/card/globe-relief`. The showcase contains twenty animated, live SDK studies.
 
 ## Verify a clean checkout
 

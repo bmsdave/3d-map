@@ -1,4 +1,5 @@
 import { cardById, CARDS } from "./cards";
+import { destroyShowcase, showcase } from "./showcase";
 import { el, stageEl } from "./ui";
 import "./style.css";
 
@@ -9,9 +10,9 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 
 function header(): HTMLElement {
   return el("header", {}, [
-    el("h1", {}, [el("a", { href: "#/" }, ["maps-v2 lab"])]),
+    el("h1", {}, [el("a", { href: "#/showcase" }, ["maps-v2 lab"])]),
     el("span", { class: "tagline" }, [
-      "атомарные карточки для TDD-разработки SDK",
+      "deterministic 3D map studies",
     ]),
   ]);
 }
@@ -58,10 +59,12 @@ function renderCard(id: string): HTMLElement {
 
 function route(): void {
   const match = location.hash.match(/^#\/card\/([\w-]+)$/);
+  const isShowcase = location.hash === "#/showcase";
+  destroyShowcase();
   app.replaceChildren(
     el("div", { class: "shell" }, [
       header(),
-      match?.[1] ? renderCard(match[1]) : renderIndex(),
+      isShowcase ? showcase() : match?.[1] ? renderCard(match[1]) : renderIndex(),
     ]),
   );
 }
