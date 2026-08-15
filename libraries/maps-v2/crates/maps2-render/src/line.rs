@@ -22,6 +22,7 @@ use std::f64::consts::PI;
 use maps2_style::{Class, FLAG_BRIDGE, FLAG_TUNNEL};
 use maps2_tile::{SectionView, TileError, TileView};
 use maps2_units::TileCoord;
+use num_traits::ToPrimitive;
 
 /// Packing scale of the normal. 31 rather than 63 because the extrusion
 /// carries the miter length with it: `MITER_LIMIT_MAX · 31` still fits
@@ -185,19 +186,19 @@ fn miter_vector(a: [f64; 2], b: [f64; 2]) -> (f64, f64) {
 fn pack(point: [f64; 2], normal: [f64; 2], distance: f64) -> LineVertex {
     let coordinate = |value: f64| {
         let biased = value.round() - f64::from(POS_BIAS);
-        biased.clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16
+        biased.clamp(f64::from(i16::MIN), f64::from(i16::MAX)).to_i16().unwrap_or_default()
     };
     let component = |value: f64| {
         (value * f64::from(NORMAL_SCALE))
             .round()
-            .clamp(f64::from(i8::MIN + 1), f64::from(i8::MAX)) as i8
+            .clamp(f64::from(i8::MIN + 1), f64::from(i8::MAX)).to_i8().unwrap_or_default()
     };
     LineVertex {
         x: coordinate(point[0]),
         y: coordinate(point[1]),
         nx: component(normal[0]),
         ny: component(normal[1]),
-        linesofar: (distance / f64::from(LINESOFAR_STEP)).round().clamp(0.0, 65535.0) as u16,
+        linesofar: (distance / f64::from(LINESOFAR_STEP)).round().clamp(0.0, 65535.0).to_u16().unwrap_or_default(),
     }
 }
 
@@ -359,7 +360,7 @@ impl LineBucket {
     }
 
     fn vertex(&mut self, point: [f64; 2], normal: [f64; 2], distance: f64) -> u32 {
-        let index = self.vertices.len() as u32;
+        let index = u32::try_from(self.vertices.len()).unwrap_or(u32::MAX);
         self.vertices.push(pack(point, normal, distance));
         index
     }
@@ -375,6 +376,10 @@ impl LineBucket {
 }
 
 /// Builds every road ribbon of a tile, one range per class and storey.
+///
+/// # Errors
+///
+/// Returns [`TileError`] when a road feature cannot be decoded.
 pub fn build_line_bucket(tile: &TileView, options: LineOptions) -> Result<LineBucket, TileError> {
     let mut bucket = LineBucket::default();
     for class in ROAD_ORDER {
@@ -382,9 +387,9 @@ pub fn build_line_bucket(tile: &TileView, options: LineOptions) -> Result<LineBu
             continue;
         };
         for level in ROAD_LEVELS {
-            let first_index = bucket.indices.len() as u32;
+            let first_index = u32::try_from(bucket.indices.len()).map_err(|_| TileError::TooLarge)?;
             append_level(&mut bucket, &section, level, options)?;
-            let index_count = bucket.indices.len() as u32 - first_index;
+            let index_count = u32::try_from(bucket.indices.len()).map_err(|_| TileError::TooLarge)? - first_index;
             if index_count > 0 {
                 bucket.ranges.push(LineRange { class, level, first_index, index_count });
             }

@@ -51,7 +51,7 @@ pub fn triangulate(ring: &[Point]) -> Vec<[u32; 3]> {
     if ring.len() < 3 {
         return Vec::new();
     }
-    let mut remaining: Vec<u32> = (0..ring.len() as u32).collect();
+    let mut remaining: Vec<u32> = (0..u32::try_from(ring.len()).unwrap_or_default()).collect();
     if signed_area(ring) < 0.0 {
         remaining.reverse();
     }

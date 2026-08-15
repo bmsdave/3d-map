@@ -30,6 +30,10 @@ pub struct LabelBucket {
 
 /// Reads the named point features of one tile, in [`LABEL_CLASSES`]
 /// order. A feature without a name is not a label and is dropped.
+///
+/// # Errors
+///
+/// Returns [`TileError`] when the tile's label data is truncated or malformed.
 pub fn build_label_bucket(tile: &TileView) -> Result<LabelBucket, TileError> {
     let mut bucket = LabelBucket::default();
     for class in LABEL_CLASSES {

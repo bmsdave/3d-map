@@ -61,18 +61,22 @@ pub struct FillBucket {
 
 /// Builds the fill mesh of one tile in [`FILL_ORDER`]. Classes absent
 /// from the tile are absent from the ranges.
+///
+/// # Errors
+///
+/// Returns [`TileError`] when a feature cannot be decoded.
 pub fn build_fill_bucket(tile: &TileView) -> Result<FillBucket, TileError> {
     let mut bucket = FillBucket::default();
     for class in FILL_ORDER {
         let Some(section) = tile.section(class.code()) else {
             continue;
         };
-        let first_index = bucket.indices.len() as u32;
+        let first_index = u32::try_from(bucket.indices.len()).map_err(|_| TileError::TooLarge)?;
         for feature in section.features() {
             let feature = feature?;
             append_polygon(&mut bucket, &feature)?;
         }
-        let index_count = bucket.indices.len() as u32 - first_index;
+        let index_count = u32::try_from(bucket.indices.len()).map_err(|_| TileError::TooLarge)? - first_index;
         if index_count > 0 {
             bucket.ranges.push(ClassRange { class, first_index, index_count });
         }
@@ -100,7 +104,7 @@ fn append_polygon(
     if ring.len() < 3 {
         return Ok(());
     }
-    let base = bucket.vertices.len() as u32;
+    let base = u32::try_from(bucket.vertices.len()).map_err(|_| TileError::TooLarge)?;
     bucket
         .vertices
         .extend(coords.iter().map(|v| FillVertex { x: v.0, y: v.1 }));

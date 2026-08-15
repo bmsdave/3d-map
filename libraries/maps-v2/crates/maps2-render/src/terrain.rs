@@ -13,6 +13,7 @@
 use maps2_style::{relief_z_factor, LIGHT_ALTITUDE_DEG, LIGHT_AZIMUTH_DEG};
 use maps2_tile::HeightsRaster;
 use maps2_units::{to_lonlat, TileCoord, TileId, TilePoint, EARTH_CIRCUMFERENCE_METRES};
+use num_traits::ToPrimitive;
 
 use crate::FillVertex;
 
@@ -32,7 +33,7 @@ pub struct GroundMesh {
 #[must_use]
 pub fn ground_mesh(cells: u32) -> GroundMesh {
     let side = cells + 1;
-    let coord = |i: u32| (f64::from(i) / f64::from(cells) * 65535.0).round() as u16;
+    let coord = |i: u32| (f64::from(i) / f64::from(cells) * 65535.0).round().to_u16().unwrap_or(u16::MAX);
     let mut mesh = GroundMesh::default();
     for j in 0..side {
         for i in 0..side {
@@ -55,8 +56,8 @@ pub fn ground_mesh(cells: u32) -> GroundMesh {
 pub fn texel_metres(id: TileId) -> f32 {
     let centre = to_lonlat(TilePoint { tile: id, coord: TileCoord(32768, 32768) });
     let tiles = f64::from(1_u32 << id.z);
-    let samples = f64::from(maps2_tile::HEIGHTS_SIDE as u32 - 1);
-    (EARTH_CIRCUMFERENCE_METRES * centre.lat.to_radians().cos() / tiles / samples) as f32
+    let samples = f64::from(u32::try_from(maps2_tile::HEIGHTS_SIDE).unwrap_or_default().saturating_sub(1));
+    (EARTH_CIRCUMFERENCE_METRES * centre.lat.to_radians().cos() / tiles / samples).to_f32().unwrap_or(f32::MAX)
 }
 
 /// Slope of the surface at a sample, east and north, already exaggerated
@@ -123,7 +124,7 @@ pub fn shading_z_factor(expressiveness: f32, exaggeration: f32, globeness: f32) 
 /// globeness because a flat sheet has no radius to swell.
 #[must_use]
 pub fn relief_radius_scale(metres: f32, exaggeration: f32, globeness: f32) -> f32 {
-    let radius = (EARTH_CIRCUMFERENCE_METRES / std::f64::consts::TAU) as f32;
+    let radius = (EARTH_CIRCUMFERENCE_METRES / std::f64::consts::TAU).to_f32().unwrap_or(f32::MAX);
     1.0 + (metres / radius) * exaggeration * globeness.clamp(0.0, 1.0)
 }
 
