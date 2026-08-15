@@ -37,7 +37,7 @@ export function rankInversions(entries: LabelEntry[]): number {
     if (e.state !== "collision" || e.blocked_by === null) return false;
     const blocker = byId.get(e.blocked_by);
     if (!blocker) return false;
-    return blocker.rank > e.rank || (blocker.rank === e.rank && blocker.id > e.id);
+    return blocker.rank > e.rank || (blocker.rank === e.rank && BigInt(blocker.id) > BigInt(e.id));
   }).length;
 }
 

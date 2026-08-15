@@ -54,11 +54,11 @@ export type LabelState =
   | "duplicate";
 
 export interface LabelEntry {
-  id: number;
+  id: string;
   rank: number;
   class: string;
   state: LabelState;
-  blocked_by: number | null;
+  blocked_by: string | null;
   text: string;
   x: number;
   y: number;
@@ -159,7 +159,7 @@ function isTilePackageManifest(value: unknown): value is TilePackageManifest {
   if (!value || typeof value !== "object") return false;
   const manifest = value as Partial<TilePackageManifest>;
   return manifest.format === "MT2"
-    && (manifest.format_version === 2 || manifest.format_version === 3)
+    && (manifest.format_version === 2 || manifest.format_version === 3 || manifest.format_version === 4)
     && Array.isArray(manifest.tiles)
     && manifest.tiles.every((path) => typeof path === "string" && /^\d+\/\d+\/\d+\.mt2$/.test(path))
     && !!manifest.tile_digests

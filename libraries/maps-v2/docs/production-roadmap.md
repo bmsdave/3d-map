@@ -23,15 +23,14 @@ pipeline then produces the global package.
 
 The project has the beginnings of the London path: pinned Greater London OSM
 and two Copernicus DEM descriptors, HTTPS-only atomic source acquisition with
-checksum validation, deterministic MT2 v3 encoding with v1/v2 readers, terrain rasters, OSM
+checksum validation, deterministic MT2 v4 encoding with v1/v2/v3 readers, terrain rasters, OSM
 building-height fallbacks, and deterministic
 tile-border clipping, outer/inner-ring multipolygon relations, named places,
 bridge/tunnel road structure flags, and
 amenity points. A local z16 London rebuild currently emits 2,128,113 feature
-parts in 11,944 terrain-bearing tiles from those validated inputs. MT2's
-current 32-bit feature IDs require a deterministic fallback for oversized OSM node
-IDs; collision-free 64-bit source identity is a production-format milestone.
-MT2 v3 carries interior rings and the renderer excludes them from fills; complex
+parts in 11,944 terrain-bearing tiles from those validated inputs. MT2 v4
+preserves 64-bit OSM source IDs, including node IDs beyond the 32-bit range.
+MT2 v3 carries interior rings and MT2 v4 preserves full 64-bit source IDs; the renderer excludes holes from fills. Complex
 relation topology and geometry repair remain unfinished.
 
 The CLI can also write an inclusive z12–z16 package range while processing one
@@ -39,7 +38,7 @@ level at a time. Ingest omits classes below their established style entry zoom:
 a z12 local acceptance build emits 161,638 feature parts in 70 terrain-bearing
 tiles (17 MB), rather than buildings and address-level detail that cannot be
 rendered at z12. Conservative line simplification then reduces nearly
-collinear road vertices: a current local v3 z12 rebuild emits 159,605 parts in
+collinear road vertices: a current local v4 z12 rebuild emits 159,638 parts in
 70 terrain-bearing tiles and verifies its aggregate and per-tile hashes.
 Area geometry and larger road turns remain unsimplified, so this is not yet
 production-quality cartographic generalisation.

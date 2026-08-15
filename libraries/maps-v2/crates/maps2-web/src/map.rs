@@ -558,18 +558,18 @@ impl Map {
 }
 
 fn entry_json(
-    id: u64,
+    id: u128,
     rank: u8,
     bounds: ScreenBox,
     state: &str,
-    by: Option<u64>,
+    by: Option<u128>,
     text: &str,
 ) -> String {
     let class = class_of(id).map_or_else(|| "Unknown".to_string(), |c| format!("{c:?}"));
     format!(
-        "{{\"id\":{id},\"rank\":{rank},\"class\":\"{class}\",\"state\":\"{state}\",\
+        "{{\"id\":\"{id}\",\"rank\":{rank},\"class\":\"{class}\",\"state\":\"{state}\",\
          \"blocked_by\":{},\"text\":{text:?},\"x\":{:.1},\"y\":{:.1},\"w\":{:.1},\"h\":{:.1}}}",
-        by.map_or_else(|| "null".to_string(), |b| b.to_string()),
+        by.map_or_else(|| "null".to_string(), |b| format!("\"{b}\"")),
         bounds.x0,
         bounds.y0,
         bounds.x1 - bounds.x0,

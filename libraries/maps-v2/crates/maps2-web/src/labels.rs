@@ -42,13 +42,13 @@ pub fn label_size_px(class: Class, rank: u8) -> f32 {
 /// copy of it. The class rides in the high half so the frame can colour
 /// a placed label without carrying a second table.
 #[must_use]
-pub fn label_identity(class: Class, feature: u32) -> u64 {
-    u64::from(class.code()) << 32 | u64::from(feature)
+pub fn label_identity(class: Class, feature: u64) -> u128 {
+    u128::from(class.code()) << 64 | u128::from(feature)
 }
 
 #[must_use]
-pub fn class_of(identity: u64) -> Option<Class> {
-    Class::from_code(u16::try_from(identity >> 32).ok()?)
+pub fn class_of(identity: u128) -> Option<Class> {
+    Class::from_code(u16::try_from(identity >> 64).ok()?)
 }
 
 /// Candidates of one frame, in tile order. Order does not matter to the
@@ -207,11 +207,11 @@ mod tests {
     fn the_same_place_seen_from_four_tiles_is_placed_once() {
         let atlas = Atlas::build();
         let owned = buckets_at(14);
-        let identity = label_identity(Class::Label, BOUNDARY_ID);
+        let identity = label_identity(Class::Label, u64::from(BOUNDARY_ID));
         let copies = owned
             .iter()
             .flat_map(|(_, b)| &b.points)
-            .filter(|p| p.id == BOUNDARY_ID)
+            .filter(|p| p.id == u64::from(BOUNDARY_ID))
             .count();
         assert!(copies >= 2, "the fixture offers {copies} copies");
         let placement =
@@ -226,6 +226,15 @@ mod tests {
         // Exactly one copy competes; the others never reach the grid at
         // all, whatever happens to the one that does.
         assert_eq!(duplicates, copies - 1, "{duplicates} of {copies} copies were deduped");
+    }
+
+    #[test]
+    fn a_full_width_feature_identity_keeps_its_class() {
+        let feature = u64::from(u32::MAX) + 1;
+        let identity = label_identity(Class::Label, feature);
+
+        assert_eq!(class_of(identity), Some(Class::Label));
+        assert_ne!(identity, label_identity(Class::Label, feature - 1));
     }
 
     #[test]

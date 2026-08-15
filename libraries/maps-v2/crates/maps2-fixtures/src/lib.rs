@@ -94,7 +94,7 @@ fn clip(rect: WorldRect, window: WorldRect) -> Option<(u16, u16, u16, u16)> {
     (x1 > x0 && y1 > y0).then_some((x0, y0, x1, y1))
 }
 
-pub(crate) fn rect_polygon(id: u32, (x0, y0, x1, y1): (u16, u16, u16, u16)) -> FeatureDraft {
+pub(crate) fn rect_polygon(id: u64, (x0, y0, x1, y1): (u16, u16, u16, u16)) -> FeatureDraft {
     FeatureDraft::geometry(
         id,
         0,
@@ -189,8 +189,8 @@ fn push_places(builder: &mut TileBuilder, window: WorldRect) {
     let named = PLACES
         .iter()
         .enumerate()
-        .map(|(i, (name, rank, dx, dy))| (50 + u32::try_from(i).unwrap_or_default(), *name, *rank, xc + dx, yc + dy))
-        .chain([(BOUNDARY_ID, "Boundary Oak", 4_u8, corner.0, corner.1)]);
+        .map(|(i, (name, rank, dx, dy))| (50 + u64::try_from(i).unwrap_or_default(), *name, *rank, xc + dx, yc + dy))
+        .chain([(u64::from(BOUNDARY_ID), "Boundary Oak", 4_u8, corner.0, corner.1)]);
     for (id, name, rank, x, y) in named {
         let Some(coord) = place_in(window, x, y) else {
             continue;
@@ -254,7 +254,7 @@ fn push_poi(builder: &mut TileBuilder, id: TileId) {
             builder.push(
                 Class::Poi.code(),
                 FeatureDraft {
-                    id: (global.0 % 65536) << 16 | (global.1 % 65536),
+                    id: u64::from((global.0 % 65536) << 16 | (global.1 % 65536)),
                     flags: 0,
                     rank: poi_rank(global),
                     name: poi_name(global),
@@ -375,7 +375,7 @@ fn overlaps(a: WorldRect, b: WorldRect) -> bool {
     a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
 }
 
-fn line(id: u32, from: TileCoord, to: TileCoord) -> FeatureDraft {
+fn line(id: u64, from: TileCoord, to: TileCoord) -> FeatureDraft {
     FeatureDraft::geometry(id, 0, vec![from, to])
 }
 
@@ -388,7 +388,7 @@ mod tests {
     /// change shows up as a hash change and is made knowingly.
     ///
     /// Changed when the micro fixture gained deterministic building heights.
-    const GOLDEN_FNV1A: u64 = 0x13C8_DA50_C8E7_B543;
+    const GOLDEN_FNV1A: u64 = 0x6DB9_8AEA_42AF_B038;
 
     fn fnv1a(bytes: &[u8], mut hash: u64) -> u64 {
         for byte in bytes {
@@ -482,7 +482,7 @@ mod tests {
         }
     }
 
-    fn labels_of(bytes: &[u8], class: Class) -> Vec<(u32, u8, String)> {
+    fn labels_of(bytes: &[u8], class: Class) -> Vec<(u64, u8, String)> {
         let tile = TileView::parse(bytes).expect("parses");
         let Some(section) = tile.section(class.code()) else {
             return Vec::new();
@@ -537,7 +537,7 @@ mod tests {
             if id.z != 14 {
                 continue;
             }
-            if labels_of(&bytes, Class::Label).iter().any(|(fid, _, _)| *fid == BOUNDARY_ID) {
+            if labels_of(&bytes, Class::Label).iter().any(|(fid, _, _)| *fid == u64::from(BOUNDARY_ID)) {
                 homes.push(id);
             }
         }

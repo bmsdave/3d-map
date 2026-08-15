@@ -194,7 +194,7 @@ mod tests {
     use num_traits::ToPrimitive;
 
     /// The package must be bit-for-bit stable, like the Ealing one.
-    const GOLDEN_FNV1A: u64 = 0xD555_7886_32CA_7AA4;
+    const GOLDEN_FNV1A: u64 = 0xEE77_8B7F_CF3D_4914;
 
     fn fnv1a(bytes: &[u8], mut hash: u64) -> u64 {
         for byte in bytes {

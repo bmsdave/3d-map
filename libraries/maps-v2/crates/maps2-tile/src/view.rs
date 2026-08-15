@@ -6,7 +6,7 @@ use maps2_units::{TileCoord, TileId};
 
 use crate::varint::{read_varint, zigzag_decode};
 use crate::{
-    BuildingView, ClassCode, FeatureFlags, LEGACY_FORMAT_VERSION, PREVIOUS_FORMAT_VERSION, RoofType, TileError, TileHeader,
+    BuildingView, ClassCode, FeatureFlags, HOLES_FORMAT_VERSION, LEGACY_FORMAT_VERSION, PREVIOUS_FORMAT_VERSION, RoofType, TileError, TileHeader,
     FORMAT_VERSION, MAGIC, RASTER_CLASS_BASE,
 };
 
@@ -35,7 +35,7 @@ impl<'a> TileView<'a> {
             return Err(TileError::BadMagic);
         }
         let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-        if version != LEGACY_FORMAT_VERSION && version != PREVIOUS_FORMAT_VERSION && version != FORMAT_VERSION {
+        if !matches!(version, LEGACY_FORMAT_VERSION | 2 | PREVIOUS_FORMAT_VERSION | FORMAT_VERSION) {
             return Err(TileError::UnsupportedVersion(version));
         }
         let id = TileId {
@@ -153,9 +153,9 @@ impl<'a> FeaturesIter<'a> {
             .bytes
             .get(self.pos..self.pos + feature_head_bytes(self.version))
             .ok_or(TileError::Truncated)?;
-        let id = u32::from_le_bytes([head[0], head[1], head[2], head[3]]);
-        let flags = head[4];
-        let rank = head[5];
+        let id = feature_id(self.version, head);
+        let flags = head[feature_id_bytes(self.version)];
+        let rank = head[feature_id_bytes(self.version) + 1];
         let building = decode_building(self.version, head)?;
         let name_offset = feature_name_offset(self.version);
         let name_len = usize::from(u16::from_le_bytes([head[name_offset], head[name_offset + 1]]));
@@ -184,20 +184,21 @@ impl<'a> FeaturesIter<'a> {
 }
 
 const fn feature_head_bytes(version: u16) -> usize {
-    if version == LEGACY_FORMAT_VERSION { 8 } else { 13 }
+    if version == LEGACY_FORMAT_VERSION { 8 } else if version == FORMAT_VERSION { 17 } else { 13 }
 }
 
 const fn feature_name_offset(version: u16) -> usize {
-    if version == LEGACY_FORMAT_VERSION { 6 } else { 11 }
+    if version == LEGACY_FORMAT_VERSION { 6 } else if version == FORMAT_VERSION { 15 } else { 11 }
 }
 
 fn decode_building(version: u16, head: &[u8]) -> Result<Option<BuildingView>, TileError> {
     if version == LEGACY_FORMAT_VERSION {
         return Ok(None);
     }
-    let base_height_dm = u16::from_le_bytes([head[6], head[7]]);
-    let top_height_dm = u16::from_le_bytes([head[8], head[9]]);
-    let roof = RoofType::from_wire(head[10]).ok_or(TileError::BadBuilding)?;
+    let offset = feature_id_bytes(version) + 2;
+    let base_height_dm = u16::from_le_bytes([head[offset], head[offset + 1]]);
+    let top_height_dm = u16::from_le_bytes([head[offset + 2], head[offset + 3]]);
+    let roof = RoofType::from_wire(head[offset + 4]).ok_or(TileError::BadBuilding)?;
     if base_height_dm == 0 && top_height_dm == 0 {
         return Ok(None);
     }
@@ -205,6 +206,18 @@ fn decode_building(version: u16, head: &[u8]) -> Result<Option<BuildingView>, Ti
         .then_some(BuildingView { base_height_dm, top_height_dm, roof })
         .map(Some)
         .ok_or(TileError::BadBuilding)
+}
+
+const fn feature_id_bytes(version: u16) -> usize {
+    if version == FORMAT_VERSION { 8 } else { 4 }
+}
+
+fn feature_id(version: u16, head: &[u8]) -> u64 {
+    if version == FORMAT_VERSION {
+        u64::from_le_bytes(head[..8].try_into().expect("feature head has eight ID bytes"))
+    } else {
+        u64::from(u32::from_le_bytes(head[..4].try_into().expect("feature head has four ID bytes")))
+    }
 }
 
 fn skip_geometry(bytes: &[u8], pos: &mut usize, vertex_count: usize) -> Result<(), TileError> {
@@ -235,7 +248,7 @@ fn decode_geometry(
     let geometry_start = *pos;
     skip_geometry(bytes, pos, vertex_count)?;
     let geometry = geometry_start..*pos;
-    if version != FORMAT_VERSION {
+    if version < HOLES_FORMAT_VERSION {
         return Ok((vertex_count, geometry, 0, 0..0));
     }
     let hole_count = usize::from(read_u16(bytes, pos)?);
@@ -249,7 +262,7 @@ fn decode_geometry(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FeatureView<'a> {
-    pub id: u32,
+    pub id: u64,
     pub flags: FeatureFlags,
     pub rank: u8,
     pub building: Option<BuildingView>,

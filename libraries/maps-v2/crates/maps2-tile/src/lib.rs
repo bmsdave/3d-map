@@ -45,8 +45,9 @@ pub use heights::{
 pub use view::{FeatureView, SectionView, TileView};
 
 pub const MAGIC: [u8; 4] = *b"MT2\0";
-pub const FORMAT_VERSION: u16 = 3;
-pub const PREVIOUS_FORMAT_VERSION: u16 = 2;
+pub const FORMAT_VERSION: u16 = 4;
+pub const PREVIOUS_FORMAT_VERSION: u16 = 3;
+pub const HOLES_FORMAT_VERSION: u16 = 3;
 pub const LEGACY_FORMAT_VERSION: u16 = 1;
 
 /// Class codes from here up are raster sections: opaque payloads, no
@@ -85,7 +86,7 @@ pub enum TileError {
 /// labels and POI, empty for geometry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FeatureDraft {
-    pub id: u32,
+    pub id: u64,
     pub flags: FeatureFlags,
     pub rank: u8,
     pub name: String,
@@ -138,14 +139,14 @@ impl RoofType {
 impl FeatureDraft {
     /// A nameless, rankless geometry feature.
     #[must_use]
-    pub fn geometry(id: u32, flags: FeatureFlags, vertices: Vec<TileCoord>) -> Self {
+    pub fn geometry(id: u64, flags: FeatureFlags, vertices: Vec<TileCoord>) -> Self {
         Self { id, flags, rank: 0, name: String::new(), vertices, holes: Vec::new() }
     }
 
     /// A polygon whose interior rings are excluded from its fill.
     #[must_use]
     pub fn polygon_with_holes(
-        id: u32, flags: FeatureFlags, vertices: Vec<TileCoord>, holes: Vec<Vec<TileCoord>>,
+        id: u64, flags: FeatureFlags, vertices: Vec<TileCoord>, holes: Vec<Vec<TileCoord>>,
     ) -> Self {
         Self { id, flags, rank: 0, name: String::new(), vertices, holes }
     }
@@ -266,6 +267,18 @@ mod tests {
         let feature = tile.section(1).expect("section").features().next().expect("feature").expect("valid");
 
         assert_eq!(feature.holes().collect::<Result<Vec<_>, _>>().expect("holes").len(), 1);
+    }
+
+    #[test]
+    fn a_feature_id_beyond_u32_survives_the_round_trip() {
+        let id = u64::from(u32::MAX) + 1;
+        let feature = FeatureDraft::geometry(id, 0, vec![TileCoord(1, 1)]);
+        let mut builder = TileBuilder::new(TileId { z: 12, x: 1, y: 2 });
+        builder.push(1, feature);
+        let bytes = builder.build().expect("tile");
+        let tile = TileView::parse(&bytes).expect("view");
+
+        assert_eq!(tile.section(1).expect("section").features().next().expect("feature").expect("valid").id, id);
     }
 
     #[test]

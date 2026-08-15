@@ -62,7 +62,7 @@ pub fn roads_tile_bytes() -> Vec<u8> {
     builder.build().expect("roads fixture fits MT2")
 }
 
-fn road(id: u32, flags: u8, points: &[(u16, u16)]) -> FeatureDraft {
+fn road(id: u64, flags: u8, points: &[(u16, u16)]) -> FeatureDraft {
     FeatureDraft {
         id,
         flags,
@@ -159,7 +159,7 @@ mod tests {
     /// The scene must be bit-for-bit stable: it is the input of a
     /// golden screenshot, and a silent change there is a silent change
     /// to the picture the reviewer approved.
-    const GOLDEN_FNV1A: u64 = 0xC156_3C91_E1E8_5781;
+    const GOLDEN_FNV1A: u64 = 0xF21A_3DAD_F9D4_B960;
 
     fn fnv1a(bytes: &[u8]) -> u64 {
         let mut hash = 0xcbf2_9ce4_8422_2325_u64;

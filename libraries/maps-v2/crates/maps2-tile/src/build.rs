@@ -176,7 +176,7 @@ mod tests {
     fn build_rejects_a_section_with_more_than_u16_max_features() {
         let mut builder = TileBuilder::new(TileId { z: 0, x: 0, y: 0 });
         for id in 0..=u16::MAX {
-            builder.push(1, FeatureDraft::geometry(u32::from(id), 0, vec![TileCoord(0, 0)]));
+            builder.push(1, FeatureDraft::geometry(u64::from(id), 0, vec![TileCoord(0, 0)]));
         }
 
         assert_eq!(builder.build(), Err(TileError::TooLarge));

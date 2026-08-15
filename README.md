@@ -19,7 +19,7 @@ terrain, and globe relief.
   fixtures, and a WebGL2/Wasm binding.
 - A browser lab with isolated visual cards for zoom bands, road joins and
   casing, input, point-label collision, density, terrain, and globe relief.
-- An **MT2 v3** tile format with v1/v2 readers, deterministic synthetic fixtures, Rust unit
+- An **MT2 v4** tile format with v1/v2/v3 readers, deterministic synthetic fixtures, Rust unit
   tests, Playwright visual tests, and an executable p95 frame budget of ≤10 ms.
 
 ## What is not included

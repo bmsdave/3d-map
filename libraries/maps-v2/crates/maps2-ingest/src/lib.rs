@@ -330,7 +330,7 @@ pub enum OsmError {
     /// An OSM way ID cannot fit the MT2 v1 feature-ID field.
     WayIdOutOfRange(i64),
     /// A classified way refers to a node missing from the PBF stream.
-    MissingNode { way_id: u32, node_id: i64 },
+    MissingNode { way_id: u64, node_id: i64 },
 }
 
 impl fmt::Display for OsmError {
@@ -366,21 +366,21 @@ pub fn scan_osm_pbf(input: impl Read) -> Result<OsmSummary, OsmError> {
 
 #[derive(Clone, Debug)]
 struct RawWay {
-    id: u32,
+    id: u64,
     tags: Vec<(String, String)>,
     nodes: Vec<NodeId>,
 }
 
 #[derive(Clone, Debug)]
 struct RawNode {
-    id: u32,
+    id: u64,
     tags: Vec<(String, String)>,
     point: Lonlat,
 }
 
 #[derive(Clone, Debug)]
 struct RawRelation {
-    id: u32,
+    id: u64,
     tags: Vec<(String, String)>,
     outer: Vec<WayId>,
     inner: Vec<WayId>,
@@ -419,7 +419,7 @@ fn read_classified_relations(path: &Path) -> Result<Vec<RawRelation>, OsmError> 
             let inner = relation.refs.iter().filter(|member| member.role == "inner")
                 .filter_map(|member| match member.member { OsmId::Way(id) => Some(id), _ => None }).collect::<Vec<_>>();
             classify_osm_tags(&tag_refs(&tags)).filter(|_| !outer.is_empty()).map(|_| {
-                u32::try_from(relation.id.0).map(|id| RawRelation { id, tags, outer, inner })
+                u64::try_from(relation.id.0).map(|id| RawRelation { id, tags, outer, inner })
                     .map_err(|_| OsmError::WayIdOutOfRange(relation.id.0))
             })
         }
@@ -440,7 +440,7 @@ fn read_classified_ways(path: &Path, relations: &[RawRelation]) -> Result<Vec<Ra
         if classify_osm_tags(&tag_refs(&tags)).is_none() && !relation_ways.contains(&way.id) {
             continue;
         }
-        let id = u32::try_from(way.id.0).map_err(|_| OsmError::WayIdOutOfRange(way.id.0))?;
+        let id = u64::try_from(way.id.0).map_err(|_| OsmError::WayIdOutOfRange(way.id.0))?;
         ways.push(RawWay { id, tags, nodes: way.nodes });
     }
     Ok(ways)
@@ -494,13 +494,8 @@ fn prepare_nodes(nodes: &[RawNode], level: u8) -> Vec<PreparedFeature> {
     }).collect()
 }
 
-fn feature_id(source_id: i64) -> u32 {
-    if let Ok(id) = u32::try_from(source_id) {
-        return id;
-    }
-    source_id.to_le_bytes().into_iter().fold(0x811c_9dc5_u32, |hash, byte| {
-        (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
-    })
+fn feature_id(source_id: i64) -> u64 {
+    u64::try_from(source_id).expect("OSM feature IDs are non-negative")
 }
 
 fn prepare_way(way: &RawWay, nodes: &HashMap<NodeId, Lonlat>, level: u8) -> Result<Vec<PreparedFeature>, OsmError> {
@@ -515,7 +510,7 @@ fn prepare_way(way: &RawWay, nodes: &HashMap<NodeId, Lonlat>, level: u8) -> Resu
 fn prepare_relations(
     relations: &[RawRelation], ways: &[RawWay], nodes: &HashMap<NodeId, Lonlat>, level: u8,
 ) -> Result<Vec<PreparedFeature>, OsmError> {
-    let index = ways.iter().map(|way| (WayId(i64::from(way.id)), way)).collect::<HashMap<_, _>>();
+    let index = ways.iter().map(|way| (WayId(i64::try_from(way.id).expect("OSM ID fits i64")), way)).collect::<HashMap<_, _>>();
     relations.iter().map(|relation| {
         let outer = relation_rings(&relation.outer, &index, nodes, relation.id)?;
         let inner = relation_rings(&relation.inner, &index, nodes, relation.id)?;
@@ -534,7 +529,7 @@ fn prepare_relations(
 }
 
 fn relation_rings(
-    ids: &[WayId], index: &HashMap<WayId, &RawWay>, nodes: &HashMap<NodeId, Lonlat>, relation_id: u32,
+    ids: &[WayId], index: &HashMap<WayId, &RawWay>, nodes: &HashMap<NodeId, Lonlat>, relation_id: u64,
 ) -> Result<Vec<Vec<Lonlat>>, OsmError> {
     stitch_rings(ids.iter().filter_map(|id| index.get(id).map(|way| way.nodes.clone())).collect())
         .into_iter().map(|ring| ring.into_iter().map(|node| {
@@ -771,7 +766,7 @@ pub struct PreparedFeature {
 /// crosses a tile boundary. Use [`prepare_features`] for package ingestion.
 #[must_use]
 pub fn prepare_feature(
-    id: u32,
+    id: u64,
     tags: &[(&str, &str)],
     vertices: &[Lonlat],
     level: u8,
@@ -803,7 +798,7 @@ pub fn prepare_feature(
 /// order is stable by tile address and then source segment order.
 #[must_use]
 pub fn prepare_features(
-    id: u32,
+    id: u64,
     tags: &[(&str, &str)],
     vertices: &[Lonlat],
     level: u8,
@@ -836,7 +831,7 @@ pub fn prepare_features(
 /// Clips a classified area and its interior rings into every MT2 tile it covers.
 #[must_use]
 pub fn prepare_polygon_with_holes(
-    id: u32, tags: &[(&str, &str)], outer: &[Lonlat], holes: &[&[Lonlat]], level: u8,
+    id: u64, tags: &[(&str, &str)], outer: &[Lonlat], holes: &[&[Lonlat]], level: u8,
 ) -> Vec<PreparedFeature> {
     let Some(class) = classify_osm_tags(tags) else { return Vec::new(); };
     if !is_area(class) || !is_eligible(class, tags, level) {
@@ -1027,7 +1022,7 @@ fn horizontal_intersection(a: GridPoint, b: GridPoint, y: f64) -> GridPoint {
 }
 
 struct PartInput<'a> {
-    id: u32,
+    id: u64,
     class: Class,
     tile: TileId,
     points: Vec<GridPoint>,
@@ -1275,14 +1270,14 @@ mod tests {
     }
 
     #[test]
-    fn oversized_osm_ids_get_a_stable_tile_feature_id() {
+    fn oversized_osm_ids_keep_their_source_identity() {
         let source_id = 4_296_598_207;
 
         let first = feature_id(source_id);
         let second = feature_id(source_id);
 
         assert_eq!(first, second);
-        assert_ne!(first, feature_id(1));
+        assert_eq!(first, source_id.cast_unsigned());
     }
 
     #[test]

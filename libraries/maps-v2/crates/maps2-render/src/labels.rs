@@ -15,7 +15,7 @@ pub const LABEL_CLASSES: [Class; 2] = [Class::Label, Class::Poi];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LabelPoint {
-    pub id: u32,
+    pub id: u64,
     pub rank: u8,
     pub class: Class,
     pub name: String,
@@ -64,7 +64,7 @@ mod tests {
     use maps2_tile::{FeatureDraft, TileBuilder};
     use maps2_units::TileId;
 
-    fn named(id: u32, rank: u8, name: &str, at: TileCoord) -> FeatureDraft {
+    fn named(id: u64, rank: u8, name: &str, at: TileCoord) -> FeatureDraft {
         FeatureDraft { id, flags: 0, rank, name: name.to_string(), vertices: vec![at], holes: Vec::new() }
     }
 
@@ -77,7 +77,7 @@ mod tests {
         builder.build().expect("label fixture fits MT2")
     }
 
-    fn rect(id: u32) -> FeatureDraft {
+    fn rect(id: u64) -> FeatureDraft {
         FeatureDraft::geometry(
             id,
             0,

@@ -63,7 +63,7 @@ impl ScreenBox {
 /// twice with one id and is placed once.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Candidate {
-    pub id: u64,
+    pub id: u128,
     pub rank: u8,
     pub text: String,
     /// Where the label wants to sit, already projected.
@@ -73,7 +73,7 @@ pub struct Candidate {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlacedLabel {
-    pub id: u64,
+    pub id: u128,
     pub rank: u8,
     pub text: String,
     pub bounds: ScreenBox,
@@ -85,7 +85,7 @@ pub struct PlacedLabel {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rejection {
     /// Blocked by an already placed, better ranked label.
-    Collision { by: u64 },
+    Collision { by: u128 },
     /// The screen budget was spent before this label's turn.
     Budget,
     /// Too far outside the viewport to matter.
@@ -96,7 +96,7 @@ pub enum Rejection {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RejectedLabel {
-    pub id: u64,
+    pub id: u128,
     pub rank: u8,
     pub bounds: ScreenBox,
     pub reason: Rejection,
@@ -169,7 +169,7 @@ struct Frame {
     placed: Vec<PlacedLabel>,
     rejected: Vec<RejectedLabel>,
     used: f32,
-    seen: Vec<u64>,
+    seen: Vec<u128>,
 }
 
 impl Frame {
@@ -255,7 +255,7 @@ impl Grid {
 
     /// The best-ranked label already on screen that this box hits.
     /// Placement order is rank order, so the smallest index wins.
-    fn first_hit(&self, bounds: ScreenBox, placed: &[PlacedLabel]) -> Option<u64> {
+    fn first_hit(&self, bounds: ScreenBox, placed: &[PlacedLabel]) -> Option<u128> {
         Self::keys(bounds)
             .filter_map(|key| self.cells.get(&key))
             .flatten()
@@ -282,7 +282,7 @@ mod tests {
             seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
             let b = ((seed >> 33) % 100_000).to_f32().expect("random fraction fits f32") / 100_000.0;
             out.push(Candidate {
-                id: i,
+                id: u128::from(i),
                 // Heavy tail: a few important ones, many unimportant.
                 rank: (i % 10).to_u8().expect("rank fits u8"),
                 text: format!("label {i}"),
@@ -300,7 +300,7 @@ mod tests {
             .collect()
     }
 
-    fn ids(placement: &Placement) -> Vec<u64> {
+    fn ids(placement: &Placement) -> Vec<u128> {
         placement.placed.iter().map(|p| p.id).collect()
     }
 
@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn nothing_is_rejected_for_a_label_that_matters_less() {
         let placement = place(&crowd(600, 900.0), VIEWPORT, 1.0);
-        let key = |id: u64, rank: u8| (rank, id);
+        let key = |id: u128, rank: u8| (rank, id);
         for rejected in &placement.rejected {
             let Rejection::Collision { by } = rejected.reason else {
                 continue;
@@ -382,10 +382,10 @@ mod tests {
     fn a_shift_of_up_to_twenty_pixels_reshuffles_under_a_tenth_of_the_labels() {
         let candidates = crowd(900, 1400.0);
         let before = place(&candidates, VIEWPORT, 1.0);
-        let baseline: std::collections::HashSet<u64> = ids(&before).into_iter().collect();
+        let baseline: std::collections::HashSet<u128> = ids(&before).into_iter().collect();
         for dx in [1.0, 5.0, 12.0, 20.0] {
             let after = place(&shifted(&candidates, dx), VIEWPORT, 1.0);
-            let now: std::collections::HashSet<u64> = ids(&after).into_iter().collect();
+            let now: std::collections::HashSet<u128> = ids(&after).into_iter().collect();
             let churn = baseline.symmetric_difference(&now).count();
             let share = churn.to_f32().expect("churn fits f32") / baseline.len().to_f32().expect("label count fits f32");
             assert!(share < 0.10, "{dx} px moved {share:.3} of the labels");
@@ -410,7 +410,7 @@ mod tests {
     #[test]
     fn a_tighter_budget_keeps_a_subset_of_the_looser_one() {
         let candidates = crowd(900, 900.0);
-        let loose: Vec<u64> = ids(&place(&candidates, VIEWPORT, 0.30));
+        let loose: Vec<u128> = ids(&place(&candidates, VIEWPORT, 0.30));
         let tight = place(&candidates, VIEWPORT, 0.06);
         assert!(!tight.placed.is_empty());
         assert!(tight.placed.len() < loose.len(), "the budget changed nothing");
@@ -444,7 +444,7 @@ mod tests {
         // definition of "overlap". A crowd wider than one cell proves it.
         let candidates = crowd(300, 700.0);
         let placement = place(&candidates, VIEWPORT, 1.0);
-        let mut by_id: HashMap<u64, ScreenBox> = HashMap::new();
+        let mut by_id: HashMap<u128, ScreenBox> = HashMap::new();
         for placed in &placement.placed {
             by_id.insert(placed.id, placed.bounds);
         }
