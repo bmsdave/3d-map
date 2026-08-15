@@ -15,6 +15,7 @@ pub use relief::{
 };
 
 use maps2_units::Zoom;
+use num_traits::ToPrimitive;
 
 /// Everything a tile section can be. Discriminants are the wire codes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -206,7 +207,7 @@ impl<const N: usize> Ramp<N> {
             let (z0, v0) = window[0];
             let (z1, v1) = window[1];
             if z >= z0 && z <= z1 {
-                let t = ((z - z0) / (z1 - z0)) as f32;
+                let t = ((z - z0) / (z1 - z0)).to_f32().unwrap_or_default();
                 return v0 + (v1 - v0) * t;
             }
         }
@@ -274,12 +275,16 @@ pub fn class_alpha(class: Class, zoom: Zoom, override_band: Option<Band>) -> f32
     if entry == Band::World {
         return 1.0;
     }
-    (from_entry / RAMP_SPAN).clamp(0.0, 1.0) as f32
+    (from_entry / RAMP_SPAN).clamp(0.0, 1.0).to_f32().unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() < f32::EPSILON, "{actual} != {expected}");
+    }
 
     #[test]
     fn class_codes_round_trip_and_unknown_codes_are_none() {
@@ -310,11 +315,11 @@ mod tests {
     #[test]
     fn ramps_are_exact_at_stops_linear_between_and_clamped_outside() {
         let ramp = Ramp::new([(10.0, 2.0), (14.0, 6.0)]);
-        assert_eq!(ramp.sample(Zoom::new(10.0)), 2.0);
-        assert_eq!(ramp.sample(Zoom::new(14.0)), 6.0);
-        assert_eq!(ramp.sample(Zoom::new(12.0)), 4.0);
-        assert_eq!(ramp.sample(Zoom::new(0.0)), 2.0);
-        assert_eq!(ramp.sample(Zoom::new(20.0)), 6.0);
+        assert_close(ramp.sample(Zoom::new(10.0)), 2.0);
+        assert_close(ramp.sample(Zoom::new(14.0)), 6.0);
+        assert_close(ramp.sample(Zoom::new(12.0)), 4.0);
+        assert_close(ramp.sample(Zoom::new(0.0)), 2.0);
+        assert_close(ramp.sample(Zoom::new(20.0)), 6.0);
     }
 
     #[test]
@@ -325,7 +330,7 @@ mod tests {
             road_width_px(Class::RoadPrimary, Zoom::new(16.0))
                 > road_width_px(Class::RoadPrimary, Zoom::new(12.0))
         );
-        assert_eq!(road_width_px(Class::Water, z14), 0.0);
+        assert_close(road_width_px(Class::Water, z14), 0.0);
     }
 
     #[test]
@@ -349,17 +354,17 @@ mod tests {
     #[test]
     fn composition_alpha_ramps_in_at_the_entry_and_obeys_overrides() {
         let c = Class::Building; // entry Micro, z16
-        assert_eq!(class_alpha(c, Zoom::new(15.9), None), 0.0);
-        assert_eq!(class_alpha(c, Zoom::new(16.0), None), 0.0);
+        assert_close(class_alpha(c, Zoom::new(15.9), None), 0.0);
+        assert_close(class_alpha(c, Zoom::new(16.0), None), 0.0);
         let mid = class_alpha(c, Zoom::new(16.25), None);
         assert!((mid - 0.5).abs() < 1e-6, "mid was {mid}");
-        assert_eq!(class_alpha(c, Zoom::new(16.5), None), 1.0);
-        assert_eq!(class_alpha(c, Zoom::new(20.0), None), 1.0);
+        assert_close(class_alpha(c, Zoom::new(16.5), None), 1.0);
+        assert_close(class_alpha(c, Zoom::new(20.0), None), 1.0);
         // Override pins composition regardless of zoom, exactly.
-        assert_eq!(class_alpha(c, Zoom::new(5.0), Some(Band::Micro)), 1.0);
-        assert_eq!(class_alpha(c, Zoom::new(20.0), Some(Band::Street)), 0.0);
+        assert_close(class_alpha(c, Zoom::new(5.0), Some(Band::Micro)), 1.0);
+        assert_close(class_alpha(c, Zoom::new(20.0), Some(Band::Street)), 0.0);
         // World classes are always fully present.
-        assert_eq!(class_alpha(Class::Land, Zoom::new(0.0), None), 1.0);
+        assert_close(class_alpha(Class::Land, Zoom::new(0.0), None), 1.0);
     }
 
     #[test]

@@ -7,3 +7,6 @@ applications/maps-v2-lab/src/generated/
 applications/maps-v2-lab/public/fixtures/
 test-results/
 .coverage/
+pipelines/maps-v2-ingest/cache/
+pipelines/maps-v2-ingest/data/
+pipelines/maps-v2-ingest/packages/

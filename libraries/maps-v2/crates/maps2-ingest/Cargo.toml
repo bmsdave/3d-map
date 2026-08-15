@@ -7,7 +7,10 @@ license = "MIT"
 
 [dependencies]
 maps2-style = { path = "../maps2-style" }
+osmpbfreader = "0.19.1"
+serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
+toml = "0.9"
 
 [lints]
 workspace = true

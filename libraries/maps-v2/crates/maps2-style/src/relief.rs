@@ -8,6 +8,8 @@
 //! 200 m over 30 km is a fifth of a degree — and how loud to make it is
 //! a question about the map, not about the data.
 
+use num_traits::ToPrimitive;
+
 /// Where the sun stands, degrees clockwise from north.
 pub const LIGHT_AZIMUTH_DEG: f32 = 315.0;
 /// How high it stands above the horizon, degrees.
@@ -59,7 +61,7 @@ pub fn hypsometric_tint(metres: f32) -> [u8; 3] {
 fn blend(from: [u8; 3], to: [u8; 3], t: f32) -> [u8; 3] {
     let channel = |i: usize| {
         let a = f32::from(from[i]);
-        (a + (f32::from(to[i]) - a) * t).round() as u8
+        (a + (f32::from(to[i]) - a) * t).round().clamp(0.0, 255.0).to_u8().unwrap_or_default()
     };
     [channel(0), channel(1), channel(2)]
 }
@@ -68,26 +70,30 @@ fn blend(from: [u8; 3], to: [u8; 3], t: f32) -> [u8; 3] {
 mod tests {
     use super::*;
 
+    fn assert_close(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() < f32::EPSILON, "{actual} != {expected}");
+    }
+
     #[test]
     fn the_light_stands_in_the_north_west_by_convention() {
         // The cartographic convention, and the reason a relief map does
         // not read as a hole in the ground: light from the upper left.
-        assert_eq!(LIGHT_AZIMUTH_DEG, 315.0);
+        assert_close(LIGHT_AZIMUTH_DEG, 315.0);
         // Neither at the zenith (which flattens everything) nor on the
         // horizon (which turns half the map black).
-        assert_eq!(LIGHT_ALTITUDE_DEG.clamp(15.0, 75.0), LIGHT_ALTITUDE_DEG);
+        assert_close(LIGHT_ALTITUDE_DEG.clamp(15.0, 75.0), LIGHT_ALTITUDE_DEG);
     }
 
     #[test]
     fn expressiveness_runs_from_true_scale_to_readable() {
         // Nought is honest terrain, which on a quiet canvas is nearly
         // invisible; one is the loudest the style allows.
-        assert_eq!(relief_z_factor(0.0), 1.0);
-        assert_eq!(relief_z_factor(1.0), RELIEF_Z_FACTOR_MAX);
+        assert_close(relief_z_factor(0.0), 1.0);
+        assert_close(relief_z_factor(1.0), RELIEF_Z_FACTOR_MAX);
         assert!(relief_z_factor(0.5) > relief_z_factor(0.25));
         // Out of range is clamped, never inverted.
-        assert_eq!(relief_z_factor(-3.0), 1.0);
-        assert_eq!(relief_z_factor(9.0), RELIEF_Z_FACTOR_MAX);
+        assert_close(relief_z_factor(-3.0), 1.0);
+        assert_close(relief_z_factor(9.0), RELIEF_Z_FACTOR_MAX);
     }
 
     #[test]
