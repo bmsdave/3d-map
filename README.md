@@ -2,7 +2,7 @@
 
 > A deterministic Rust/Wasm 3D map renderer with a browser laboratory.
 
-**Status:** `v0.1.0-alpha` · synthetic fixtures only · Apache-2.0
+**Status:** `v0.1.0-alpha` · synthetic fixtures only · MIT
 
 This repository is an SDK/demo alpha, not a production map of London or the
 world. It focuses on a small, inspectable rendering core: versioned binary
@@ -27,7 +27,8 @@ terrain, and globe relief.
 No OSM/DEM ingestion, real-world London/world package, `roads-real`, routing,
 geocoding, search, production data hosting, mobile host, line labels, POI icon
 labels, or full Unicode shaping is included. Real-world data is a beta goal;
-see [the beta plan](libraries/maps-v2/docs/real-data-beta-plan.md).
+see [the beta plan](libraries/maps-v2/docs/real-data-beta-plan.md) and the
+[production roadmap](libraries/maps-v2/docs/production-roadmap.md).
 
 ## Try the lab
 
@@ -154,4 +155,4 @@ The contribution space follows [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## License
 
-Licensed under [Apache-2.0](LICENSE). Copyright 2026 Vadim.
+Licensed under [MIT](LICENSE). Copyright 2026 Vadim.

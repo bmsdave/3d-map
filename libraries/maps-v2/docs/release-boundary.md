@@ -28,5 +28,5 @@ change before beta. Goldens are deterministic fixtures: update them only with a
 documented rendering reason. Real-world data support is explicitly a beta
 milestone; its delivery plan is [real-data-beta-plan.md](real-data-beta-plan.md).
 
-This source is licensed under Apache-2.0. The alpha's API and data limitations
+This source is licensed under MIT. The alpha's API and data limitations
 remain unchanged by that license choice.

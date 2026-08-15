@@ -3,7 +3,7 @@ name = "maps2-units"
 version = "0.1.0-alpha"
 edition = "2024"
 description = "Zoom, tile addressing, ground and screen units for the Maps SDK v2"
-license = "Apache-2.0"
+license = "MIT"
 
 [dependencies]
 num-traits = "0.2"

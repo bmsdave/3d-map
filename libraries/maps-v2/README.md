@@ -70,4 +70,4 @@ geocoding. See [release-boundary.md](docs/release-boundary.md) and the separate
 
 ## License
 
-Apache-2.0. See the root [LICENSE](../../LICENSE).
+MIT. See the root [LICENSE](../../LICENSE).
