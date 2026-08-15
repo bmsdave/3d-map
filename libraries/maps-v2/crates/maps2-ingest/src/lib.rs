@@ -502,7 +502,9 @@ impl DemGrid {
         self.samples[y * usize::try_from(self.width).unwrap_or_default() + x]
     }
 
-    fn covers(&self, tile: TileId) -> bool {
+    /// Whether this one-degree source grid covers every edge of `tile`.
+    #[must_use]
+    pub fn covers_tile(&self, tile: TileId) -> bool {
         let corners = [
             TileCoord(0, 0),
             TileCoord(u16::MAX, 0),
@@ -643,7 +645,7 @@ fn build_tile(
     for feature in features {
         builder.push(feature.class.code(), feature.feature.clone());
     }
-    if let Some(grid) = terrain.filter(|grid| grid.covers(id)) {
+    if let Some(grid) = terrain.filter(|grid| grid.covers_tile(id)) {
         builder.push_raster(CLASS_HEIGHTS, height_raster_for_tile(grid, id));
     }
     Ok((id, builder.build()?))

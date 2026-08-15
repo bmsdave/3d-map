@@ -1,8 +1,8 @@
 use std::{env, fs, fs::File, path::Path, process::ExitCode};
 
 use maps2_ingest::{
-    SourceDescriptor, SourceKind, build_tiles, load_copernicus_dem, read_descriptor, resolve_osm_pbf, scan_osm_pbf,
-    validate_source_reader, OsmSummary,
+    SourceDescriptor, SourceKind, build_tiles, build_tiles_with_terrain, load_copernicus_dem, read_descriptor,
+    resolve_osm_pbf, scan_osm_pbf, validate_source_reader, OsmSummary,
 };
 use serde_json::json;
 
@@ -28,6 +28,17 @@ fn run(args: &[String]) -> Result<(), String> {
         [command, descriptor, input, level, output] if command == "build" => {
             build(descriptor, input, level, output)
         }
+        [command, osm_descriptor, osm_input, dem_descriptor, dem_input, west, south, level, output]
+            if command == "build-terrain" => build_terrain(&TerrainBuildArgs {
+                osm_descriptor,
+                osm_input,
+                dem_descriptor,
+                dem_input,
+                west,
+                south,
+                level,
+                output,
+            }),
         [command, path, west, south] if command == "dem-info" => dem_info(path, west, south),
         _ => Err("usage: maps2-ingest scan <osm.pbf>".to_string()),
     }
@@ -52,28 +63,82 @@ fn build(descriptor_path: &str, input_path: &str, level: &str, output: &str) -> 
     let features = resolve_osm_pbf(input_path, level).map_err(|error| error.to_string())?;
     let tiles = build_tiles(&features).map_err(|error| format!("cannot encode MT2: {error:?}"))?;
     write_tiles(Path::new(output), &tiles)?;
-    write_manifest(Path::new(output), &descriptor, level, features.len(), tiles.len())?;
+    write_manifest(Path::new(output), &[&descriptor], level, features.len(), tiles.len(), 0)?;
     println!("{{\"features\":{},\"tiles\":{}}}", features.len(), tiles.len());
     Ok(())
 }
 
+struct TerrainBuildArgs<'a> {
+    osm_descriptor: &'a str,
+    osm_input: &'a str,
+    dem_descriptor: &'a str,
+    dem_input: &'a str,
+    west: &'a str,
+    south: &'a str,
+    level: &'a str,
+    output: &'a str,
+}
+
+fn build_terrain(args: &TerrainBuildArgs<'_>) -> Result<(), String> {
+    let osm = load_kind(args.osm_descriptor, SourceKind::OsmPbf)?;
+    let dem = load_kind(args.dem_descriptor, SourceKind::CopernicusDem)?;
+    validate_input(&osm, args.osm_input)?;
+    validate_input(&dem, args.dem_input)?;
+    let terrain = load_terrain(args.dem_input, args.west, args.south)?;
+    let level = parse_level(args.level)?;
+    let features = resolve_osm_pbf(args.osm_input, level).map_err(|error| error.to_string())?;
+    let tiles = build_tiles_with_terrain(&features, &terrain).map_err(|error| format!("cannot encode MT2: {error:?}"))?;
+    let height_tiles = tiles.iter().filter(|(tile, _)| terrain.covers_tile(*tile)).count();
+    let output = Path::new(args.output);
+    write_tiles(output, &tiles)?;
+    write_manifest(output, &[&osm, &dem], level, features.len(), tiles.len(), height_tiles)?;
+    println!("{{\"features\":{},\"tiles\":{},\"height_tiles\":{height_tiles}}}", features.len(), tiles.len());
+    Ok(())
+}
+
+fn load_kind(path: &str, kind: SourceKind) -> Result<SourceDescriptor, String> {
+    let descriptor = load_descriptor(path)?;
+    (descriptor.kind == kind).then_some(descriptor).ok_or_else(|| format!("{path} has the wrong source kind"))
+}
+
+fn validate_input(descriptor: &SourceDescriptor, path: &str) -> Result<(), String> {
+    let input = File::open(path).map_err(|error| format!("cannot open {path}: {error}"))?;
+    validate_source_reader(&descriptor.source, input).map_err(|error| error.to_string())
+}
+
+fn load_terrain(path: &str, west: &str, south: &str) -> Result<maps2_ingest::DemGrid, String> {
+    let west = parse_coordinate("west", west)?;
+    let south = parse_coordinate("south", south)?;
+    load_copernicus_dem(path, west, south).map_err(|error| error.to_string())
+}
+
+fn parse_coordinate(name: &str, value: &str) -> Result<f64, String> {
+    value.parse::<f64>().map_err(|error| format!("invalid {name} {value}: {error}"))
+}
+
+fn parse_level(value: &str) -> Result<u8, String> {
+    value.parse::<u8>().map_err(|error| format!("invalid level {value}: {error}"))
+}
+
 fn write_manifest(
     output: &Path,
-    descriptor: &SourceDescriptor,
+    descriptors: &[&SourceDescriptor],
     level: u8,
     feature_count: usize,
     tile_count: usize,
+    height_tile_count: usize,
 ) -> Result<(), String> {
-    let bytes = manifest_json(descriptor, level, feature_count, tile_count)?;
+    let bytes = manifest_json(descriptors, level, feature_count, tile_count, height_tile_count)?;
     let path = output.join("manifest.json");
     fs::write(&path, bytes).map_err(|error| format!("cannot write {}: {error}", path.display()))
 }
 
 fn manifest_json(
-    descriptor: &SourceDescriptor,
+    descriptors: &[&SourceDescriptor],
     level: u8,
     feature_count: usize,
     tile_count: usize,
+    height_tile_count: usize,
 ) -> Result<String, String> {
     serde_json::to_string_pretty(&json!({
         "format": "MT2",
@@ -81,7 +146,8 @@ fn manifest_json(
         "level": level,
         "feature_count": feature_count,
         "tile_count": tile_count,
-        "source": {
+        "height_tile_count": height_tile_count,
+        "sources": descriptors.iter().map(|descriptor| json!({
             "name": descriptor.source.name(),
             "kind": source_kind_name(descriptor.kind),
             "url": descriptor.url,
@@ -89,7 +155,7 @@ fn manifest_json(
             "source_date": descriptor.source_date,
             "licence": descriptor.licence,
             "attribution": descriptor.attribution,
-        }
+        })).collect::<Vec<_>>(),
     }))
     .map_err(|error| format!("cannot serialize manifest: {error}"))
 }
@@ -141,7 +207,7 @@ fn summary_json(summary: OsmSummary) -> String {
 
 fn print_help() {
     println!(
-        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest dem-info <dem.tif> <west> <south>"
+        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest dem-info <dem.tif> <west> <south>"
     );
 }
 
@@ -163,7 +229,7 @@ attribution = "© OpenStreetMap contributors""#,
         )
         .expect("descriptor");
 
-        let manifest = manifest_json(&descriptor, 16, 10, 2).expect("manifest JSON");
+        let manifest = manifest_json(&[&descriptor], 16, 10, 2, 0).expect("manifest JSON");
         assert!(manifest.contains("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"));
         assert!(manifest.contains("© OpenStreetMap contributors"));
     }
