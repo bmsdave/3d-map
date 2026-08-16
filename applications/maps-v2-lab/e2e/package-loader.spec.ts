@@ -1,4 +1,20 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
+import { join } from "node:path";
+
+const realPackageRoot = process.env.MAPS2_REAL_PACKAGE_ROOT;
+
+function localPackagePath(root: string, url: string): string {
+  const relative = new URL(url).pathname.replace(/^\//, "");
+  if (relative === "manifest.json" || /^\d+\/\d+\/\d+\.mt2$/.test(relative)) return join(root, relative);
+  throw new Error(`unexpected package path: ${relative}`);
+}
+
+async function fulfillLocalPackage(route: Route, root: string): Promise<void> {
+  await route.fulfill({
+    path: localPackagePath(root, route.request().url()),
+    headers: { "Access-Control-Allow-Origin": "*" },
+  });
+}
 
 test("package loader: a manifest drives demand-loaded MT2 tiles", async ({ page }) => {
   await page.goto("/#/card/package-loader");
@@ -195,4 +211,29 @@ test("package loader: unloading a tile makes it demand-loadable", async ({ page 
   });
 
   expect(missing).toContain("12/2044/1361.mt2");
+});
+
+test("real London package: terrain, attribution, and tilt survive demand loading", async ({ page }) => {
+  test.skip(!realPackageRoot, "set MAPS2_REAL_PACKAGE_ROOT to run local real-data acceptance");
+  await page.route("https://maps2.local/**", (route) => fulfillLocalPackage(route, realPackageRoot!));
+  await page.goto("/#/card/package-loader");
+
+  const stage = page.getByTestId("stage");
+  await expect(stage).toHaveAttribute("data-state", "ready");
+  await page.getByTestId("package-manifest-url").fill("https://maps2.local/manifest.json");
+  await page.getByRole("button", { name: "Загрузить пакет" }).click();
+  await expect(stage).toHaveAttribute("data-state", "ready");
+  await expect(stage).toHaveAttribute("data-manifest", "https://maps2.local/manifest.json");
+  await expect(stage).toHaveAttribute("data-loaded", /[1-9]\d*/);
+  await expect(page.getByTestId("readout-package-attribution")).toContainText("OpenStreetMap");
+  await expect(page.getByTestId("readout-package-attribution")).toContainText(/COPERNICUS/i);
+
+  const before = await stage.locator("canvas").screenshot();
+  await page.getByTestId("package-tilt-slider").fill("45");
+  const after = await stage.locator("canvas").screenshot();
+  const state = await page.evaluate(() => window.maps2?.debug());
+
+  expect(after).not.toBe(before);
+  expect(state?.tiles_drawn).toBeGreaterThan(0);
+  expect(state?.height_tiles).toBeGreaterThan(0);
 });

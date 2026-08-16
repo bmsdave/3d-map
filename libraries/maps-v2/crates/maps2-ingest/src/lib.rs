@@ -398,10 +398,7 @@ pub fn resolve_osm_pbf(path: impl AsRef<Path>, level: u8) -> Result<Vec<Prepared
     let ways = read_classified_ways(path, &relations)?;
     let point_features = read_classified_nodes(path)?;
     let nodes = read_referenced_nodes(path, &referenced_nodes(&ways))?;
-    let mut features = prepare_ways(&ways, &nodes, level)?;
-    features.extend(prepare_relations(&relations, &ways, &nodes, level)?);
-    features.extend(prepare_nodes(&point_features, level));
-    Ok(features)
+    prepare_osm_features(&relations, &ways, &point_features, &nodes, level)
 }
 
 fn read_classified_relations(path: &Path) -> Result<Vec<RawRelation>, OsmError> {
@@ -483,9 +480,27 @@ fn read_referenced_nodes(path: &Path, wanted: &HashSet<NodeId>) -> Result<HashMa
     Ok(nodes)
 }
 
-fn prepare_ways(ways: &[RawWay], nodes: &HashMap<NodeId, Lonlat>, level: u8) -> Result<Vec<PreparedFeature>, OsmError> {
-    ways.iter().map(|way| prepare_way(way, nodes, level)).collect::<Result<Vec<_>, _>>()
+fn prepare_ways<'a>(
+    ways: impl IntoIterator<Item = &'a RawWay>, nodes: &HashMap<NodeId, Lonlat>, level: u8,
+) -> Result<Vec<PreparedFeature>, OsmError> {
+    ways.into_iter().map(|way| prepare_way(way, nodes, level)).collect::<Result<Vec<_>, _>>()
         .map(|features| features.into_iter().flatten().collect())
+}
+
+fn prepare_osm_features(
+    relations: &[RawRelation], ways: &[RawWay], point_features: &[RawNode],
+    nodes: &HashMap<NodeId, Lonlat>, level: u8,
+) -> Result<Vec<PreparedFeature>, OsmError> {
+    let members = relation_member_ids(relations);
+    let mut features = prepare_ways(ways.iter().filter(|way| !members.contains(&way.id)), nodes, level)?;
+    features.extend(prepare_relations(relations, ways, nodes, level)?);
+    features.extend(prepare_nodes(point_features, level));
+    Ok(features)
+}
+
+fn relation_member_ids(relations: &[RawRelation]) -> HashSet<u64> {
+    relations.iter().flat_map(|relation| relation.outer.iter().chain(&relation.inner))
+        .filter_map(|id| u64::try_from(id.0).ok()).collect()
 }
 
 fn prepare_nodes(nodes: &[RawNode], level: u8) -> Vec<PreparedFeature> {
@@ -1575,6 +1590,32 @@ attribution = "© OpenStreetMap contributors""#,
         let rings = stitch_rings(ways);
 
         assert_eq!(rings, vec![vec![NodeId(1), NodeId(2), NodeId(3), NodeId(4), NodeId(1)]]);
+    }
+
+    #[test]
+    fn a_tagged_multipolygon_member_is_emitted_only_by_its_relation() {
+        let way = RawWay {
+            id: 10,
+            tags: vec![("natural".to_string(), "water".to_string())],
+            nodes: vec![NodeId(1), NodeId(2), NodeId(3), NodeId(4), NodeId(1)],
+        };
+        let relation = RawRelation {
+            id: 20,
+            tags: vec![("natural".to_string(), "water".to_string())],
+            outer: vec![WayId(10)],
+            inner: Vec::new(),
+        };
+        let nodes = HashMap::from([
+            (NodeId(1), Lonlat { lon: -0.1278, lat: 51.5074 }),
+            (NodeId(2), Lonlat { lon: -0.1277, lat: 51.5074 }),
+            (NodeId(3), Lonlat { lon: -0.1277, lat: 51.5075 }),
+            (NodeId(4), Lonlat { lon: -0.1278, lat: 51.5075 }),
+        ]);
+
+        let features = prepare_osm_features(&[relation], &[way], &[], &nodes, 16).expect("valid relation");
+
+        assert_eq!(features.len(), 1);
+        assert_eq!(features[0].feature.id, 20);
     }
 
     #[test]

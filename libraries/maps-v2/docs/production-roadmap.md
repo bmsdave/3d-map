@@ -25,8 +25,9 @@ The project has the beginnings of the London path: pinned Greater London OSM
 and two Copernicus DEM descriptors, HTTPS-only atomic source acquisition with
 checksum validation, deterministic MT2 v4 encoding with v1/v2/v3 readers, terrain rasters, OSM
 building-height fallbacks, and deterministic
-tile-border clipping, outer/inner-ring multipolygon relations, named places,
-bridge/tunnel road structure flags, and
+tile-border clipping, outer/inner-ring multipolygon relations whose member
+ways are not emitted a second time, named places, bridge/tunnel road structure
+flags, and
 amenity points. A local z16 London rebuild currently emits 2,128,113 feature
 parts in 11,944 terrain-bearing tiles from those validated inputs. MT2 v4
 preserves 64-bit OSM source IDs, including node IDs beyond the 32-bit range.
@@ -45,8 +46,8 @@ rendered at z12. Deterministic Douglas–Peucker simplification reduces road
 geometry while retaining each segment's farthest deviation. A conservative
 per-tile area pass removes nearly collinear interior vertices while preserving
 every tile-edge vertex, so adjacent tiles remain exact. Two independent local
-v4 z12 rebuilds emitted 159,794 parts in 70 terrain-bearing tiles and produced
-identical aggregate and per-tile hashes (`530fd3190de4d4c3b1f3f064946870695c59c413e82e9ad9e5a3a499be3486f1`).
+v4 z12 rebuilds emitted 159,726 parts in 70 terrain-bearing tiles and produced
+identical aggregate and per-tile hashes (`db15c97fd6983f2577e8ed4b997e9f11952e118bdcf00ee66bbcd29a5d41849a`).
 The area pass does not yet perform global topology-aware generalisation, so
 this is not yet production-quality cartographic generalisation.
 
@@ -64,14 +65,15 @@ now exercises a manifest-driven, demand-loading host contract with synthetic
 tiles, but does not ship a real-data package. There is still no global
 topology-aware generalisation, global source set, real-data attribution
 acceptance, release asset, or production performance and resilience evidence.
-The package
-loader visibly exposes manifest attribution and offers a manual retry after a
-transient manifest failure; a local, untracked z12/z16 London package has been
-loaded through that host with all requested hashes verified and attribution
-visible. It bounds an accepted manifest to 50,000 tiles and each fetched tile
-to 4 MiB; the host recreates a package map after a WebGL context-loss event.
-Automated real-package browser acceptance, connection recovery, and release
-asset validation remain open.
+The package loader visibly exposes manifest attribution and offers a manual
+retry after a transient manifest failure; a local, untracked z12/z16 London
+package has been loaded through that host with all requested hashes verified
+and attribution visible. An opt-in Chromium acceptance test exercises that
+local package's demand loading, attribution, terrain and tilt; it is not a CI
+or release-asset gate. The host bounds an accepted manifest to 50,000 tiles
+and each fetched tile to 4 MiB; it recreates a package map after a WebGL
+context-loss event. Connection recovery and release asset validation remain
+open.
 Strict workspace Clippy now passes without
 suppressions; the remaining blockers are real-data quality and release
 operations rather than the Rust lint gate.

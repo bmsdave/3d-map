@@ -39,3 +39,17 @@ Label tests assert placement invariants rather than the unstable claim that a
 particular label must be visible. Golden screenshots are intentional rendering
 contracts; review them visually. The `rendering-budget` test invokes an
 on-demand p95 measurement across rendering cards and requires 10 ms or less.
+
+## Local real-data acceptance
+
+Generated packages remain outside Git, but a validated Greater London package
+can exercise the same browser host locally. Build it with the ingest pipeline,
+then point the opt-in Chromium test at its directory:
+
+```sh
+MAPS2_REAL_PACKAGE_ROOT=/path/to/london-z12 npm run test:e2e -- e2e/package-loader.spec.ts --grep "real London package"
+```
+
+The test serves the package only to the browser test process. It verifies
+demand loading, source attribution, rendered terrain tiles, and tilt; it does
+not turn the lab or this alpha into a hosted real-world map.
