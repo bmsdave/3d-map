@@ -197,14 +197,33 @@ function packageLevels(manifest: TilePackageManifest): number[] {
 }
 
 async function fetchTile(url: string, digest: string): Promise<Uint8Array> {
+  try {
+    return await fetchTileOnce(url, digest);
+  } catch (error) {
+    if (!isRetryableTileError(error)) throw error;
+    return fetchTileOnce(url, digest);
+  }
+}
+
+async function fetchTileOnce(url: string, digest: string): Promise<Uint8Array> {
   const response = await fetch(url);
-  if (!response.ok) throw new Error(`cannot load package tile: ${response.status}`);
+  if (!response.ok) throw new TileResponseError(response.status);
   const length = Number(response.headers.get("content-length"));
   if (Number.isFinite(length) && length > MAX_TILE_BYTES) throw new Error("package tile exceeds 4 MiB");
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.byteLength > MAX_TILE_BYTES) throw new Error("package tile exceeds 4 MiB");
   if (await sha256(bytes) !== digest) throw new Error("package tile checksum mismatch");
   return bytes;
+}
+
+class TileResponseError extends Error {
+  constructor(readonly status: number) {
+    super(`cannot load package tile: ${status}`);
+  }
+}
+
+function isRetryableTileError(error: unknown): boolean {
+  return error instanceof TypeError || error instanceof TileResponseError && (error.status === 429 || error.status >= 500);
 }
 
 async function sha256(bytes: Uint8Array): Promise<string> {

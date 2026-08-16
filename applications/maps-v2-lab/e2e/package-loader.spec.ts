@@ -54,6 +54,23 @@ test("package loader: retries a transient manifest failure", async ({ page }) =>
   expect(attempts).toBe(2);
 });
 
+test("package loader: retries one transient tile failure", async ({ page }) => {
+  let failed = false;
+  await page.route("**/fixtures/ealing/**/*.mt2", async (route) => {
+    if (!failed) {
+      failed = true;
+      await route.fulfill({ status: 503, body: "temporarily unavailable" });
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.goto("/#/card/package-loader");
+
+  await expect(page.getByTestId("stage")).toHaveAttribute("data-state", "ready");
+  expect(failed).toBe(true);
+});
+
 test("package loader: accepts a host-selected package manifest", async ({ page }) => {
   await page.goto("/#/card/package-loader");
   const stage = page.getByTestId("stage");

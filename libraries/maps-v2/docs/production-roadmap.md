@@ -66,13 +66,14 @@ tiles, but does not ship a real-data package. There is still no global
 topology-aware generalisation, global source set, real-data attribution
 acceptance, release asset, or production performance and resilience evidence.
 The package loader visibly exposes manifest attribution and offers a manual
-retry after a transient manifest failure; a local, untracked z12/z16 London
+retry after a transient manifest failure plus one automatic retry for a
+network, HTTP 429, or 5xx tile failure. A local, untracked z12/z16 London
 package has been loaded through that host with all requested hashes verified
 and attribution visible. An opt-in Chromium acceptance test exercises that
 local package's demand loading, attribution, terrain and tilt; it is not a CI
 or release-asset gate. The host bounds an accepted manifest to 50,000 tiles
 and each fetched tile to 4 MiB; it recreates a package map after a WebGL
-context-loss event. Connection recovery and release asset validation remain
+context-loss event. Multi-request recovery and release asset validation remain
 open.
 Strict workspace Clippy now passes without
 suppressions; the remaining blockers are real-data quality and release
