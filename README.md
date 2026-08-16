@@ -122,13 +122,13 @@ npm run test:e2e
 The lab regenerates its synthetic fixture output locally. It needs no
 proprietary data, pipeline cache, or external map package.
 
-## Current alpha blocker
+## Current production blockers
 
-The release tests and browser suite pass, but strict workspace-wide Clippy is
-not green yet: `maps2-camera`, `maps2-style`, `maps2-tile`, and `maps2-text`
-still have an inherited pedantic-lint cleanup backlog. The CI job keeps that
-gate visible rather than suppressing it. `maps2-units`, the original reported
-lint failure, is clean.
+Strict workspace-wide Clippy, Rust tests, and the browser suite are green. A
+production release remains blocked on reproducible real-data acceptance: robust
+relation topology repair, zoom-aware cartographic generalisation, visual and
+performance validation of a real London package, and the region-sharded global
+OSM/terrain build and release operations described in the production roadmap.
 
 ## SDK shape
 
@@ -151,7 +151,7 @@ working Wasm integration example.
 | Area | Responsibility |
 | --- | --- |
 | `maps2-units`, `maps2-camera` | Coordinate units, camera state, flat/globe projection |
-| `maps2-tile` | MT2 v1 parsing with validated zero-copy views |
+| `maps2-tile` | MT2 v4 writing and validated v1/v2/v3 reading |
 | `maps2-style`, `maps2-render` | Class visibility, persistent mesh buckets, road and terrain draws |
 | `maps2-text` | Deterministic SDF atlas and collision-managed point labels |
 | `maps2-fixtures` | Reproducible synthetic Ealing, road-pathology, and ridge packages |
@@ -162,9 +162,9 @@ working Wasm integration example.
 
 MT2 uses a fixed header, an O(1) section table, integer tile coordinates,
 delta/varint vector geometry, building base/top/roof data, and optional height
-rasters. Format version 2 is frozen and version 1 remains readable: a layout
-change requires a version bump, fixture migration, and an intentional golden
-update. Read the full [MT2 specification](libraries/maps-v2/docs/tile-format.md).
+rasters. Version 4 is the current write format and readers accept versions
+1–3: a layout change requires a version bump, fixture migration, and an
+intentional golden update. Read the full [MT2 specification](libraries/maps-v2/docs/tile-format.md).
 
 ## Supported environment
 

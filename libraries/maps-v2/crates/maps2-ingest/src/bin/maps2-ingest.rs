@@ -299,8 +299,9 @@ fn tile_path(id: TileId) -> String {
 }
 
 fn package_view(digests: &[TileDigest]) -> Option<serde_json::Value> {
-    let first = digests.first()?.id;
-    let (min_x, max_x, min_y, max_y) = digests.iter().fold(
+    let level = digests.iter().map(|digest| digest.id.z).min()?;
+    let first = digests.iter().find(|digest| digest.id.z == level)?.id;
+    let (min_x, max_x, min_y, max_y) = digests.iter().filter(|digest| digest.id.z == level).fold(
         (first.x, first.x, first.y, first.y),
         |(min_x, max_x, min_y, max_y), digest| {
             let tile = digest.id;
@@ -308,10 +309,10 @@ fn package_view(digests: &[TileDigest]) -> Option<serde_json::Value> {
         },
     );
     let centre = to_lonlat(TilePoint {
-        tile: TileId { z: first.z, x: min_x + (max_x - min_x) / 2, y: min_y + (max_y - min_y) / 2 },
+        tile: TileId { z: level, x: min_x + (max_x - min_x) / 2, y: min_y + (max_y - min_y) / 2 },
         coord: TileCoord(u16::MAX / 2, u16::MAX / 2),
     });
-    Some(json!({ "lon": centre.lon, "lat": centre.lat, "zoom": first.z }))
+    Some(json!({ "lon": centre.lon, "lat": centre.lat, "zoom": level }))
 }
 
 const fn source_kind_name(kind: SourceKind) -> &'static str {
@@ -490,6 +491,21 @@ attribution = "© OpenStreetMap contributors""#,
     fn level_range_is_inclusive_and_ascending() {
         assert_eq!(parse_levels("12", "16").expect("valid range"), vec![12, 13, 14, 15, 16]);
         assert!(parse_levels("16", "12").is_err());
+    }
+
+    #[test]
+    fn range_manifest_view_uses_the_lowest_package_level() {
+        let digests = [
+            TileDigest { id: TileId { z: 12, x: 2046, y: 1362 }, sha256: String::new() },
+            TileDigest { id: TileId { z: 12, x: 2047, y: 1363 }, sha256: String::new() },
+            TileDigest { id: TileId { z: 16, x: 32737, y: 21791 }, sha256: String::new() },
+        ];
+
+        let view = package_view(&digests).expect("package view");
+
+        assert_eq!(view["zoom"], 12);
+        assert!(view["lon"].as_f64().expect("longitude").abs() < 1.0);
+        assert!(view["lat"].as_f64().expect("latitude") > 51.0);
     }
 
     #[test]
