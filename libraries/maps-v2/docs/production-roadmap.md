@@ -44,11 +44,11 @@ tiles (17 MB), rather than buildings and address-level detail that cannot be
 rendered at z12. Deterministic Douglas–Peucker simplification reduces road
 geometry while retaining each segment's farthest deviation. A conservative
 per-tile area pass removes nearly collinear interior vertices while preserving
-every tile-edge vertex, so adjacent tiles remain exact. A current local v4 z12
-rebuild emits 159,638 parts in 70 terrain-bearing tiles and verifies its
-aggregate and per-tile hashes. The area pass does not yet perform global
-topology-aware generalisation, so this is not yet production-quality
-cartographic generalisation.
+every tile-edge vertex, so adjacent tiles remain exact. Two independent local
+v4 z12 rebuilds emitted 159,794 parts in 70 terrain-bearing tiles and produced
+identical aggregate and per-tile hashes (`530fd3190de4d4c3b1f3f064946870695c59c413e82e9ad9e5a3a499be3486f1`).
+The area pass does not yet perform global topology-aware generalisation, so
+this is not yet production-quality cartographic generalisation.
 
 Named OSM places now carry deterministic settlement ranks: cities, towns,
 villages/suburbs, then local places. Low zooms admit only the appropriate rank,
