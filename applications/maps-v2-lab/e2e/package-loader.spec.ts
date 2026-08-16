@@ -49,3 +49,51 @@ test("package loader: accepts a host-selected package manifest", async ({ page }
   await expect(stage).toHaveAttribute("data-state", "ready");
   await expect(stage).toHaveAttribute("data-manifest", "/fixtures/ealing/package-manifest.json?host=local");
 });
+
+test("package loader: rejects an oversized manifest before requesting tiles", async ({ page }) => {
+  const tiles = Array.from({ length: 50_001 }, (_, index) => `12/${index}/0.mt2`);
+  await page.route("**/oversized-manifest.json", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      format: "MT2",
+      format_version: 4,
+      tiles,
+      tile_digests: Object.fromEntries(tiles.map((path) => [path, "0".repeat(64)])),
+      view: { lon: -0.1278, lat: 51.5074, zoom: 12 },
+      sources: [],
+    }),
+  }));
+  await page.goto("/#/card/package-loader");
+
+  await page.getByTestId("package-manifest-url").fill("/oversized-manifest.json");
+  await page.getByRole("button", { name: "Загрузить пакет" }).click();
+  await expect(page.getByTestId("stage")).toContainText("package exceeds 50000 tiles");
+});
+
+test("package loader: rejects an oversized tile before hashing it", async ({ page }) => {
+  await page.route("**/fixtures/ealing/**/*.mt2", (route) => route.fulfill({
+    contentType: "application/octet-stream",
+    body: "x".repeat(4 * 1024 * 1024 + 1),
+  }));
+  await page.goto("/#/card/package-loader");
+
+  await expect(page.getByTestId("stage")).toContainText("package tile exceeds 4 MiB");
+});
+
+test("package loader: a newer manifest wins over a delayed prior load", async ({ page }) => {
+  await page.route("**/fixtures/ealing/package-manifest.json", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await route.continue();
+  });
+  await page.route("**/oversized-manifest.json", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ format: "MT2", format_version: 4, tiles: Array(50_001).fill("12/0/0.mt2"), tile_digests: {}, view: {}, sources: [] }),
+  }));
+  await page.goto("/#/card/package-loader");
+
+  await page.getByTestId("package-manifest-url").fill("/oversized-manifest.json");
+  await page.getByRole("button", { name: "Загрузить пакет" }).click();
+  await expect(page.getByTestId("stage")).toContainText("package exceeds 50000 tiles");
+  await page.waitForTimeout(250);
+  await expect(page.getByTestId("stage")).toContainText("package exceeds 50000 tiles");
+});

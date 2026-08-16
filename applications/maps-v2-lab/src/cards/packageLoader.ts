@@ -29,6 +29,7 @@ export const packageLoader: CardSpec = {
       controlRow("Manifest URL", input),
       load,
     ]));
+    let generation = 0;
     const showError = (error: unknown) => {
       const retry = el("button", { type: "button" }, ["Повторить"]);
       retry.addEventListener("click", () => void loadPackage());
@@ -36,16 +37,21 @@ export const packageLoader: CardSpec = {
       stage.replaceChildren(String(error), retry);
     };
     const loadPackage = async () => {
+      const request = ++generation;
       const canvas = el("canvas", { width: "720", height: "480" });
       stage.setAttribute("data-state", "loading");
+      stage.removeAttribute("data-loaded");
+      stage.removeAttribute("data-manifest");
       stage.replaceChildren(canvas);
       try {
         const map = await createMap(canvas, null);
         const loader = await createTilePackageLoader(map, manifestUrl);
+        if (request !== generation) return;
         const view = loader.manifest.view;
         map.setCentre(view.lon, view.lat);
         map.setZoom(view.zoom);
         const result = await loader.loadVisible();
+        if (request !== generation) return;
         const state = map.debug();
         out.set("package-tiles", String(result.loaded));
         out.set("package-level", String(state.tile_level));
@@ -56,7 +62,7 @@ export const packageLoader: CardSpec = {
         stage.setAttribute("data-manifest", manifestUrl);
         stage.setAttribute("data-state", "ready");
       } catch (error) {
-        showError(error);
+        if (request === generation) showError(error);
       }
     };
     load.addEventListener("click", () => {

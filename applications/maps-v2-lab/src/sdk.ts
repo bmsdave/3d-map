@@ -138,6 +138,9 @@ export interface TilePackageLoader {
   loadVisible(): Promise<PackageLoadResult>;
 }
 
+const MAX_PACKAGE_TILES = 50_000;
+const MAX_TILE_BYTES = 4 * 1024 * 1024;
+
 export async function loadPackCentre(pack: string): Promise<PackCentre> {
   const response = await fetch(`/fixtures/${pack}/centre.json`);
   return (await response.json()) as PackCentre;
@@ -176,8 +179,14 @@ async function fetchPackageManifest(url: string): Promise<TilePackageManifest> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`cannot load package manifest: ${response.status}`);
   const value: unknown = await response.json();
+  if (hasTooManyTiles(value)) throw new Error(`package exceeds ${MAX_PACKAGE_TILES} tiles`);
   if (!isTilePackageManifest(value)) throw new Error("invalid MT2 package manifest");
   return value;
+}
+
+function hasTooManyTiles(value: unknown): boolean {
+  return !!value && typeof value === "object" && Array.isArray((value as { tiles?: unknown }).tiles)
+    && (value as { tiles: unknown[] }).tiles.length > MAX_PACKAGE_TILES;
 }
 
 function packageLevels(manifest: TilePackageManifest): number[] {
@@ -187,7 +196,10 @@ function packageLevels(manifest: TilePackageManifest): number[] {
 async function fetchTile(url: string, digest: string): Promise<Uint8Array> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`cannot load package tile: ${response.status}`);
+  const length = Number(response.headers.get("content-length"));
+  if (Number.isFinite(length) && length > MAX_TILE_BYTES) throw new Error("package tile exceeds 4 MiB");
   const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength > MAX_TILE_BYTES) throw new Error("package tile exceeds 4 MiB");
   if (await sha256(bytes) !== digest) throw new Error("package tile checksum mismatch");
   return bytes;
 }

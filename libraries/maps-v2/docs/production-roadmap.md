@@ -59,7 +59,9 @@ generalisation pipeline, global source set, real-data attribution acceptance,
 release asset, or production performance and resilience evidence. The package
 loader visibly exposes manifest attribution and offers a manual retry after a
 transient manifest failure; it has not yet been exercised with a real London
-package. Strict workspace Clippy now passes without
+package. It bounds an accepted manifest to 50,000 tiles and each fetched tile
+to 4 MiB; connection recovery and real-package browser acceptance remain open.
+Strict workspace Clippy now passes without
 suppressions; the remaining blockers are real-data quality and release
 operations rather than the Rust lint gate.
 
