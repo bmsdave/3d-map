@@ -62,10 +62,12 @@ tiles, but does not ship a real-data package. There is still no
 generalisation pipeline, global source set, real-data attribution acceptance,
 release asset, or production performance and resilience evidence. The package
 loader visibly exposes manifest attribution and offers a manual retry after a
-transient manifest failure; it has not yet been exercised with a real London
-package. It bounds an accepted manifest to 50,000 tiles and each fetched tile
+transient manifest failure; a local, untracked z12/z16 London package has been
+loaded through that host with all requested hashes verified and attribution
+visible. It bounds an accepted manifest to 50,000 tiles and each fetched tile
 to 4 MiB; the host recreates a package map after a WebGL context-loss event.
-Connection recovery and real-package browser acceptance remain open.
+Automated real-package browser acceptance, connection recovery, and release
+asset validation remain open.
 Strict workspace Clippy now passes without
 suppressions; the remaining blockers are real-data quality and release
 operations rather than the Rust lint gate.
