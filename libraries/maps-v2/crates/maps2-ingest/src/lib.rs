@@ -867,6 +867,19 @@ pub fn prepare_polygon_with_holes(
     if !is_area(class) || !is_eligible(class, tags, level) {
         return Vec::new();
     }
+    let outer_parts = split_antimeridian_polygon(outer);
+    let hole_parts = holes.iter().flat_map(|ring| split_antimeridian_polygon(ring)).collect::<Vec<_>>();
+    outer_parts.into_iter().flat_map(|outer| {
+        let holes = hole_parts.iter().filter(|hole| {
+            hole.first().is_some_and(|point| point_in_ring(*point, &outer))
+        }).map(Vec::as_slice).collect::<Vec<_>>();
+        prepare_polygon_part(id, class, tags, &outer, &holes, level)
+    }).collect()
+}
+
+fn prepare_polygon_part(
+    id: u64, class: Class, tags: &[(&str, &str)], outer: &[Lonlat], holes: &[&[Lonlat]], level: u8,
+) -> Vec<PreparedFeature> {
     let outer_points = grid_points(outer, level);
     let hole_points = holes.iter().map(|ring| grid_points(ring, level)).collect::<Vec<_>>();
     let height = (class == Class::Building).then(|| building_height_m(tags));
@@ -882,6 +895,65 @@ pub fn prepare_polygon_with_holes(
         }).collect();
         Some(part)
     }).collect()
+}
+
+fn split_antimeridian_polygon(ring: &[Lonlat]) -> Vec<Vec<Lonlat>> {
+    let unwrapped = unwrap_longitudes(ring);
+    let Some((minimum, maximum)) = longitude_span(&unwrapped) else { return Vec::new(); };
+    let seam = 180.0 + 360.0 * ((minimum + 180.0) / 360.0).floor();
+    if maximum <= seam {
+        return vec![normalise_longitudes(unwrapped, seam - 0.1)];
+    }
+    [
+        normalise_longitudes(clip_longitude(&unwrapped, seam, true), seam - 0.1),
+        normalise_longitudes(clip_longitude(&unwrapped, seam, false), seam + 0.1),
+    ].into_iter().filter(|part| part.len() >= 4).collect()
+}
+
+fn unwrap_longitudes(ring: &[Lonlat]) -> Vec<Lonlat> {
+    let Some(&first) = ring.first() else { return Vec::new(); };
+    ring.iter().copied().skip(1).fold(vec![first], |mut points, mut point| {
+        let previous = points.last().expect("first point remains");
+        while point.lon - previous.lon > 180.0 { point.lon -= 360.0; }
+        while point.lon - previous.lon < -180.0 { point.lon += 360.0; }
+        points.push(point);
+        points
+    })
+}
+
+fn longitude_span(points: &[Lonlat]) -> Option<(f64, f64)> {
+    points.iter().map(|point| point.lon).fold(None, |span, longitude| match span {
+        Some((minimum, maximum)) => Some((minimum.min(longitude), maximum.max(longitude))),
+        None => Some((longitude, longitude)),
+    })
+}
+
+fn clip_longitude(points: &[Lonlat], boundary: f64, below: bool) -> Vec<Lonlat> {
+    let Some(&last) = points.last() else { return Vec::new(); };
+    points.iter().copied().fold((Vec::new(), last), |(mut output, previous), current| {
+        let previous_inside = (previous.lon <= boundary) == below;
+        let current_inside = (current.lon <= boundary) == below;
+        match (previous_inside, current_inside) {
+            (true, true) => output.push(current),
+            (true, false) => output.push(longitude_intersection(previous, current, boundary)),
+            (false, true) => { output.push(longitude_intersection(previous, current, boundary)); output.push(current); }
+            (false, false) => {}
+        }
+        (output, current)
+    }).0
+}
+
+fn longitude_intersection(a: Lonlat, b: Lonlat, longitude: f64) -> Lonlat {
+    let ratio = (longitude - a.lon) / (b.lon - a.lon);
+    Lonlat { lon: longitude, lat: a.lat + ratio * (b.lat - a.lat) }
+}
+
+fn normalise_longitudes(mut points: Vec<Lonlat>, reference: f64) -> Vec<Lonlat> {
+    let shift = if reference > 180.0 { -360.0 } else if reference < -180.0 { 360.0 } else { 0.0 };
+    for point in &mut points {
+        point.lon += shift;
+    }
+    points
 }
 
 #[derive(Clone, Copy)]
@@ -1444,6 +1516,20 @@ attribution = "© OpenStreetMap contributors""#,
         ];
 
         let parts = prepare_features(7, &[("highway", "primary")], &road, 12);
+
+        assert_eq!(parts.len(), 2);
+        assert!(parts.iter().all(|part| part.tile.x == 0 || part.tile.x == 4095));
+    }
+
+    #[test]
+    fn a_polygon_crossing_the_antimeridian_stays_at_the_world_seam() {
+        let water = [
+            Lonlat { lon: 179.999, lat: 0.001 }, Lonlat { lon: -179.999, lat: 0.001 },
+            Lonlat { lon: -179.999, lat: 0.002 }, Lonlat { lon: 179.999, lat: 0.002 },
+            Lonlat { lon: 179.999, lat: 0.001 },
+        ];
+
+        let parts = prepare_features(8, &[("natural", "water")], &water, 12);
 
         assert_eq!(parts.len(), 2);
         assert!(parts.iter().all(|part| part.tile.x == 0 || part.tile.x == 4095));
