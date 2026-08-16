@@ -8,7 +8,7 @@ use std::{env, fs, path::Path, path::PathBuf, process};
 use maps2_fixtures::{
     ealing_tiles, ridge_tiles, roads_centre, roads_tiles, EALING, RIDGE_DETAIL_LEVEL, ROADS_ZOOM,
 };
-use maps2_units::{Lonlat, TileId};
+use maps2_units::{Lonlat, TileId, locate};
 use sha2::{Digest, Sha256};
 
 fn main() {
@@ -19,6 +19,15 @@ fn main() {
     write_pack(&out.join("ealing"), &ealing_tiles(), EALING, 12.0);
     write_pack(&out.join("roads"), &roads_tiles(), roads_centre(), ROADS_ZOOM);
     write_pack(&out.join("ridge"), &ridge_tiles(), EALING, f64::from(RIDGE_DETAIL_LEVEL));
+    write_pack(&out.join("cache"), &cache_tiles(), EALING, 12.0);
+}
+
+fn cache_tiles() -> Vec<(TileId, Vec<u8>)> {
+    let centre = locate(EALING, 12).tile;
+    ((centre.x - 10)..=(centre.x + 10))
+        .flat_map(|x| ((centre.y - 1)..=(centre.y + 1)).map(move |y| TileId { z: 12, x, y }))
+        .map(|id| (id, maps2_fixtures::tile_bytes(id)))
+        .collect()
 }
 
 fn write_pack(out: &Path, tiles: &[(TileId, Vec<u8>)], centre: Lonlat, zoom: f64) {
