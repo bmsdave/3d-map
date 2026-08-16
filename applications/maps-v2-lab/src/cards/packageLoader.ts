@@ -30,6 +30,7 @@ export const packageLoader: CardSpec = {
       load,
     ]));
     let generation = 0;
+    let recoveries = 0;
     const showError = (error: unknown) => {
       const retry = el("button", { type: "button" }, ["Повторить"]);
       retry.addEventListener("click", () => void loadPackage());
@@ -61,6 +62,12 @@ export const packageLoader: CardSpec = {
         stage.setAttribute("data-loaded", String(result.loaded));
         stage.setAttribute("data-manifest", manifestUrl);
         stage.setAttribute("data-state", "ready");
+        canvas.addEventListener("webglcontextlost", (event) => {
+          event.preventDefault();
+          recoveries += 1;
+          stage.setAttribute("data-recoveries", String(recoveries));
+          void loadPackage();
+        });
       } catch (error) {
         if (request === generation) showError(error);
       }

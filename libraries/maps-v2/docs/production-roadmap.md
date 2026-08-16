@@ -64,7 +64,8 @@ release asset, or production performance and resilience evidence. The package
 loader visibly exposes manifest attribution and offers a manual retry after a
 transient manifest failure; it has not yet been exercised with a real London
 package. It bounds an accepted manifest to 50,000 tiles and each fetched tile
-to 4 MiB; connection recovery and real-package browser acceptance remain open.
+to 4 MiB; the host recreates a package map after a WebGL context-loss event.
+Connection recovery and real-package browser acceptance remain open.
 Strict workspace Clippy now passes without
 suppressions; the remaining blockers are real-data quality and release
 operations rather than the Rust lint gate.

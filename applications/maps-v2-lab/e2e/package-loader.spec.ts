@@ -97,3 +97,17 @@ test("package loader: a newer manifest wins over a delayed prior load", async ({
   await page.waitForTimeout(250);
   await expect(page.getByTestId("stage")).toContainText("package exceeds 50000 tiles");
 });
+
+test("package loader: recreates the map after WebGL context loss", async ({ page }) => {
+  await page.goto("/#/card/package-loader");
+  const stage = page.getByTestId("stage");
+
+  await expect(stage).toHaveAttribute("data-state", "ready");
+  await stage.locator("canvas").evaluate((canvas) => {
+    canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+  });
+
+  await expect(stage).toHaveAttribute("data-state", "ready");
+  await expect(stage).toHaveAttribute("data-recoveries", "1");
+  await expect(stage).toHaveAttribute("data-loaded", /[1-9]\d*/);
+});
