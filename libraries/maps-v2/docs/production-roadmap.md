@@ -33,6 +33,10 @@ preserves 64-bit OSM source IDs, including node IDs beyond the 32-bit range.
 MT2 v3 carries interior rings and MT2 v4 preserves full 64-bit source IDs; the renderer excludes holes from fills. Complex
 relation topology and geometry repair remain unfinished.
 
+Road geometries crossing ±180° are split at the world seam before tile
+clipping, preventing a short segment from producing a world-spanning package.
+Antimeridian polygon topology remains a global-build requirement.
+
 The CLI can also write an inclusive z12–z16 package range while processing one
 level at a time. Ingest omits classes below their established style entry zoom:
 a z12 local acceptance build emits 161,638 feature parts in 70 terrain-bearing

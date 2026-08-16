@@ -815,6 +815,14 @@ pub fn prepare_features(
     if is_area(class) {
         return prepare_polygon_with_holes(id, tags, vertices, &[], level);
     }
+    split_antimeridian(vertices).into_iter().flat_map(|line| {
+        prepare_line_features(id, class, tags, &line, level)
+    }).collect()
+}
+
+fn prepare_line_features(
+    id: u64, class: Class, tags: &[(&str, &str)], vertices: &[Lonlat], level: u8,
+) -> Vec<PreparedFeature> {
     let points = simplify_road(grid_points(vertices, level), class, level);
     let height = (class == Class::Building).then(|| building_height_m(tags));
     let name = tag(tags, "name").unwrap_or_default();
@@ -826,6 +834,28 @@ pub fn prepare_features(
             prepared_part(PartInput { id, class, tile, points: part, building_height: height, flags, rank, name })
         })
     }).collect()
+}
+
+fn split_antimeridian(vertices: &[Lonlat]) -> Vec<Vec<Lonlat>> {
+    let Some(&first) = vertices.first() else { return Vec::new(); };
+    let mut parts = vec![vec![first]];
+    for &next in &vertices[1..] {
+        let current = *parts.last().and_then(|part| part.last()).expect("first point exists");
+        if (next.lon - current.lon).abs() <= 180.0 {
+            parts.last_mut().expect("first part exists").push(next);
+            continue;
+        }
+        let (edge, opposite, adjusted_next) = if current.lon > next.lon {
+            (180.0, -180.0, next.lon + 360.0)
+        } else {
+            (-180.0, 180.0, next.lon - 360.0)
+        };
+        let ratio = (edge - current.lon) / (adjusted_next - current.lon);
+        let lat = current.lat + ratio * (next.lat - current.lat);
+        parts.last_mut().expect("first part exists").push(Lonlat { lon: edge, lat });
+        parts.push(vec![Lonlat { lon: opposite, lat }, next]);
+    }
+    parts
 }
 
 /// Clips a classified area and its interior rings into every MT2 tile it covers.
@@ -1404,6 +1434,19 @@ attribution = "© OpenStreetMap contributors""#,
 
         assert_eq!(parts.len(), 1);
         assert_eq!(parts[0].feature.holes.len(), 1);
+    }
+
+    #[test]
+    fn a_road_crossing_the_antimeridian_stays_at_the_world_seam() {
+        let road = [
+            Lonlat { lon: 179.999, lat: 0.0 },
+            Lonlat { lon: -179.999, lat: 0.0 },
+        ];
+
+        let parts = prepare_features(7, &[("highway", "primary")], &road, 12);
+
+        assert_eq!(parts.len(), 2);
+        assert!(parts.iter().all(|part| part.tile.x == 0 || part.tile.x == 4095));
     }
 
     #[test]
