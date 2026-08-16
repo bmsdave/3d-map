@@ -158,6 +158,33 @@ test("package loader: the wide cache fixture loads new tiles after panning", asy
   await expect.poll(async () => Number(await stage.getAttribute("data-unloaded"))).toBeGreaterThan(0);
 });
 
+test("package loader: rapid pans share in-flight tile requests", async ({ page }) => {
+  const requests: string[] = [];
+  await page.route("**/fixtures/cache/**/*.mt2", async (route) => {
+    requests.push(route.request().url());
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await route.continue();
+  });
+  await page.goto("/#/card/package-loader");
+  await expect(page.getByTestId("stage")).toHaveAttribute("data-state", "ready");
+  await page.getByTestId("package-manifest-url").fill("/fixtures/cache/package-manifest.json");
+  await page.getByRole("button", { name: "Загрузить пакет" }).click();
+  const stage = page.getByTestId("stage");
+  await expect(stage).toHaveAttribute("data-state", "ready");
+  requests.length = 0;
+  const box = await stage.locator("canvas").boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  for (const dx of [120, 240, 360, 480]) {
+    await page.mouse.move(box!.x + box!.width / 2 - dx, box!.y + box!.height / 2);
+  }
+  await page.mouse.up();
+  await expect.poll(() => requests.length).toBeGreaterThan(0);
+  await page.waitForTimeout(200);
+  expect(requests.length).toBe(new Set(requests).size);
+});
+
 test("package loader: unloading a tile makes it demand-loadable", async ({ page }) => {
   await page.goto("/#/card/package-loader");
   await expect(page.getByTestId("stage")).toHaveAttribute("data-state", "ready");

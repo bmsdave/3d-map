@@ -222,6 +222,7 @@ export async function createTilePackageLoader(map: MapHandle, manifestUrl: strin
   const base = new URL(manifestUrl, window.location.href);
   const paths = new Map(manifest.tiles.map((path) => [path, new URL(path, base).toString()]));
   const loaded = new Set<string>();
+  const inFlight = new Set<string>();
   map.setSourceLevels(packageLevels(manifest));
   return {
     manifest,
@@ -232,15 +233,25 @@ export async function createTilePackageLoader(map: MapHandle, manifestUrl: strin
         loaded.delete(path);
       }
       const requested = map.missingTiles();
-      const available = requested.filter((path) => paths.has(path) && !loaded.has(path));
-      const unavailable = requested.length - available.length;
-      const bytes = await Promise.all(available.map(async (path) => [path, await fetchTile(paths.get(path)!, manifest.tile_digests[path]!)] as const));
+      const available = requested.filter((path) => paths.has(path) && !loaded.has(path) && !inFlight.has(path));
+      const unavailable = requested.filter((path) => !paths.has(path)).length;
+      available.forEach((path) => inFlight.add(path));
+      let bytes: readonly (readonly [string, Uint8Array])[] = [];
+      try {
+        bytes = await Promise.all(available.map(async (path) => [path, await fetchTile(paths.get(path)!, manifest.tile_digests[path]!)] as const));
+      } finally {
+        available.forEach((path) => inFlight.delete(path));
+      }
+      const stillWanted = new Set(map.missingTiles());
+      let loadedNow = 0;
       for (const [path, tile] of bytes) {
+        if (!stillWanted.has(path)) continue;
         map.loadTile(tile);
         loaded.add(path);
+        loadedNow += 1;
       }
       map.render();
-      return { loaded: bytes.length, unloaded: evicted.length, unavailable };
+      return { loaded: loadedNow, unloaded: evicted.length, unavailable };
     },
   };
 }
