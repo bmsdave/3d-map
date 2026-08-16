@@ -888,10 +888,17 @@ fn prepare_polygon_part(
     let rank = osm_rank(tags);
     covered_tiles(&outer_points, level).into_iter().filter_map(|tile| {
         let mut part = prepared_part(PartInput {
-            id, class, tile, points: clip_polygon(&outer_points, tile), building_height: height, flags, rank, name,
+            id,
+            class,
+            tile,
+            points: simplify_area_ring(clip_polygon(&outer_points, tile), class, level, tile),
+            building_height: height,
+            flags,
+            rank,
+            name,
         })?;
         part.feature.holes = hole_points.iter().filter_map(|ring| {
-            polygon_tile_vertices(clip_polygon(ring, tile), tile)
+            polygon_tile_vertices(simplify_area_ring(clip_polygon(ring, tile), class, level, tile), tile)
         }).collect();
         Some(part)
     }).collect()
@@ -984,6 +991,31 @@ fn simplify_road(points: Vec<GridPoint>, class: Class, level: u8) -> Vec<GridPoi
         .enumerate()
         .filter_map(|(index, point)| keep[index].then_some(point))
         .collect()
+}
+
+fn simplify_area_ring(
+    points: Vec<GridPoint>, class: Class, level: u8, tile: TileId,
+) -> Vec<GridPoint> {
+    if class == Class::Building || level >= 16 || points.len() < 4 {
+        return points;
+    }
+    let tolerance = generalisation_tolerance(level);
+    let simplified = (0..points.len()).filter_map(|index| {
+        let previous = points[(index + points.len() - 1) % points.len()];
+        let point = points[index];
+        let next = points[(index + 1) % points.len()];
+        (on_tile_edge(point, tile) || point_distance(point, previous, next) > tolerance).then_some(point)
+    }).collect::<Vec<_>>();
+    if simplified.len() >= 3 { simplified } else { points }
+}
+
+fn on_tile_edge(point: GridPoint, tile: TileId) -> bool {
+    let left = f64::from(tile.x);
+    let top = f64::from(tile.y);
+    (point.x - left).abs() < f64::EPSILON
+        || (point.x - (left + 1.0)).abs() < f64::EPSILON
+        || (point.y - top).abs() < f64::EPSILON
+        || (point.y - (top + 1.0)).abs() < f64::EPSILON
 }
 
 fn keep_significant_points(
@@ -1391,6 +1423,25 @@ mod tests {
 
         assert_eq!(simplified.len(), 3);
         assert!((simplified[1].x - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn low_zoom_areas_drop_nearly_collinear_inner_vertices() {
+        let tile = locate(Lonlat { lon: -0.1278, lat: 51.5074 }, 12).tile;
+        let ring = [
+            TileCoord(10_000, 10_000),
+            TileCoord(20_000, 10_000),
+            TileCoord(30_000, 10_005),
+            TileCoord(40_000, 10_000),
+            TileCoord(40_000, 40_000),
+            TileCoord(10_000, 40_000),
+        ]
+        .map(|coord| to_lonlat(TilePoint { tile, coord }));
+
+        let features = prepare_features(42, &[("natural", "water")], &ring, 12);
+
+        assert_eq!(features.len(), 1);
+        assert_eq!(features[0].feature.vertices.len(), 5);
     }
 
     #[test]

@@ -42,10 +42,13 @@ level at a time. Ingest omits classes below their established style entry zoom:
 a z12 local acceptance build emits 161,638 feature parts in 70 terrain-bearing
 tiles (17 MB), rather than buildings and address-level detail that cannot be
 rendered at z12. Deterministic Douglas–Peucker simplification reduces road
-geometry while retaining each segment's farthest deviation: a current local v4
-z12 rebuild emits 159,638 parts in 70 terrain-bearing tiles and verifies its
-aggregate and per-tile hashes. Area geometry remains unsimplified, so this is
-not yet production-quality cartographic generalisation.
+geometry while retaining each segment's farthest deviation. A conservative
+per-tile area pass removes nearly collinear interior vertices while preserving
+every tile-edge vertex, so adjacent tiles remain exact. A current local v4 z12
+rebuild emits 159,638 parts in 70 terrain-bearing tiles and verifies its
+aggregate and per-tile hashes. The area pass does not yet perform global
+topology-aware generalisation, so this is not yet production-quality
+cartographic generalisation.
 
 Named OSM places now carry deterministic settlement ranks: cities, towns,
 villages/suburbs, then local places. Low zooms admit only the appropriate rank,
@@ -58,9 +61,10 @@ every tile before a package is accepted.
 
 This is **not** a browser-ready London map or a production release. The lab
 now exercises a manifest-driven, demand-loading host contract with synthetic
-tiles, but does not ship a real-data package. There is still no
-generalisation pipeline, global source set, real-data attribution acceptance,
-release asset, or production performance and resilience evidence. The package
+tiles, but does not ship a real-data package. There is still no global
+topology-aware generalisation, global source set, real-data attribution
+acceptance, release asset, or production performance and resilience evidence.
+The package
 loader visibly exposes manifest attribution and offers a manual retry after a
 transient manifest failure; a local, untracked z12/z16 London package has been
 loaded through that host with all requested hashes verified and attribution
