@@ -155,6 +155,7 @@ test("package loader: the wide cache fixture loads new tiles after panning", asy
   await page.mouse.move(box!.x + box!.width / 2 - 600, box!.y + box!.height / 2);
   await page.mouse.up();
   await expect.poll(async () => Number(await stage.getAttribute("data-loaded"))).toBeGreaterThan(initial);
+  await expect.poll(async () => Number(await stage.getAttribute("data-unloaded"))).toBeGreaterThan(0);
 });
 
 test("package loader: unloading a tile makes it demand-loadable", async ({ page }) => {

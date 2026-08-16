@@ -40,6 +40,7 @@ export const packageLoader: CardSpec = {
   mount(stage, panel) {
     const out = readout([
       { key: "package-tiles", label: "загружено из пакета" },
+      { key: "package-unloaded", label: "выгружено из памяти" },
       { key: "package-level", label: "уровень пакета (SDK)" },
       { key: "package-missing", label: "вне покрытия" },
       { key: "package-attribution", label: "атрибуция источника" },
@@ -86,6 +87,7 @@ export const packageLoader: CardSpec = {
       const canvas = el("canvas", { width: "720", height: "480" });
       stage.setAttribute("data-state", "loading");
       stage.removeAttribute("data-loaded");
+      stage.removeAttribute("data-unloaded");
       stage.removeAttribute("data-manifest");
       stage.replaceChildren(canvas);
       activeMap = null;
@@ -97,13 +99,17 @@ export const packageLoader: CardSpec = {
         map.setCentre(view.lon, view.lat);
         map.setZoom(view.zoom);
         let loaded = 0;
+        let unloaded = 0;
         const refresh = async () => {
           const result = await loader.loadVisible();
           if (request !== generation) return;
           loaded += result.loaded;
+          unloaded += result.unloaded;
           out.set("package-tiles", String(loaded));
+          out.set("package-unloaded", String(unloaded));
           out.set("package-missing", String(result.unavailable));
           stage.setAttribute("data-loaded", String(loaded));
+          stage.setAttribute("data-unloaded", String(unloaded));
           stage.setAttribute("data-unavailable", String(result.unavailable));
         };
         await refresh();

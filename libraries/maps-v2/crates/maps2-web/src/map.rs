@@ -44,6 +44,14 @@ const LABEL_DRAW_CLASSES: [Class; 9] = [
     Class::RoadPath,
 ];
 
+fn tile_paths(ids: &[TileId]) -> String {
+    let paths = ids
+        .iter()
+        .map(|id| format!("\"{}/{}/{}.mt2\"", id.z, id.x, id.y))
+        .collect::<Vec<_>>();
+    format!("[{}]", paths.join(","))
+}
+
 #[wasm_bindgen]
 pub struct Map {
     gl: Gl,
@@ -388,12 +396,16 @@ impl Map {
     pub fn missing_tiles(&self) -> String {
         let available = self.tiles.keys().copied().collect::<HashSet<_>>();
         let plan = plan_residency(&self.camera, self.viewport, &self.source_levels, &available);
-        let paths = plan
-            .missing
-            .iter()
-            .map(|id| format!("\"{}/{}/{}.mt2\"", id.z, id.x, id.y))
-            .collect::<Vec<_>>();
-        format!("[{}]", paths.join(","))
+        tile_paths(&plan.missing)
+    }
+
+    /// Loaded tile paths outside the viewport and one-tile keep margin.
+    /// The host owns fetching and CPU memory, so it releases these bytes.
+    #[must_use]
+    pub fn evictable_tiles(&self) -> String {
+        let available = self.tiles.keys().copied().collect::<HashSet<_>>();
+        let plan = plan_residency(&self.camera, self.viewport, &self.source_levels, &available);
+        tile_paths(&plan.evict)
     }
 
     pub fn set_zoom(&mut self, zoom: f64) -> Result<(), JsValue> {

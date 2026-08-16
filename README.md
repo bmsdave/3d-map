@@ -46,7 +46,9 @@ version, sorted relative tile paths, a default view, source attribution, and
 SHA-256 digests for every tile. The browser loader verifies those digests before
 passing downloaded bytes to the renderer. It rejects manifests with more than
 50,000 tiles and individual tile responses larger than 4 MiB before decoding.
-The lab's **Пакет: загрузка по спросу** study exercises demand loading against
+After a camera move, it releases tiles outside the visible viewport plus the
+renderer’s one-tile keep margin, so package CPU memory does not grow without
+bound during exploration. The lab's **Пакет: загрузка по спросу** study exercises demand loading against
 the same contract using synthetic tiles and accepts a host-selected manifest
 URL for local real-data acceptance. Real derived packages remain external
 release assets until their source terms and attribution are approved.

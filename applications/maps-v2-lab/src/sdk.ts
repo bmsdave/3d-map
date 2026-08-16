@@ -70,6 +70,7 @@ export interface MapHandle {
   setZoom(zoom: number): void;
   setSourceLevels(levels: number[]): void;
   missingTiles(): string[];
+  evictableTiles(): string[];
   loadTile(bytes: Uint8Array): void;
   unloadTile(z: number, x: number, y: number): void;
   setCentre(lon: number, lat: number): void;
@@ -131,6 +132,7 @@ export interface TilePackageManifest {
 
 export interface PackageLoadResult {
   loaded: number;
+  unloaded: number;
   unavailable: number;
 }
 
@@ -224,6 +226,11 @@ export async function createTilePackageLoader(map: MapHandle, manifestUrl: strin
   return {
     manifest,
     async loadVisible(): Promise<PackageLoadResult> {
+      const evicted = map.evictableTiles();
+      for (const path of evicted) {
+        unloadPackageTile(map, path);
+        loaded.delete(path);
+      }
       const requested = map.missingTiles();
       const available = requested.filter((path) => paths.has(path) && !loaded.has(path));
       const unavailable = requested.length - available.length;
@@ -233,9 +240,15 @@ export async function createTilePackageLoader(map: MapHandle, manifestUrl: strin
         loaded.add(path);
       }
       map.render();
-      return { loaded: bytes.length, unavailable };
+      return { loaded: bytes.length, unloaded: evicted.length, unavailable };
     },
   };
+}
+
+function unloadPackageTile(map: MapHandle, path: string): void {
+  const match = /^(\d+)\/(\d+)\/(\d+)\.mt2$/.exec(path);
+  if (!match) return;
+  map.unloadTile(Number(match[1]), Number(match[2]), Number(match[3]));
 }
 
 declare global {
@@ -252,6 +265,7 @@ let nextCanvasId = 0;
 interface PackageMapApi {
   set_source_levels(levels: Uint8Array): void;
   missing_tiles(): string;
+  evictable_tiles(): string;
   unload_tile(z: number, x: number, y: number): void;
 }
 
@@ -282,6 +296,7 @@ export async function createMap(canvas: HTMLCanvasElement, pack: string | null):
     setZoom: (zoom) => map.set_zoom(zoom),
     setSourceLevels: (levels) => packageApi.set_source_levels(new Uint8Array(levels)),
     missingTiles: () => JSON.parse(packageApi.missing_tiles()) as string[],
+    evictableTiles: () => JSON.parse(packageApi.evictable_tiles()) as string[],
     loadTile: (bytes) => map.load_tile(bytes),
     unloadTile: (z, x, y) => packageApi.unload_tile(z, x, y),
     setCentre: (lon, lat) => map.set_centre(lon, lat),
