@@ -140,6 +140,23 @@ test("package loader: panning refreshes visible package coverage", async ({ page
   await expect.poll(async () => Number(await stage.getAttribute("data-unavailable"))).toBeGreaterThan(0);
 });
 
+test("package loader: the wide cache fixture loads new tiles after panning", async ({ page }) => {
+  await page.goto("/#/card/package-loader");
+  await expect(page.getByTestId("stage")).toHaveAttribute("data-state", "ready");
+  await page.getByTestId("package-manifest-url").fill("/fixtures/cache/package-manifest.json");
+  await page.getByRole("button", { name: "Загрузить пакет" }).click();
+  const stage = page.getByTestId("stage");
+  await expect(stage).toHaveAttribute("data-state", "ready");
+  const initial = Number(await stage.getAttribute("data-loaded"));
+  const box = await stage.locator("canvas").boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width / 2 - 600, box!.y + box!.height / 2);
+  await page.mouse.up();
+  await expect.poll(async () => Number(await stage.getAttribute("data-loaded"))).toBeGreaterThan(initial);
+});
+
 test("package loader: unloading a tile makes it demand-loadable", async ({ page }) => {
   await page.goto("/#/card/package-loader");
   await expect(page.getByTestId("stage")).toHaveAttribute("data-state", "ready");
