@@ -124,3 +124,18 @@ test("package loader: tilt control changes the loaded map frame", async ({ page 
 
   expect(tilted).not.toBe(flat);
 });
+
+test("package loader: panning refreshes visible package coverage", async ({ page }) => {
+  await page.goto("/#/card/package-loader");
+  const stage = page.getByTestId("stage");
+  await expect(stage).toHaveAttribute("data-state", "ready");
+  const box = await stage.locator("canvas").boundingBox();
+  expect(box).not.toBeNull();
+
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width / 2 - 400, box!.y + box!.height / 2);
+  await page.mouse.up();
+
+  await expect.poll(async () => Number(await stage.getAttribute("data-unavailable"))).toBeGreaterThan(0);
+});

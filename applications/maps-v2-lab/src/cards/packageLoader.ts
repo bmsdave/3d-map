@@ -4,6 +4,33 @@ import type { CardSpec } from "./types";
 
 const MANIFEST = "/fixtures/ealing/package-manifest.json";
 
+function canvasPoint(canvas: HTMLCanvasElement, event: PointerEvent | WheelEvent): [number, number] {
+  const rect = canvas.getBoundingClientRect();
+  return [(event.clientX - rect.left) * canvas.width / rect.width, (event.clientY - rect.top) * canvas.height / rect.height];
+}
+
+function attachPackageNavigation(canvas: HTMLCanvasElement, map: MapHandle, refresh: () => void): void {
+  let dragging = false;
+  canvas.addEventListener("pointerdown", (event) => {
+    dragging = true;
+    canvas.setPointerCapture(event.pointerId);
+    map.pointerDown(...canvasPoint(canvas, event), event.timeStamp);
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    map.pointerMove(...canvasPoint(canvas, event), event.timeStamp);
+    map.render();
+    refresh();
+  });
+  canvas.addEventListener("pointerup", () => { dragging = false; map.pointerUp(); });
+  canvas.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    map.wheel(...canvasPoint(canvas, event), event.deltaY, event.ctrlKey);
+    map.render();
+    refresh();
+  }, { passive: false });
+}
+
 export const packageLoader: CardSpec = {
   id: "package-loader",
   title: "Пакет: загрузка по спросу",
@@ -69,19 +96,27 @@ export const packageLoader: CardSpec = {
         const view = loader.manifest.view;
         map.setCentre(view.lon, view.lat);
         map.setZoom(view.zoom);
-        const result = await loader.loadVisible();
+        let loaded = 0;
+        const refresh = async () => {
+          const result = await loader.loadVisible();
+          if (request !== generation) return;
+          loaded += result.loaded;
+          out.set("package-tiles", String(loaded));
+          out.set("package-missing", String(result.unavailable));
+          stage.setAttribute("data-loaded", String(loaded));
+          stage.setAttribute("data-unavailable", String(result.unavailable));
+        };
+        await refresh();
         if (request !== generation) return;
         const state = map.debug();
         activeMap = map;
         applyTilt();
-        out.set("package-tiles", String(result.loaded));
         out.set("package-level", String(state.tile_level));
-        out.set("package-missing", String(result.unavailable));
         out.set("package-attribution", loader.manifest.sources.map((source) => source.attribution).join(" · "));
         panel.replaceChildren(source, section("Пакет", out.root));
-        stage.setAttribute("data-loaded", String(result.loaded));
         stage.setAttribute("data-manifest", manifestUrl);
         stage.setAttribute("data-state", "ready");
+        attachPackageNavigation(canvas, map, () => void refresh());
         canvas.addEventListener("webglcontextlost", (event) => {
           event.preventDefault();
           recoveries += 1;
