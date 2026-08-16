@@ -122,13 +122,16 @@ npm run test:e2e
 The lab regenerates its synthetic fixture output locally. It needs no
 proprietary data, pipeline cache, or external map package.
 
-## Current production blockers
+## Initial local-SDK scope
 
-Strict workspace-wide Clippy, Rust tests, and the browser suite are green. A
-production release remains blocked on reproducible real-data acceptance: robust
-relation topology repair, zoom-aware cartographic generalisation, visual and
-performance validation of a real London package, and the region-sharded global
-OSM/terrain build and release operations described in the production roadmap.
+This first open-source version is for local development. It includes the SDK,
+browser lab, deterministic fixtures, and a reproducible local pipeline for
+openly licensed OSM and Copernicus inputs. The application code is MIT.
+
+It deliberately excludes package hosting/distribution, package signing,
+rollback/on-call processes, and production service support. Those are later
+owner-led release decisions, not requirements for using or contributing to the
+SDK locally.
 
 ## SDK shape
 

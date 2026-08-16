@@ -36,3 +36,12 @@ milestone; its delivery plan is [real-data-beta-plan.md](real-data-beta-plan.md)
 
 This source is licensed under MIT. The alpha's API and data limitations
 remain unchanged by that license choice.
+
+## Local development posture
+
+The initial open-source milestone is a local-development SDK. It may fetch and
+build only openly licensed, pinned source inputs described by the ingest
+pipeline (currently OSM and Copernicus DEM); the source licence and attribution
+remain in each generated manifest. Generated data stays untracked. Hosting,
+signing, package distribution, operational support, and production release
+ownership are intentionally outside this milestone.
