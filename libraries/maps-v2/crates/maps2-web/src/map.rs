@@ -32,6 +32,17 @@ use crate::transform::place_tile;
 /// Levels the fixture package is cut at; the real pipeline will ship a
 /// manifest instead.
 const DEFAULT_SOURCE_LEVELS: [u8; 7] = [0, 5, 8, 10, 12, 14, 16];
+const LABEL_DRAW_CLASSES: [Class; 9] = [
+    Class::Poi,
+    Class::Label,
+    Class::RoadMotorway,
+    Class::RoadTrunk,
+    Class::RoadPrimary,
+    Class::RoadSecondary,
+    Class::RoadResidential,
+    Class::RoadService,
+    Class::RoadPath,
+];
 
 #[wasm_bindgen]
 pub struct Map {
@@ -969,7 +980,7 @@ impl Map {
         );
         drop(buckets);
         self.draw_collision_boxes(viewport);
-        for class in [Class::Poi, Class::Label] {
+        for class in LABEL_DRAW_CLASSES {
             let alpha = self.current_alpha(class);
             if alpha < 0.004 {
                 continue;
@@ -980,7 +991,7 @@ impl Map {
                 &TextDraw {
                     quads: &quads,
                     viewport,
-                    colour: fill_color(class),
+                    colour: Self::label_colour(class),
                     halo: HALO_COLOUR,
                     halo_em: self.labels.halo_em,
                     opacity: alpha,
@@ -988,6 +999,10 @@ impl Map {
             );
             self.frame_draw_calls += u32::from(!quads.is_empty());
         }
+    }
+
+    fn label_colour(class: Class) -> [u8; 4] {
+        if class == Class::Poi { fill_color(class) } else { fill_color(Class::Label) }
     }
 
     fn draw_collision_boxes(&mut self, viewport: (f32, f32)) {

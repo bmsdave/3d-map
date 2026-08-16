@@ -1,4 +1,4 @@
-//! The point features that want a name on screen.
+//! The named map features that want a name on screen.
 //!
 //! Built once per resident tile, like the fill bucket, and read every
 //! frame by the placement pass. Nothing here decides what is visible —
@@ -8,10 +8,21 @@
 use maps2_style::Class;
 use maps2_tile::{TileError, TileView};
 use maps2_units::TileCoord;
+use num_traits::ToPrimitive;
 
 /// The classes that carry names. Geometry classes have a `name` field
 /// too, and it is empty for them.
-pub const LABEL_CLASSES: [Class; 2] = [Class::Label, Class::Poi];
+pub const LABEL_CLASSES: [Class; 9] = [
+    Class::Label,
+    Class::Poi,
+    Class::RoadMotorway,
+    Class::RoadTrunk,
+    Class::RoadPrimary,
+    Class::RoadSecondary,
+    Class::RoadResidential,
+    Class::RoadService,
+    Class::RoadPath,
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LabelPoint {
@@ -28,8 +39,9 @@ pub struct LabelBucket {
     pub points: Vec<LabelPoint>,
 }
 
-/// Reads the named point features of one tile, in [`LABEL_CLASSES`]
-/// order. A feature without a name is not a label and is dropped.
+/// Reads named point and road features of one tile, in [`LABEL_CLASSES`]
+/// order. Road names anchor at their geometric midpoint; text stays upright.
+/// A feature without a name is not a label and is dropped.
 ///
 /// # Errors
 ///
@@ -42,10 +54,11 @@ pub fn build_label_bucket(tile: &TileView) -> Result<LabelBucket, TileError> {
         };
         for feature in section.features() {
             let feature = feature?;
-            let coord = feature.vertices().next().ok_or(TileError::Truncated)??;
             if feature.name.is_empty() {
                 continue;
             }
+            let vertices = feature.vertices().collect::<Result<Vec<_>, _>>()?;
+            let coord = label_anchor(class, &vertices)?;
             bucket.points.push(LabelPoint {
                 id: feature.id,
                 rank: feature.rank,
@@ -56,6 +69,45 @@ pub fn build_label_bucket(tile: &TileView) -> Result<LabelBucket, TileError> {
         }
     }
     Ok(bucket)
+}
+
+fn label_anchor(class: Class, vertices: &[TileCoord]) -> Result<TileCoord, TileError> {
+    let first = *vertices.first().ok_or(TileError::Truncated)?;
+    if class.road_rank().is_none() || vertices.len() == 1 {
+        return Ok(first);
+    }
+    Ok(road_midpoint(vertices))
+}
+
+fn road_midpoint(vertices: &[TileCoord]) -> TileCoord {
+    let length = vertices.windows(2).map(segment_length).sum::<f64>();
+    let mut remaining = length / 2.0;
+    for segment in vertices.windows(2) {
+        let segment_length = segment_length(segment);
+        if segment_length == 0.0 {
+            continue;
+        }
+        if remaining <= segment_length {
+            return interpolate(segment[0], segment[1], remaining / segment_length);
+        }
+        remaining -= segment_length;
+    }
+    *vertices.last().expect("a road label has a first vertex")
+}
+
+fn segment_length(segment: &[TileCoord]) -> f64 {
+    let dx = f64::from(segment[1].0) - f64::from(segment[0].0);
+    let dy = f64::from(segment[1].1) - f64::from(segment[0].1);
+    dx.hypot(dy)
+}
+
+fn interpolate(start: TileCoord, end: TileCoord, fraction: f64) -> TileCoord {
+    let x = (f64::from(end.0) - f64::from(start.0)).mul_add(fraction, f64::from(start.0));
+    let y = (f64::from(end.1) - f64::from(start.1)).mul_add(fraction, f64::from(start.1));
+    TileCoord(
+        x.round().to_u16().expect("interpolated x stays in tile extent"),
+        y.round().to_u16().expect("interpolated y stays in tile extent"),
+    )
 }
 
 #[cfg(test)]
@@ -73,6 +125,17 @@ mod tests {
         builder.push(Class::Poi.code(), named(20, 6, "Bakery", TileCoord(1000, 2000)));
         builder.push(Class::Poi.code(), FeatureDraft::geometry(21, 0, vec![TileCoord(5, 5)]));
         builder.push(Class::Label.code(), named(10, 1, "Ealing", TileCoord(300, 400)));
+        builder.push(
+            Class::RoadPrimary.code(),
+            FeatureDraft {
+                id: 30,
+                flags: 0,
+                rank: 3,
+                name: "Uxbridge Road".to_string(),
+                vertices: vec![TileCoord(100, 200), TileCoord(300, 400), TileCoord(500, 600)],
+                holes: Vec::new(),
+            },
+        );
         builder.push(Class::Water.code(), rect(99));
         builder.build().expect("label fixture fits MT2")
     }
@@ -107,6 +170,13 @@ mod tests {
                     name: "Bakery".into(),
                     coord: TileCoord(1000, 2000),
                 },
+                LabelPoint {
+                    id: 30,
+                    rank: 3,
+                    class: Class::RoadPrimary,
+                    name: "Uxbridge Road".into(),
+                    coord: TileCoord(300, 400),
+                },
             ],
         );
     }
@@ -130,5 +200,29 @@ mod tests {
         }
         let tile = TileView::parse(&bytes).expect("header intact");
         assert!(build_label_bucket(&tile).is_err());
+    }
+
+    #[test]
+    fn a_degenerate_road_anchors_at_its_only_distinct_coordinate() {
+        assert_eq!(
+            road_midpoint(&[TileCoord(44, 88), TileCoord(44, 88)]),
+            TileCoord(44, 88),
+        );
+    }
+
+    #[test]
+    fn a_midpoint_skips_an_empty_leading_segment() {
+        assert_eq!(
+            road_midpoint(&[TileCoord(0, 0), TileCoord(0, 0), TileCoord(8, 0)]),
+            TileCoord(4, 0),
+        );
+    }
+
+    #[test]
+    fn a_midpoint_crosses_a_short_first_segment() {
+        assert_eq!(
+            road_midpoint(&[TileCoord(0, 0), TileCoord(2, 0), TileCoord(10, 0)]),
+            TileCoord(5, 0),
+        );
     }
 }

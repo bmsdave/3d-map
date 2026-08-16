@@ -20,8 +20,9 @@ Each card has a direct route at `/#/card/<id>`:
 
 - `zoom-bands`, six `toggle-*` cards, and `globe-transition` exercise scale and
   globe transitions.
-- `roads-micro` exercises synthetic pathologies: joins, casing, bridges, and
-  tunnels — not real roads.
+- `roads-micro` exercises synthetic pathologies: joins, casing, bridges,
+  tunnels, and one upright midpoint road name — not real roads or curved line
+  labels.
 - `type-specimen`, `labels-collision`, `poi-density`, and
   `viewport-stability` exercise deterministic point-label placement.
 - `input-flat`, `terrain-shade`, and `globe-relief` cover browser input and

@@ -62,12 +62,12 @@ pub fn roads_tile_bytes() -> Vec<u8> {
     builder.build().expect("roads fixture fits MT2")
 }
 
-fn road(id: u64, flags: u8, points: &[(u16, u16)]) -> FeatureDraft {
+fn road(id: u64, flags: u8, name: &str, points: &[(u16, u16)]) -> FeatureDraft {
     FeatureDraft {
         id,
         flags,
         rank: 0,
-        name: String::new(),
+        name: name.to_string(),
         vertices: points.iter().map(|(x, y)| TileCoord(*x, *y)).collect(),
         holes: Vec::new(),
     }
@@ -89,7 +89,7 @@ fn scene() -> Vec<(Class, FeatureDraft)> {
 fn sharp_corner() -> Vec<(Class, FeatureDraft)> {
     vec![(
         Class::RoadPrimary,
-        road(10, 0, &[(5000, 20000), (22000, 12000), (6000, 16500)]),
+        road(10, 0, "", &[(5000, 20000), (22000, 12000), (6000, 16500)]),
     )]
 }
 
@@ -97,9 +97,9 @@ fn sharp_corner() -> Vec<(Class, FeatureDraft)> {
 /// geometry, not by a topology the renderer knows about.
 fn y_junction() -> Vec<(Class, FeatureDraft)> {
     vec![
-        (Class::RoadTrunk, road(20, 0, &[(33000, 29000), (33000, 13000)])),
-        (Class::RoadSecondary, road(21, 0, &[(33000, 13000), (25000, 5000)])),
-        (Class::RoadSecondary, road(22, 0, &[(33000, 13000), (41000, 5000)])),
+        (Class::RoadTrunk, road(20, 0, "", &[(33000, 29000), (33000, 13000)])),
+        (Class::RoadSecondary, road(21, 0, "", &[(33000, 13000), (25000, 5000)])),
+        (Class::RoadSecondary, road(22, 0, "", &[(33000, 13000), (41000, 5000)])),
     ]
 }
 
@@ -116,15 +116,15 @@ fn roundabout() -> (Class, FeatureDraft) {
         })
         .collect();
     points.push(points[0]);
-    (Class::RoadResidential, road(30, 0, &points))
+    (Class::RoadResidential, road(30, 0, "", &points))
 }
 
 /// A motorway and its service road, close enough that the casings all
 /// but touch: the pair that shows whether class order is respected.
 fn dual_carriageway() -> Vec<(Class, FeatureDraft)> {
     vec![
-        (Class::RoadMotorway, road(40, 0, &[(4000, 34000), (62000, 34000)])),
-        (Class::RoadService, road(41, 0, &[(6000, 38000), (60000, 38000)])),
+        (Class::RoadMotorway, road(40, 0, "North Circular", &[(4000, 34000), (62000, 34000)])),
+        (Class::RoadService, road(41, 0, "", &[(6000, 38000), (60000, 38000)])),
     ]
 }
 
@@ -135,8 +135,7 @@ fn chicane() -> (Class, FeatureDraft) {
     (
         Class::RoadResidential,
         road(
-            50,
-            0,
+            50, 0, "",
             &[(6000, 46000), (24000, 46000), (12510, 55645), (20703, 61380)],
         ),
     )
@@ -145,9 +144,9 @@ fn chicane() -> (Class, FeatureDraft) {
 /// A street with a bridge over it and a tunnel under it.
 fn crossings() -> Vec<(Class, FeatureDraft)> {
     vec![
-        (Class::RoadResidential, road(60, 0, &[(30000, 58000), (63000, 46000)])),
-        (Class::RoadSecondary, road(61, FLAG_BRIDGE, &[(36000, 43000), (48000, 62000)])),
-        (Class::RoadSecondary, road(62, FLAG_TUNNEL, &[(52000, 43000), (62000, 62000)])),
+        (Class::RoadResidential, road(60, 0, "", &[(30000, 58000), (63000, 46000)])),
+        (Class::RoadSecondary, road(61, FLAG_BRIDGE, "", &[(36000, 43000), (48000, 62000)])),
+        (Class::RoadSecondary, road(62, FLAG_TUNNEL, "", &[(52000, 43000), (62000, 62000)])),
     ]
 }
 
@@ -159,7 +158,7 @@ mod tests {
     /// The scene must be bit-for-bit stable: it is the input of a
     /// golden screenshot, and a silent change there is a silent change
     /// to the picture the reviewer approved.
-    const GOLDEN_FNV1A: u64 = 0xF21A_3DAD_F9D4_B960;
+    const GOLDEN_FNV1A: u64 = 0x5CE1_7FA8_6F58_BB12;
 
     fn fnv1a(bytes: &[u8]) -> u64 {
         let mut hash = 0xcbf2_9ce4_8422_2325_u64;

@@ -16,10 +16,11 @@ function joins(page: Page) {
 }
 
 test("сцена собирается со стыками обоих видов", async ({ page }) => {
-  await openRoads(page);
+  const stage = await openRoads(page);
   // Круг митрится весь, острый угол и шикана — бевелятся.
   await expect(joins(page)).toContainText(/митра [1-9]\d*/);
   await expect(joins(page)).toContainText(/бевел [1-9]\d*/);
+  await expect(stage).toHaveAttribute("data-label-candidates", "1");
 });
 
 test("предел митры превращает бевелы в митры", async ({ page }) => {
@@ -68,8 +69,8 @@ test("ширина дороги задаётся в экранных пиксе�
 
 // Столбец пикселей поперёк магистрали: земля → казинг → заливка →
 // казинг → земля. Проба — хук вне горячего пути, кадр за неё не платит.
-async function columnAcrossMotorway(page: Page): Promise<number[]> {
-  return page.evaluate(() => {
+async function columnAcrossMotorway(page: Page, x = 360): Promise<number[]> {
+  return page.evaluate((sampleX) => {
     const map = (
       window as unknown as {
         maps2: { render(): void; samplePixel(x: number, y: number): number[] };
@@ -78,11 +79,11 @@ async function columnAcrossMotorway(page: Page): Promise<number[]> {
     map.render();
     const brightness: number[] = [];
     for (let y = 230; y <= 270; y++) {
-      const [r, g, b] = map.samplePixel(360, y);
+      const [r, g, b] = map.samplePixel(sampleX, y);
       brightness.push((r ?? 0) + (g ?? 0) + (b ?? 0));
     }
     return brightness;
-  });
+  }, x);
 }
 
 const CENTRE_INDEX = 249 - 230;
@@ -107,7 +108,7 @@ test("казинг темнее заливки, центр ленты — цве
 test("снятый казинг убирает тёмную кромку с ленты", async ({ page }) => {
   await openRoads(page);
   await page.getByTestId("casing-toggle").uncheck();
-  const column = await columnAcrossMotorway(page);
+  const column = await columnAcrossMotorway(page, 160);
   const land = column[0] ?? 0;
   expect(column[CENTRE_INDEX]).toBeGreaterThan(land);
   expect(Math.min(...column)).toBeGreaterThanOrEqual(land);

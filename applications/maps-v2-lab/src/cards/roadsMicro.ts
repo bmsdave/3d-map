@@ -106,6 +106,7 @@ function wire(
     out.set("widths", `магистраль ${width(MOTORWAY)} · улица ${width(STREET)}`);
     stage.setAttribute("data-casing", String(state.casing));
     stage.setAttribute("data-miter-limit", state.miter_limit.toFixed(1));
+    stage.setAttribute("data-label-candidates", String(state.label_candidates));
   };
 
   // Ручки ширины стартуют с того, что даёт рампа стиля на этом зуме:

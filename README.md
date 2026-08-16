@@ -25,8 +25,10 @@ terrain, and globe relief.
 ## What is not included
 
 No published real-world London/world package, `roads-real`, routing, geocoding,
-search, production data hosting, mobile host, line labels, POI icon labels, or
-full Unicode shaping is included. Real-world data is a beta goal;
+search, production data hosting, mobile host, road-following line labels, POI
+icon labels, or full Unicode shaping is included. Named roads render as
+upright midpoint labels; curved, repeated, and language-shaped road text remain
+future work. Real-world data is a beta goal;
 see [the beta plan](libraries/maps-v2/docs/real-data-beta-plan.md) and the
 [production roadmap](libraries/maps-v2/docs/production-roadmap.md).
 
