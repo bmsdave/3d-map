@@ -41,3 +41,10 @@ are tracked by Git.
 | Global inputs | A checked-in shard inventory for OSM, Copernicus land DEM, and GEBCO bathymetry. Each descriptor must pin version, URL, SHA-256, licence, attribution, bounds, and adapter version. |
 | World assembly | Region-sharded low-zoom build, seam/border validation, aggregated source notices, and two clean identical runs across z0–z5. |
 | Data release | Owner approval of source attribution/redistribution review, package signing, hosting, rollback, and support ownership. |
+
+For ocean terrain, freeze one annual GEBCO release only after downloading it
+from the official grid distribution and recording its SHA-256. GEBCO publishes
+global 15-arc-second terrain as eight 90° × 90° tiles and permits copying,
+adapting, publishing, distributing, and commercial use with attribution. Its
+annual cadence means a bare “latest” URL is explicitly not an acceptable source
+descriptor. See [GEBCO’s grid and terms](https://www.gebco.net/data-products-gridded-bathymetry-data/gebco2025-grid).
