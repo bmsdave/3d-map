@@ -6,8 +6,8 @@ use maps2_units::{TileCoord, TileId};
 
 use crate::varint::{read_varint, zigzag_decode};
 use crate::{
-    BuildingView, ClassCode, FeatureFlags, HOLES_FORMAT_VERSION, LEGACY_FORMAT_VERSION, PREVIOUS_FORMAT_VERSION, RoofType, TileError, TileHeader,
-    FORMAT_VERSION, MAGIC, RASTER_CLASS_BASE,
+    BuildingView, ClassCode, FeatureFlags, RoofType, TileError, TileHeader, FORMAT_VERSION,
+    HOLES_FORMAT_VERSION, LEGACY_FORMAT_VERSION, MAGIC, PREVIOUS_FORMAT_VERSION, RASTER_CLASS_BASE,
 };
 
 const HEADER_BYTES: usize = 20;
@@ -35,7 +35,10 @@ impl<'a> TileView<'a> {
             return Err(TileError::BadMagic);
         }
         let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-        if !matches!(version, LEGACY_FORMAT_VERSION | 2 | PREVIOUS_FORMAT_VERSION | FORMAT_VERSION) {
+        if !matches!(
+            version,
+            LEGACY_FORMAT_VERSION | 2 | PREVIOUS_FORMAT_VERSION | FORMAT_VERSION
+        ) {
             return Err(TileError::UnsupportedVersion(version));
         }
         let id = TileId {
@@ -47,7 +50,11 @@ impl<'a> TileView<'a> {
         if bytes.len() < HEADER_BYTES + section_count * SECTION_ENTRY_BYTES {
             return Err(TileError::TooShort);
         }
-        Ok(Self { bytes, header: TileHeader { version, id }, section_count })
+        Ok(Self {
+            bytes,
+            header: TileHeader { version, id },
+            section_count,
+        })
     }
 
     #[must_use]
@@ -91,7 +98,10 @@ impl<'a> TileView<'a> {
         }
         let span = self.section_span(class)?;
         let bytes = self.bytes.get(span).unwrap_or(&[]);
-        Some(SectionView { bytes, version: self.header.version })
+        Some(SectionView {
+            bytes,
+            version: self.header.version,
+        })
     }
 
     /// The opaque payload of a raster section (class ≥ 0xFF00).
@@ -115,10 +125,22 @@ impl<'a> SectionView<'a> {
     #[must_use]
     pub fn features(&self) -> FeaturesIter<'a> {
         if self.bytes.len() < 2 {
-            return FeaturesIter { bytes: self.bytes, pos: 0, remaining: 0, damaged: true, version: self.version };
+            return FeaturesIter {
+                bytes: self.bytes,
+                pos: 0,
+                remaining: 0,
+                damaged: true,
+                version: self.version,
+            };
         }
         let count = usize::from(u16::from_le_bytes([self.bytes[0], self.bytes[1]]));
-        FeaturesIter { bytes: self.bytes, pos: 2, remaining: count, damaged: false, version: self.version }
+        FeaturesIter {
+            bytes: self.bytes,
+            pos: 2,
+            remaining: count,
+            damaged: false,
+            version: self.version,
+        }
     }
 }
 
@@ -158,7 +180,10 @@ impl<'a> FeaturesIter<'a> {
         let rank = head[feature_id_bytes(self.version) + 1];
         let building = decode_building(self.version, head)?;
         let name_offset = feature_name_offset(self.version);
-        let name_len = usize::from(u16::from_le_bytes([head[name_offset], head[name_offset + 1]]));
+        let name_len = usize::from(u16::from_le_bytes([
+            head[name_offset],
+            head[name_offset + 1],
+        ]));
         self.pos += head.len();
         let name_bytes = self
             .bytes
@@ -166,9 +191,8 @@ impl<'a> FeaturesIter<'a> {
             .ok_or(TileError::Truncated)?;
         let name = std::str::from_utf8(name_bytes).map_err(|_| TileError::BadText)?;
         self.pos += name_len;
-        let (vertex_count, geometry, hole_count, holes) = decode_geometry(
-            self.version, self.bytes, &mut self.pos,
-        )?;
+        let (vertex_count, geometry, hole_count, holes) =
+            decode_geometry(self.version, self.bytes, &mut self.pos)?;
         Ok(FeatureView {
             id,
             flags,
@@ -184,11 +208,23 @@ impl<'a> FeaturesIter<'a> {
 }
 
 const fn feature_head_bytes(version: u16) -> usize {
-    if version == LEGACY_FORMAT_VERSION { 8 } else if version == FORMAT_VERSION { 17 } else { 13 }
+    if version == LEGACY_FORMAT_VERSION {
+        8
+    } else if version == FORMAT_VERSION {
+        17
+    } else {
+        13
+    }
 }
 
 const fn feature_name_offset(version: u16) -> usize {
-    if version == LEGACY_FORMAT_VERSION { 6 } else if version == FORMAT_VERSION { 15 } else { 11 }
+    if version == LEGACY_FORMAT_VERSION {
+        6
+    } else if version == FORMAT_VERSION {
+        15
+    } else {
+        11
+    }
 }
 
 fn decode_building(version: u16, head: &[u8]) -> Result<Option<BuildingView>, TileError> {
@@ -203,20 +239,36 @@ fn decode_building(version: u16, head: &[u8]) -> Result<Option<BuildingView>, Ti
         return Ok(None);
     }
     (top_height_dm > base_height_dm)
-        .then_some(BuildingView { base_height_dm, top_height_dm, roof })
+        .then_some(BuildingView {
+            base_height_dm,
+            top_height_dm,
+            roof,
+        })
         .map(Some)
         .ok_or(TileError::BadBuilding)
 }
 
 const fn feature_id_bytes(version: u16) -> usize {
-    if version == FORMAT_VERSION { 8 } else { 4 }
+    if version == FORMAT_VERSION {
+        8
+    } else {
+        4
+    }
 }
 
 fn feature_id(version: u16, head: &[u8]) -> u64 {
     if version == FORMAT_VERSION {
-        u64::from_le_bytes(head[..8].try_into().expect("feature head has eight ID bytes"))
+        u64::from_le_bytes(
+            head[..8]
+                .try_into()
+                .expect("feature head has eight ID bytes"),
+        )
     } else {
-        u64::from(u32::from_le_bytes(head[..4].try_into().expect("feature head has four ID bytes")))
+        u64::from(u32::from_le_bytes(
+            head[..4]
+                .try_into()
+                .expect("feature head has four ID bytes"),
+        ))
     }
 }
 
@@ -242,7 +294,9 @@ fn read_u16(bytes: &[u8], pos: &mut usize) -> Result<u16, TileError> {
 }
 
 fn decode_geometry(
-    version: u16, bytes: &[u8], pos: &mut usize,
+    version: u16,
+    bytes: &[u8],
+    pos: &mut usize,
 ) -> Result<(usize, Range<usize>, usize, Range<usize>), TileError> {
     let vertex_count = usize::from(read_u16(bytes, pos)?);
     let geometry_start = *pos;
@@ -288,7 +342,11 @@ impl<'a> FeatureView<'a> {
     /// Lazily decodes the feature's interior rings.
     #[must_use]
     pub fn holes(&self) -> HolesIter<'a> {
-        HolesIter { bytes: self.holes, pos: 0, remaining: self.hole_count }
+        HolesIter {
+            bytes: self.holes,
+            pos: 0,
+            remaining: self.hole_count,
+        }
     }
 }
 
@@ -314,7 +372,12 @@ impl<'a> Iterator for HolesIter<'a> {
         if let Err(error) = skip_geometry(self.bytes, &mut self.pos, count) {
             return Some(Err(error));
         }
-        Some(Ok(VerticesIter { bytes: &self.bytes[start..self.pos], pos: 0, remaining: count, prev: None }))
+        Some(Ok(VerticesIter {
+            bytes: &self.bytes[start..self.pos],
+            pos: 0,
+            remaining: count,
+            prev: None,
+        }))
     }
 }
 
@@ -363,5 +426,64 @@ impl VerticesIter<'_> {
         };
         self.prev = Some(vertex);
         Ok(vertex)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_features_have_no_building_or_holes() {
+        let mut position = 0;
+        let geometry = [1, 0, 7, 0, 9, 0];
+
+        assert_eq!(decode_building(LEGACY_FORMAT_VERSION, &[]), Ok(None));
+        assert_eq!(
+            feature_id(LEGACY_FORMAT_VERSION, &[4, 3, 2, 1]),
+            0x0102_0304
+        );
+        assert_eq!(
+            decode_geometry(LEGACY_FORMAT_VERSION, &geometry, &mut position),
+            Ok((1, 2..6, 0, 0..0)),
+        );
+    }
+
+    #[test]
+    fn empty_or_incomplete_geometry_is_truncated() {
+        let mut position = 0;
+        assert_eq!(
+            skip_geometry(&[], &mut position, 0),
+            Err(TileError::Truncated)
+        );
+
+        let mut position = 0;
+        assert_eq!(
+            skip_geometry(&[], &mut position, 1),
+            Err(TileError::Truncated)
+        );
+    }
+
+    #[test]
+    fn hole_iteration_reports_a_missing_count_or_geometry() {
+        let mut missing_count = HolesIter {
+            bytes: &[],
+            pos: 0,
+            remaining: 1,
+        };
+        assert!(matches!(
+            missing_count.next(),
+            Some(Err(TileError::Truncated))
+        ));
+
+        let mut missing_geometry = HolesIter {
+            bytes: &[1, 0],
+            pos: 0,
+            remaining: 1,
+        };
+        assert!(matches!(
+            missing_geometry.next(),
+            Some(Err(TileError::Truncated))
+        ));
     }
 }

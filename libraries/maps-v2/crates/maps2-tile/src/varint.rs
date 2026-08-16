@@ -41,3 +41,25 @@ pub fn read_varint(bytes: &[u8], pos: &mut usize) -> Result<u32, TileError> {
     }
     Err(TileError::BadVarint)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_a_fifth_byte_that_overflows_u32() {
+        let mut pos = 0;
+
+        assert_eq!(
+            read_varint(&[0x80, 0x80, 0x80, 0x80, 0x10], &mut pos),
+            Err(TileError::BadVarint)
+        );
+    }
+
+    #[test]
+    fn rejects_a_varint_longer_than_five_bytes() {
+        let mut pos = 0;
+
+        assert_eq!(read_varint(&[0x80; 5], &mut pos), Err(TileError::BadVarint));
+    }
+}

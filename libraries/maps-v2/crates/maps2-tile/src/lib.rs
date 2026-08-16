@@ -110,7 +110,11 @@ pub type BuildingView = BuildingData;
 impl BuildingData {
     #[must_use]
     pub const fn flat(base_height_dm: u16, top_height_dm: u16) -> Self {
-        Self { base_height_dm, top_height_dm, roof: RoofType::Flat }
+        Self {
+            base_height_dm,
+            top_height_dm,
+            roof: RoofType::Flat,
+        }
     }
 }
 
@@ -140,15 +144,32 @@ impl FeatureDraft {
     /// A nameless, rankless geometry feature.
     #[must_use]
     pub fn geometry(id: u64, flags: FeatureFlags, vertices: Vec<TileCoord>) -> Self {
-        Self { id, flags, rank: 0, name: String::new(), vertices, holes: Vec::new() }
+        Self {
+            id,
+            flags,
+            rank: 0,
+            name: String::new(),
+            vertices,
+            holes: Vec::new(),
+        }
     }
 
     /// A polygon whose interior rings are excluded from its fill.
     #[must_use]
     pub fn polygon_with_holes(
-        id: u64, flags: FeatureFlags, vertices: Vec<TileCoord>, holes: Vec<Vec<TileCoord>>,
+        id: u64,
+        flags: FeatureFlags,
+        vertices: Vec<TileCoord>,
+        holes: Vec<Vec<TileCoord>>,
     ) -> Self {
-        Self { id, flags, rank: 0, name: String::new(), vertices, holes }
+        Self {
+            id,
+            flags,
+            rank: 0,
+            name: String::new(),
+            vertices,
+            holes,
+        }
     }
 }
 
@@ -199,7 +220,11 @@ mod tests {
     }
 
     fn build_sample() -> Vec<u8> {
-        let mut builder = TileBuilder::new(TileId { z: 14, x: 8190, y: 5448 });
+        let mut builder = TileBuilder::new(TileId {
+            z: 14,
+            x: 8190,
+            y: 5448,
+        });
         builder.push(2, water_feature());
         for poi in poi_features() {
             builder.push(9, poi);
@@ -217,8 +242,15 @@ mod tests {
                     flags: f.flags,
                     rank: f.rank,
                     name: f.name.to_string(),
-                    vertices: f.vertices().collect::<Result<Vec<_>, _>>().expect("vertices decode"),
-                    holes: f.holes().map(|hole| hole.and_then(Iterator::collect)).collect::<Result<Vec<_>, _>>().expect("holes decode"),
+                    vertices: f
+                        .vertices()
+                        .collect::<Result<Vec<_>, _>>()
+                        .expect("vertices decode"),
+                    holes: f
+                        .holes()
+                        .map(|hole| hole.and_then(Iterator::collect))
+                        .collect::<Result<Vec<_>, _>>()
+                        .expect("holes decode"),
                 }
             })
             .collect()
@@ -230,10 +262,23 @@ mod tests {
         let tile = TileView::parse(&bytes).expect("parses");
         assert_eq!(
             tile.header(),
-            TileHeader { version: FORMAT_VERSION, id: TileId { z: 14, x: 8190, y: 5448 } },
+            TileHeader {
+                version: FORMAT_VERSION,
+                id: TileId {
+                    z: 14,
+                    x: 8190,
+                    y: 5448
+                }
+            },
         );
-        assert_eq!(collect(tile.section(2).expect("water section")), vec![water_feature()]);
-        assert_eq!(collect(tile.section(9).expect("poi section")), poi_features());
+        assert_eq!(
+            collect(tile.section(2).expect("water section")),
+            vec![water_feature()]
+        );
+        assert_eq!(
+            collect(tile.section(9).expect("poi section")),
+            poi_features()
+        );
         assert_eq!(tile.section(1), None);
     }
 
@@ -243,7 +288,11 @@ mod tests {
         let feature = FeatureDraft::geometry(
             1,
             0,
-            vec![TileCoord(0, 65535), TileCoord(65535, 0), TileCoord(0, 65535)],
+            vec![
+                TileCoord(0, 65535),
+                TileCoord(65535, 0),
+                TileCoord(0, 65535),
+            ],
         );
         let mut builder = TileBuilder::new(TileId { z: 0, x: 0, y: 0 });
         builder.push(0, feature.clone());
@@ -257,16 +306,39 @@ mod tests {
         let feature = FeatureDraft::polygon_with_holes(
             9,
             0,
-            vec![TileCoord(0, 0), TileCoord(10, 0), TileCoord(10, 10), TileCoord(0, 0)],
-            vec![vec![TileCoord(2, 2), TileCoord(8, 2), TileCoord(8, 8), TileCoord(2, 2)]],
+            vec![
+                TileCoord(0, 0),
+                TileCoord(10, 0),
+                TileCoord(10, 10),
+                TileCoord(0, 0),
+            ],
+            vec![vec![
+                TileCoord(2, 2),
+                TileCoord(8, 2),
+                TileCoord(8, 8),
+                TileCoord(2, 2),
+            ]],
         );
         let mut builder = TileBuilder::new(TileId { z: 12, x: 1, y: 2 });
         builder.push(1, feature);
         let bytes = builder.build().expect("tile");
         let tile = TileView::parse(&bytes).expect("view");
-        let feature = tile.section(1).expect("section").features().next().expect("feature").expect("valid");
+        let feature = tile
+            .section(1)
+            .expect("section")
+            .features()
+            .next()
+            .expect("feature")
+            .expect("valid");
 
-        assert_eq!(feature.holes().collect::<Result<Vec<_>, _>>().expect("holes").len(), 1);
+        assert_eq!(
+            feature
+                .holes()
+                .collect::<Result<Vec<_>, _>>()
+                .expect("holes")
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -278,7 +350,16 @@ mod tests {
         let bytes = builder.build().expect("tile");
         let tile = TileView::parse(&bytes).expect("view");
 
-        assert_eq!(tile.section(1).expect("section").features().next().expect("feature").expect("valid").id, id);
+        assert_eq!(
+            tile.section(1)
+                .expect("section")
+                .features()
+                .next()
+                .expect("feature")
+                .expect("valid")
+                .id,
+            id
+        );
     }
 
     #[test]
@@ -293,7 +374,10 @@ mod tests {
             *b = 0xFF;
         }
         let tile = TileView::parse(&bytes).expect("still parses");
-        assert_eq!(collect(tile.section(2).expect("water section")), vec![water_feature()]);
+        assert_eq!(
+            collect(tile.section(2).expect("water section")),
+            vec![water_feature()]
+        );
     }
 
     #[test]
@@ -305,7 +389,10 @@ mod tests {
 
         let mut bad_version = build_sample();
         bad_version[4] = 99;
-        assert_eq!(TileView::parse(&bad_version), Err(TileError::UnsupportedVersion(99)));
+        assert_eq!(
+            TileView::parse(&bad_version),
+            Err(TileError::UnsupportedVersion(99))
+        );
 
         // Cut the buffer inside the payload: parse succeeds (header is
         // intact), the damaged section errors on access, iteration of
@@ -313,17 +400,12 @@ mod tests {
         let full = build_sample();
         let cut = &full[..full.len() - 3];
         let tile = TileView::parse(cut).expect("header intact");
-        let last = tile.section(9);
-        match last {
-            None => {}
-            Some(section) => {
-                let outcome: Result<Vec<_>, _> = section
-                    .features()
-                    .map(|f| f.and_then(|f| f.vertices().collect::<Result<Vec<_>, _>>()))
-                    .collect();
-                assert!(outcome.is_err(), "truncated section must error");
-            }
-        }
+        let section = tile.section(9).expect("section table remains intact");
+        let outcome: Result<Vec<_>, _> = section
+            .features()
+            .map(|f| f.and_then(|f| f.vertices().collect::<Result<Vec<_>, _>>()))
+            .collect();
+        assert!(outcome.is_err(), "truncated section must error");
     }
 
     #[test]
@@ -341,7 +423,11 @@ mod tests {
 
     #[test]
     fn a_building_carries_its_base_top_and_roof_through_the_tile() {
-        let mut builder = TileBuilder::new(TileId { z: 16, x: 32744, y: 21792 });
+        let mut builder = TileBuilder::new(TileId {
+            z: 16,
+            x: 32744,
+            y: 21792,
+        });
         builder.push_building(
             3,
             FeatureDraft::geometry(
@@ -388,5 +474,32 @@ mod tests {
             .map(|f| f.and_then(|f| f.vertices().collect::<Result<Vec<_>, _>>()))
             .collect();
         assert!(outcome.is_err());
+    }
+
+    #[test]
+    fn every_declared_roof_form_round_trips() {
+        for roof in [RoofType::Gabled, RoofType::Hipped, RoofType::Other] {
+            let mut builder = TileBuilder::new(TileId { z: 16, x: 1, y: 2 });
+            builder.push_building(
+                3,
+                FeatureDraft::geometry(17, 0, vec![TileCoord(10, 10)]),
+                BuildingDraft {
+                    base_height_dm: 10,
+                    top_height_dm: 20,
+                    roof,
+                },
+            );
+            let bytes = builder.build().expect("building tile");
+            let feature = TileView::parse(&bytes)
+                .expect("parses")
+                .section(3)
+                .expect("section")
+                .features()
+                .next()
+                .expect("feature")
+                .expect("valid");
+
+            assert_eq!(feature.building.map(|building| building.roof), Some(roof));
+        }
     }
 }

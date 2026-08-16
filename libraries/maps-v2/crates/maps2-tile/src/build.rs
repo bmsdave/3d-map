@@ -22,7 +22,10 @@ pub struct TileBuilder {
 impl TileBuilder {
     #[must_use]
     pub fn new(id: TileId) -> Self {
-        Self { id, sections: Vec::new() }
+        Self {
+            id,
+            sections: Vec::new(),
+        }
     }
 
     /// Append a feature to the section of `class`, creating the section
@@ -32,12 +35,25 @@ impl TileBuilder {
     }
 
     /// Appends a building footprint with its vertical extent.
-    pub fn push_building(&mut self, class: ClassCode, feature: FeatureDraft, building: BuildingDraft) {
+    pub fn push_building(
+        &mut self,
+        class: ClassCode,
+        feature: FeatureDraft,
+        building: BuildingDraft,
+    ) {
         self.push_feature(class, feature, Some(building));
     }
 
-    fn push_feature(&mut self, class: ClassCode, feature: FeatureDraft, building: Option<BuildingDraft>) {
-        debug_assert!(!feature.vertices.is_empty(), "a feature needs at least one vertex");
+    fn push_feature(
+        &mut self,
+        class: ClassCode,
+        feature: FeatureDraft,
+        building: Option<BuildingDraft>,
+    ) {
+        debug_assert!(
+            !feature.vertices.is_empty(),
+            "a feature needs at least one vertex"
+        );
         debug_assert!(class < RASTER_CLASS_BASE, "raster classes take push_raster");
         if let Some((_, SectionDraft::Vector(features))) =
             self.sections.iter_mut().find(|(c, _)| *c == class)
@@ -45,7 +61,8 @@ impl TileBuilder {
             features.push((feature, building));
             return;
         }
-        self.sections.push((class, SectionDraft::Vector(vec![(feature, building)])));
+        self.sections
+            .push((class, SectionDraft::Vector(vec![(feature, building)])));
     }
 
     /// Set the opaque payload of a raster section (heights and future
@@ -104,7 +121,9 @@ fn header_and_table(
     Ok(out)
 }
 
-fn encode_section(features: &[(FeatureDraft, Option<BuildingDraft>)]) -> Result<Vec<u8>, TileError> {
+fn encode_section(
+    features: &[(FeatureDraft, Option<BuildingDraft>)],
+) -> Result<Vec<u8>, TileError> {
     let mut out = Vec::new();
     out.extend_from_slice(&checked_u16(features.len())?.to_le_bytes());
     for (feature, building) in features {
@@ -134,7 +153,11 @@ fn encode_feature(
     Ok(())
 }
 
-fn encode_geometry(out: &mut Vec<u8>, vertices: &[maps2_units::TileCoord], first: maps2_units::TileCoord) -> Result<(), TileError> {
+fn encode_geometry(
+    out: &mut Vec<u8>,
+    vertices: &[maps2_units::TileCoord],
+    first: maps2_units::TileCoord,
+) -> Result<(), TileError> {
     out.extend_from_slice(&checked_u16(vertices.len())?.to_le_bytes());
     out.extend_from_slice(&first.0.to_le_bytes());
     out.extend_from_slice(&first.1.to_le_bytes());
@@ -176,9 +199,24 @@ mod tests {
     fn build_rejects_a_section_with_more_than_u16_max_features() {
         let mut builder = TileBuilder::new(TileId { z: 0, x: 0, y: 0 });
         for id in 0..=u16::MAX {
-            builder.push(1, FeatureDraft::geometry(u64::from(id), 0, vec![TileCoord(0, 0)]));
+            builder.push(
+                1,
+                FeatureDraft::geometry(u64::from(id), 0, vec![TileCoord(0, 0)]),
+            );
         }
 
         assert_eq!(builder.build(), Err(TileError::TooLarge));
+    }
+
+    #[test]
+    fn build_rejects_a_building_that_does_not_rise_above_its_base() {
+        let mut builder = TileBuilder::new(TileId { z: 0, x: 0, y: 0 });
+        builder.push_building(
+            1,
+            FeatureDraft::geometry(1, 0, vec![TileCoord(0, 0)]),
+            BuildingDraft::flat(100, 100),
+        );
+
+        assert_eq!(builder.build(), Err(TileError::BadBuilding));
     }
 }

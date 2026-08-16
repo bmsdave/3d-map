@@ -2,7 +2,7 @@
 
 > A deterministic Rust/Wasm 3D map renderer with a browser laboratory.
 
-**Status:** `v0.1.0-alpha` · synthetic fixtures only · MIT
+**Status:** `v0.1.0-alpha` · deterministic fixtures and local open-data pipeline · MIT
 
 This repository is an SDK/demo alpha, not a production map of London or the
 world. It focuses on a small, inspectable rendering core: versioned binary
