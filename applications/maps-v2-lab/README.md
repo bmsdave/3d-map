@@ -51,5 +51,6 @@ MAPS2_REAL_PACKAGE_ROOT=/path/to/london-z12 npm run test:e2e -- e2e/package-load
 ```
 
 The test serves the package only to the browser test process. It verifies
-demand loading, source attribution, rendered terrain tiles, and tilt; it does
-not turn the lab or this alpha into a hosted real-world map.
+demand loading, source attribution, rendered terrain tiles, tilt, and a p95
+frame time of 10 ms or less; it does not turn the lab or this alpha into a
+hosted real-world map.

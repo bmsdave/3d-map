@@ -114,6 +114,7 @@ struct LabelState {
     specimen: Option<String>,
     placement: Placement,
     candidates: usize,
+    placement_dirty: bool,
 }
 
 impl Default for LabelState {
@@ -125,6 +126,7 @@ impl Default for LabelState {
             specimen: None,
             placement: Placement::default(),
             candidates: 0,
+            placement_dirty: true,
         }
     }
 }
@@ -268,6 +270,7 @@ impl Map {
     /// is screen area, not feature count.
     pub fn set_label_budget(&mut self, budget: f64) {
         self.labels.budget = (budget as f32).clamp(0.0, 1.0);
+        self.labels.placement_dirty = true;
     }
 
     /// Halo width in em.
@@ -358,6 +361,7 @@ impl Map {
         self.buildings.insert(id, buildings);
         self.lines.insert(id, roads);
         self.names.insert(id, names);
+        self.labels.placement_dirty = true;
         self.tiles.insert(id, bytes.to_vec());
         if let Some(raster) = view.raster(CLASS_HEIGHTS) {
             HeightsRaster::parse(raster).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
@@ -374,6 +378,7 @@ impl Map {
         self.lines.remove(&id);
         self.buildings.remove(&id);
         self.names.remove(&id);
+        self.labels.placement_dirty = true;
         self.heights.remove(&id);
         if let Some(bucket) = self.gpu.remove(&id) { bucket.delete(&self.gl); }
         if let Some(bucket) = self.gpu_lines.remove(&id) { bucket.delete(&self.gl); }
@@ -643,7 +648,9 @@ impl Map {
     /// The one place a patch reaches the camera: refusal keeps every
     /// field as it was and travels out as a JS error.
     fn steer(&mut self, patch: &CameraPatch) -> Result<(), JsValue> {
-        self.camera.apply(patch).map_err(|e| JsValue::from_str(&format!("{e:?}")))
+        self.camera.apply(patch).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
+        self.labels.placement_dirty = true;
+        Ok(())
     }
 
     fn active_level(&self) -> u8 {
@@ -977,20 +984,22 @@ impl Map {
             self.draw_specimen(&text, viewport);
             return;
         }
-        let buckets: Vec<(TileId, &LabelBucket)> = drawn
-            .iter()
-            .filter_map(|id| self.names.get(id).map(|b| (*id, b)))
-            .collect();
-        self.labels.candidates =
-            frame_candidates(&buckets, &self.camera, self.viewport, &self.atlas).len();
-        self.labels.placement = place_frame(
-            &buckets,
-            &self.camera,
-            self.viewport,
-            &self.atlas,
-            self.labels.budget,
-        );
-        drop(buckets);
+        if self.labels.placement_dirty {
+            let buckets: Vec<(TileId, &LabelBucket)> = drawn
+                .iter()
+                .filter_map(|id| self.names.get(id).map(|b| (*id, b)))
+                .collect();
+            self.labels.candidates =
+                frame_candidates(&buckets, &self.camera, self.viewport, &self.atlas).len();
+            self.labels.placement = place_frame(
+                &buckets,
+                &self.camera,
+                self.viewport,
+                &self.atlas,
+                self.labels.budget,
+            );
+            self.labels.placement_dirty = false;
+        }
         self.draw_collision_boxes(viewport);
         for class in LABEL_DRAW_CLASSES {
             let alpha = self.current_alpha(class);

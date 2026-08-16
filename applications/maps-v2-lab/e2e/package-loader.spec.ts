@@ -249,8 +249,10 @@ test("real London package: terrain, attribution, and tilt survive demand loading
   await page.getByTestId("package-tilt-slider").fill("45");
   const after = await stage.locator("canvas").screenshot();
   const state = await page.evaluate(() => window.maps2?.debug());
+  const p95Ms = await page.evaluate(() => window.maps2?.measureFrames(30) ?? Number.POSITIVE_INFINITY);
 
   expect(after).not.toBe(before);
   expect(state?.tiles_drawn).toBeGreaterThan(0);
   expect(state?.height_tiles).toBeGreaterThan(0);
+  expect(p95Ms).toBeLessThanOrEqual(10);
 });
