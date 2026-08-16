@@ -34,8 +34,9 @@ The command verifies the pinned input before two-pass way/node resolution,
 then writes deterministic `z/x/y.mt2` files. The output directory is ignored
 by Git. Cross-tile geometry is clipped before encoding. Each build writes
 `manifest.json` beside the tiles with MT2 version, source URL/date/hash,
-licence, attribution, levels, feature/tile counts, a SHA-256 value for every
-tile, and an aggregate package SHA-256. Hashes let an independent build
+licence, attribution, declared bounds, adapter version, levels, feature/tile
+counts, a SHA-256 value for every tile, and an aggregate package SHA-256.
+Hashes let an independent build
 compare exact package contents without committing derived data.
 
 Validate a completed package before handing it to a browser host or release

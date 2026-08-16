@@ -250,6 +250,8 @@ fn manifest_json(
             "source_date": descriptor.source_date,
             "licence": descriptor.licence,
             "attribution": descriptor.attribution,
+            "bounds": descriptor.bounds,
+            "adapter_version": descriptor.adapter_version,
         })).collect::<Vec<_>>(),
     }))
     .map_err(|error| format!("cannot serialize manifest: {error}"))
@@ -461,7 +463,9 @@ url = "https://example.test/london.osm.pbf"
 sha256 = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 source_date = "2026-08-14"
 licence = "ODbL-1.0"
-attribution = "© OpenStreetMap contributors""#,
+attribution = "© OpenStreetMap contributors"
+bounds = [-0.6, 51.2, 0.4, 51.8]
+adapter_version = "osm-v1""#,
         )
         .expect("descriptor");
 
@@ -479,6 +483,8 @@ attribution = "© OpenStreetMap contributors""#,
         assert_eq!(value["tiles"], serde_json::json!(["16/32736/21791.mt2", "16/32737/21791.mt2"]));
         assert_eq!(value["levels"], serde_json::json!([16]));
         assert_eq!(value["view"]["zoom"], 16);
+        assert_eq!(value["sources"][0]["bounds"], serde_json::json!([-0.6, 51.2, 0.4, 51.8]));
+        assert_eq!(value["sources"][0]["adapter_version"], "osm-v1");
         assert_eq!(value["tile_digests"].as_object().expect("tile digests").len(), 2);
         assert_eq!(value["package_sha256"].as_str().expect("package hash").len(), 64);
 

@@ -92,7 +92,7 @@ pub enum SourceKind {
 }
 
 /// A reproducibly pinned source and its public legal metadata.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SourceDescriptor {
     /// The source input and expected checksum.
     pub source: Source,
@@ -106,6 +106,10 @@ pub struct SourceDescriptor {
     pub licence: String,
     /// Attribution that downstream hosts must display.
     pub attribution: String,
+    /// Source extent as west, south, east, north longitude/latitude degrees.
+    pub bounds: [f64; 4],
+    /// Version of the reader/normalizer contract for this input.
+    pub adapter_version: String,
 }
 
 /// The source descriptor could not be read safely.
@@ -117,6 +121,8 @@ pub enum DescriptorError {
     InvalidSource(SourceError),
     /// The source URL is not an HTTPS URL.
     InsecureUrl,
+    /// The declared source extent is malformed.
+    InvalidBounds,
 }
 
 impl fmt::Display for DescriptorError {
@@ -125,6 +131,7 @@ impl fmt::Display for DescriptorError {
             Self::Parse(error) => write!(f, "invalid source descriptor: {error}"),
             Self::InvalidSource(error) => error.fmt(f),
             Self::InsecureUrl => f.write_str("source URL must use HTTPS"),
+            Self::InvalidBounds => f.write_str("source bounds must be finite west,south,east,north"),
         }
     }
 }
@@ -145,6 +152,8 @@ struct DescriptorSource {
     source_date: String,
     licence: String,
     attribution: String,
+    bounds: [f64; 4],
+    adapter_version: String,
 }
 
 /// Parses an immutable, attributed source descriptor.
@@ -159,6 +168,9 @@ pub fn read_descriptor(toml_text: &str) -> Result<SourceDescriptor, DescriptorEr
     if !source.url.starts_with("https://") {
         return Err(DescriptorError::InsecureUrl);
     }
+    if !valid_bounds(source.bounds) {
+        return Err(DescriptorError::InvalidBounds);
+    }
     let source_input = Source::new(source.name, source.sha256).map_err(DescriptorError::InvalidSource)?;
     Ok(SourceDescriptor {
         source: source_input,
@@ -167,7 +179,16 @@ pub fn read_descriptor(toml_text: &str) -> Result<SourceDescriptor, DescriptorEr
         source_date: source.source_date,
         licence: source.licence,
         attribution: source.attribution,
+        bounds: source.bounds,
+        adapter_version: source.adapter_version,
     })
+}
+
+fn valid_bounds([west, south, east, north]: [f64; 4]) -> bool {
+    west.is_finite() && south.is_finite() && east.is_finite() && north.is_finite()
+        && west < east && south < north && (-180.0..=180.0).contains(&west)
+        && (-180.0..=180.0).contains(&east) && (-90.0..=90.0).contains(&south)
+        && (-90.0..=90.0).contains(&north)
 }
 
 /// Checks bytes against their descriptor before ingesting them.
@@ -1351,6 +1372,21 @@ mod tests {
     }
 
     #[test]
+    fn source_descriptor_requires_bounds_and_adapter_version() {
+        let descriptor = r#"
+[source]
+name = "london.osm.pbf"
+kind = "osm-pbf"
+url = "https://example.test/london.osm.pbf"
+sha256 = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+source_date = "2026-08-14"
+licence = "ODbL-1.0"
+attribution = "© OpenStreetMap contributors""#;
+
+        assert!(read_descriptor(descriptor).is_err());
+    }
+
+    #[test]
     fn building_height_prefers_a_valid_height_tag_then_levels_then_default() {
         assert_eq!(building_height_m(&[("height", "42 m")]), BuildingHeight::Explicit(42.0));
         assert_eq!(building_height_m(&[("building:levels", "8")]), BuildingHeight::Levels(24.0));
@@ -1500,7 +1536,9 @@ url = "https://example.test/london.osm.pbf"
 sha256 = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 source_date = "2026-08-14"
 licence = "ODbL-1.0"
-attribution = "© OpenStreetMap contributors""#,
+attribution = "© OpenStreetMap contributors"
+bounds = [-0.6, 51.2, 0.4, 51.8]
+adapter_version = "osm-v1""#,
         )
         .expect("valid descriptor");
 

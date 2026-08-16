@@ -6,3 +6,5 @@ sha256 = "4256631d48cc50719013c7f3acc503a1add8700818748f6dc9505da564e9b1e0"
 source_date = "2026-08-14"
 licence = "ODbL-1.0"
 attribution = "© OpenStreetMap contributors"
+bounds = [-0.510375, 51.286760, 0.334015, 51.691874]
+adapter_version = "osm-v1"

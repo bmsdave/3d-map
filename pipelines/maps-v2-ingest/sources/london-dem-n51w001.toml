@@ -6,3 +6,5 @@ sha256 = "bdd0e7522e84cb434450d6f6f5b7c1889eefb0f8c28abaeddbaad77048c3961e"
 source_date = "2022-05-09"
 licence = "Copernicus WorldDEM-30 GLO-30 Public licence"
 attribution = "© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved"
+bounds = [-1.0, 51.0, 0.0, 52.0]
+adapter_version = "copernicus-dem-v1"
