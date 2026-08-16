@@ -139,3 +139,15 @@ test("package loader: panning refreshes visible package coverage", async ({ page
 
   await expect.poll(async () => Number(await stage.getAttribute("data-unavailable"))).toBeGreaterThan(0);
 });
+
+test("package loader: unloading a tile makes it demand-loadable", async ({ page }) => {
+  await page.goto("/#/card/package-loader");
+  await expect(page.getByTestId("stage")).toHaveAttribute("data-state", "ready");
+  const missing = await page.evaluate(() => {
+    const map = window.maps2 as typeof window.maps2 & { unloadTile(z: number, x: number, y: number): void };
+    map!.unloadTile(12, 2044, 1361);
+    return map!.missingTiles();
+  });
+
+  expect(missing).toContain("12/2044/1361.mt2");
+});

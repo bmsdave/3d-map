@@ -347,6 +347,21 @@ impl Map {
         Ok(())
     }
 
+    /// Remove every CPU and GPU representation of one host-managed tile.
+    pub fn unload_tile(&mut self, z: u8, x: u32, y: u32) {
+        let id = TileId { z, x, y };
+        self.tiles.remove(&id);
+        self.cpu.remove(&id);
+        self.lines.remove(&id);
+        self.buildings.remove(&id);
+        self.names.remove(&id);
+        self.heights.remove(&id);
+        if let Some(bucket) = self.gpu.remove(&id) { bucket.delete(&self.gl); }
+        if let Some(bucket) = self.gpu_lines.remove(&id) { bucket.delete(&self.gl); }
+        if let Some(bucket) = self.gpu_buildings.remove(&id) { bucket.delete(&self.gl); }
+        if let Some(texture) = self.height_textures.remove(&id) { texture.delete(&self.gl); }
+    }
+
     /// Replaces the fixture pyramid with the levels declared by a package.
     /// The host must set this before asking for tiles from a real package.
     pub fn set_source_levels(&mut self, levels: Vec<u8>) -> Result<(), JsValue> {

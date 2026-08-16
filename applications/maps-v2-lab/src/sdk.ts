@@ -71,6 +71,7 @@ export interface MapHandle {
   setSourceLevels(levels: number[]): void;
   missingTiles(): string[];
   loadTile(bytes: Uint8Array): void;
+  unloadTile(z: number, x: number, y: number): void;
   setCentre(lon: number, lat: number): void;
   setBandOverride(band: string | null): void;
   setTransitionAnimated(animated: boolean): void;
@@ -251,6 +252,7 @@ let nextCanvasId = 0;
 interface PackageMapApi {
   set_source_levels(levels: Uint8Array): void;
   missing_tiles(): string;
+  unload_tile(z: number, x: number, y: number): void;
 }
 
 function packageMapApi(map: InstanceType<typeof SdkMap>): PackageMapApi {
@@ -281,6 +283,7 @@ export async function createMap(canvas: HTMLCanvasElement, pack: string | null):
     setSourceLevels: (levels) => packageApi.set_source_levels(new Uint8Array(levels)),
     missingTiles: () => JSON.parse(packageApi.missing_tiles()) as string[],
     loadTile: (bytes) => map.load_tile(bytes),
+    unloadTile: (z, x, y) => packageApi.unload_tile(z, x, y),
     setCentre: (lon, lat) => map.set_centre(lon, lat),
     setBandOverride: (band) => map.set_band_override(band ?? undefined),
     setTransitionAnimated: (animated) => map.set_transition_animated(animated),
