@@ -58,8 +58,9 @@ cd libraries/maps-v2
 cargo run --release -p maps2-ingest -- build-terrain-range ../../pipelines/maps-v2-ingest/sources/london.toml /path/to/greater-london-260814.osm.pbf 12 16 ../../pipelines/maps-v2-ingest/packages/london-z12-z16 ../../pipelines/maps-v2-ingest/sources/london-dem-n51w001.toml /path/to/Copernicus_DSM_COG_10_N51_00_W001_00_DEM.tif -1 51 ../../pipelines/maps-v2-ingest/sources/london-dem-n51e000.toml /path/to/Copernicus_DSM_COG_10_N51_00_E000_00_DEM.tif 0 51
 ```
 
-This range contains unsimplified source geometry at every level. It establishes
-the package-loader path, not production-quality cartographic generalisation.
+This range applies deterministic Douglas–Peucker simplification to roads while
+leaving area geometry unsimplified. It establishes the package-loader path,
+not production-quality cartographic generalisation.
 Classes below their style entry zoom are omitted (for example, buildings do not
 enter before z16), which keeps low-zoom packages aligned with the renderer's
 composition policy.

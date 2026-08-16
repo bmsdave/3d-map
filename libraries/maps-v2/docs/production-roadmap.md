@@ -41,11 +41,11 @@ The CLI can also write an inclusive z12–z16 package range while processing one
 level at a time. Ingest omits classes below their established style entry zoom:
 a z12 local acceptance build emits 161,638 feature parts in 70 terrain-bearing
 tiles (17 MB), rather than buildings and address-level detail that cannot be
-rendered at z12. Conservative line simplification then reduces nearly
-collinear road vertices: a current local v4 z12 rebuild emits 159,638 parts in
-70 terrain-bearing tiles and verifies its aggregate and per-tile hashes.
-Area geometry and larger road turns remain unsimplified, so this is not yet
-production-quality cartographic generalisation.
+rendered at z12. Deterministic Douglas–Peucker simplification reduces road
+geometry while retaining each segment's farthest deviation: a current local v4
+z12 rebuild emits 159,638 parts in 70 terrain-bearing tiles and verifies its
+aggregate and per-tile hashes. Area geometry remains unsimplified, so this is
+not yet production-quality cartographic generalisation.
 
 Named OSM places now carry deterministic settlement ranks: cities, towns,
 villages/suburbs, then local places. Low zooms admit only the appropriate rank,

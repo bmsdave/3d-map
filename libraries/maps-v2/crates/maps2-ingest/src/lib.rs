@@ -975,15 +975,36 @@ fn simplify_road(points: Vec<GridPoint>, class: Class, level: u8) -> Vec<GridPoi
         return points;
     }
     let tolerance = generalisation_tolerance(level);
-    let mut simplified = vec![points[0]];
-    for index in 1..points.len() - 1 {
-        let previous = *simplified.last().expect("first point remains");
-        if point_distance(points[index], previous, points[index + 1]) > tolerance {
-            simplified.push(points[index]);
+    let mut keep = vec![false; points.len()];
+    keep[0] = true;
+    keep[points.len() - 1] = true;
+    keep_significant_points(&points, 0, points.len() - 1, tolerance, &mut keep);
+    points
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, point)| keep[index].then_some(point))
+        .collect()
+}
+
+fn keep_significant_points(
+    points: &[GridPoint], start: usize, end: usize, tolerance: f64, keep: &mut [bool],
+) {
+    let mut farthest: Option<(usize, f64)> = None;
+    for index in start + 1..end {
+        let distance = point_distance(points[index], points[start], points[end]);
+        if farthest.is_none_or(|(_, best)| distance > best) {
+            farthest = Some((index, distance));
         }
     }
-    simplified.push(*points.last().expect("nonempty road"));
-    simplified
+    let Some((index, distance)) = farthest else {
+        return;
+    };
+    if distance <= tolerance {
+        return;
+    }
+    keep[index] = true;
+    keep_significant_points(points, start, index, tolerance, keep);
+    keep_significant_points(points, index, end, tolerance, keep);
 }
 
 fn generalisation_tolerance(level: u8) -> f64 {
@@ -1354,6 +1375,22 @@ mod tests {
 
         assert_eq!(features.len(), 1);
         assert_eq!(features[0].feature.vertices.len(), 2);
+    }
+
+    #[test]
+    fn low_zoom_roads_keep_the_farthest_point_of_a_broad_turn() {
+        let tolerance = generalisation_tolerance(12);
+        let points = vec![
+            GridPoint { x: 0.0, y: 0.0 },
+            GridPoint { x: 0.2, y: 2.0 * tolerance },
+            GridPoint { x: 0.4, y: 2.0 * tolerance },
+            GridPoint { x: 1.0, y: 0.0 },
+        ];
+
+        let simplified = simplify_road(points, Class::RoadPrimary, 12);
+
+        assert_eq!(simplified.len(), 3);
+        assert!((simplified[1].x - 0.2).abs() < f64::EPSILON);
     }
 
     #[test]
