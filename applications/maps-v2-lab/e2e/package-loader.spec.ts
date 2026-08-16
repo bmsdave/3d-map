@@ -111,3 +111,16 @@ test("package loader: recreates the map after WebGL context loss", async ({ page
   await expect(stage).toHaveAttribute("data-recoveries", "1");
   await expect(stage).toHaveAttribute("data-loaded", /[1-9]\d*/);
 });
+
+test("package loader: tilt control changes the loaded map frame", async ({ page }) => {
+  await page.goto("/#/card/package-loader");
+  const stage = page.getByTestId("stage");
+
+  await expect(stage).toHaveAttribute("data-state", "ready");
+  const flat = await stage.locator("canvas").screenshot();
+  await page.getByTestId("package-tilt-slider").fill("45");
+  await expect(stage).toHaveAttribute("data-tilt", "45.0");
+  const tilted = await stage.locator("canvas").screenshot();
+
+  expect(tilted).not.toBe(flat);
+});

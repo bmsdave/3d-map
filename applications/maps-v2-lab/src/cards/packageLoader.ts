@@ -1,4 +1,4 @@
-import { createMap, createTilePackageLoader } from "../sdk";
+import { createMap, createTilePackageLoader, type MapHandle } from "../sdk";
 import { controlRow, el, readout, section } from "../ui";
 import type { CardSpec } from "./types";
 
@@ -25,12 +25,29 @@ export const packageLoader: CardSpec = {
       "aria-label": "URL manifest пакета",
     });
     const load = el("button", { type: "button" }, ["Загрузить пакет"]);
+    const tilt = el("input", {
+      type: "range",
+      min: "0",
+      max: "60",
+      step: "1",
+      value: "0",
+      "data-testid": "package-tilt-slider",
+      "aria-label": "Наклон карты",
+    });
     const source = section("Источник пакета", el("div", {}, [
       controlRow("Manifest URL", input),
       load,
+      controlRow("Наклон", tilt),
     ]));
     let generation = 0;
     let recoveries = 0;
+    let activeMap: MapHandle | null = null;
+    const applyTilt = () => {
+      if (!activeMap) return;
+      activeMap.setTilt(Number(tilt.value));
+      activeMap.render();
+      stage.setAttribute("data-tilt", activeMap.debug().tilt.toFixed(1));
+    };
     const showError = (error: unknown) => {
       const retry = el("button", { type: "button" }, ["Повторить"]);
       retry.addEventListener("click", () => void loadPackage());
@@ -44,6 +61,7 @@ export const packageLoader: CardSpec = {
       stage.removeAttribute("data-loaded");
       stage.removeAttribute("data-manifest");
       stage.replaceChildren(canvas);
+      activeMap = null;
       try {
         const map = await createMap(canvas, null);
         const loader = await createTilePackageLoader(map, manifestUrl);
@@ -54,6 +72,8 @@ export const packageLoader: CardSpec = {
         const result = await loader.loadVisible();
         if (request !== generation) return;
         const state = map.debug();
+        activeMap = map;
+        applyTilt();
         out.set("package-tiles", String(result.loaded));
         out.set("package-level", String(state.tile_level));
         out.set("package-missing", String(result.unavailable));
@@ -76,6 +96,7 @@ export const packageLoader: CardSpec = {
       manifestUrl = input.value.trim();
       void loadPackage();
     });
+    tilt.addEventListener("input", applyTilt);
     panel.append(source);
     void loadPackage();
   },
