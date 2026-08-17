@@ -15,7 +15,7 @@ use maps2_tile::{
 };
 use maps2_units::{Lonlat, TileCoord, TileId, TilePoint, Zoom, locate, to_lonlat, world_position_px};
 use num_traits::ToPrimitive;
-use osmpbfreader::{NodeId, OsmId, OsmObj, OsmPbfReader, WayId};
+use osmpbfreader::{NodeId, OsmId, OsmObj, OsmPbfReader, Relation, WayId};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tiff::decoder::{Decoder, DecodingResult};
@@ -430,19 +430,25 @@ fn read_classified_relations(path: &Path) -> Result<Vec<RawRelation>, OsmError> 
         Ok(_) => None,
         Err(error) => Some(Err(OsmError::Read(error.to_string()))),
     }).filter_map(|relation| match relation {
-        Ok(relation) => {
-            let tags = owned_tags(&relation.tags);
-            let outer = relation.refs.iter().filter(|member| member.role == "outer" || member.role.is_empty())
-                .filter_map(|member| match member.member { OsmId::Way(id) => Some(id), _ => None }).collect::<Vec<_>>();
-            let inner = relation.refs.iter().filter(|member| member.role == "inner")
-                .filter_map(|member| match member.member { OsmId::Way(id) => Some(id), _ => None }).collect::<Vec<_>>();
-            classify_osm_tags(&tag_refs(&tags)).filter(|_| !outer.is_empty()).map(|_| {
-                u64::try_from(relation.id.0).map(|id| RawRelation { id, tags, outer, inner })
-                    .map_err(|_| OsmError::WayIdOutOfRange(relation.id.0))
-            })
-        }
+        Ok(relation) => classified_relation(&relation),
         Err(error) => Some(Err(error)),
     }).collect()
+}
+
+fn classified_relation(relation: &Relation) -> Option<Result<RawRelation, OsmError>> {
+    let tags = owned_tags(&relation.tags);
+    let outer = relation_ways(relation, |role| role == "outer" || role.is_empty());
+    let inner = relation_ways(relation, |role| role == "inner");
+    classify_osm_tags(&tag_refs(&tags)).filter(|_| !outer.is_empty()).map(|_| {
+        u64::try_from(relation.id.0).map(|id| RawRelation { id, tags, outer, inner })
+            .map_err(|_| OsmError::WayIdOutOfRange(relation.id.0))
+    })
+}
+
+fn relation_ways(relation: &Relation, role_matches: impl Fn(&str) -> bool) -> Vec<WayId> {
+    relation.refs.iter().filter(|member| role_matches(&member.role))
+        .filter_map(|member| match member.member { OsmId::Way(id) => Some(id), _ => None })
+        .collect()
 }
 
 fn read_classified_ways(path: &Path, relations: &[RawRelation]) -> Result<Vec<RawWay>, OsmError> {
@@ -635,11 +641,13 @@ fn tag_refs(tags: &[(String, String)]) -> Vec<(&str, &str)> {
     tags.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect()
 }
 
-/// A north-up, one-degree Copernicus DEM tile.
+/// A north-up DEM raster over geographic bounds.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DemGrid {
     west: f64,
     south: f64,
+    east: f64,
+    north: f64,
     width: u32,
     height: u32,
     samples: Vec<f32>,
@@ -652,6 +660,8 @@ pub enum DemError {
     Empty,
     /// The cell count does not equal width times height.
     SampleCount,
+    /// The geographic bounds are not finite and strictly ordered.
+    Bounds,
     /// The TIFF file could not be read or decoded.
     Read(String),
     /// The TIFF sample type is not an elevation raster this adapter supports.
@@ -663,6 +673,7 @@ impl fmt::Display for DemError {
         match self {
             Self::Empty => f.write_str("DEM grid must have nonzero dimensions"),
             Self::SampleCount => f.write_str("DEM sample count does not match dimensions"),
+            Self::Bounds => f.write_str("DEM bounds must be finite and strictly ordered"),
             Self::Read(error) => write!(f, "cannot read DEM: {error}"),
             Self::SampleType => f.write_str("unsupported DEM sample type"),
         }
@@ -698,7 +709,7 @@ fn dem_samples(image: DecodingResult) -> Result<Vec<f32>, DemError> {
 }
 
 impl DemGrid {
-    /// Creates a grid whose west/south edge identifies a one-degree DEM tile.
+    /// Creates a one-degree grid whose west/south edge identifies its bounds.
     ///
     /// # Errors
     ///
@@ -710,24 +721,38 @@ impl DemGrid {
         height: u32,
         samples: Vec<f32>,
     ) -> Result<Self, DemError> {
+        Self::with_bounds([west, south, west + 1.0, south + 1.0], width, height, samples)
+    }
+
+    /// Creates a grid over the supplied geographic bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DemError`] when bounds are invalid or dimensions cannot
+    /// describe `samples`.
+    pub fn with_bounds(bounds: [f64; 4], width: u32, height: u32, samples: Vec<f32>) -> Result<Self, DemError> {
+        let [west, south, east, north] = bounds;
+        if !valid_dem_bounds(west, south, east, north) {
+            return Err(DemError::Bounds);
+        }
         if width == 0 || height == 0 {
             return Err(DemError::Empty);
         }
         if grid_len(width, height) != Some(samples.len()) {
             return Err(DemError::SampleCount);
         }
-        Ok(Self { west, south, width, height, samples })
+        Ok(Self { west, south, east, north, width, height, samples })
     }
 
     /// Samples the containing north-up raster cell, clamped to this tile.
     #[must_use]
     pub fn sample(&self, lon: f64, lat: f64) -> f32 {
-        let x = cell_index(lon - self.west, self.width);
-        let y = cell_index(self.south + 1.0 - lat, self.height);
+        let x = cell_index(lon - self.west, self.east - self.west, self.width);
+        let y = cell_index(self.north - lat, self.north - self.south, self.height);
         self.samples[y * usize::try_from(self.width).unwrap_or_default() + x]
     }
 
-    /// Whether this one-degree source grid covers every edge of `tile`.
+    /// Whether this source grid covers every edge of `tile`.
     #[must_use]
     pub fn covers_tile(&self, tile: TileId) -> bool {
         let corners = [
@@ -737,8 +762,8 @@ impl DemGrid {
             TileCoord(u16::MAX, u16::MAX),
         ];
         corners.into_iter().map(|coord| to_lonlat(TilePoint { tile, coord })).all(|point| {
-            (self.west..=self.west + 1.0).contains(&point.lon)
-                && (self.south..=self.south + 1.0).contains(&point.lat)
+            (self.west..=self.east).contains(&point.lon)
+                && (self.south..=self.north).contains(&point.lat)
         })
     }
 }
@@ -747,8 +772,12 @@ fn grid_len(width: u32, height: u32) -> Option<usize> {
     usize::try_from(width).ok()?.checked_mul(usize::try_from(height).ok()?)
 }
 
-fn cell_index(offset: f64, cells: u32) -> usize {
-    let ratio = offset.clamp(0.0, 1.0 - f64::EPSILON);
+fn valid_dem_bounds(west: f64, south: f64, east: f64, north: f64) -> bool {
+    [west, south, east, north].into_iter().all(f64::is_finite) && west < east && south < north
+}
+
+fn cell_index(offset: f64, span: f64, cells: u32) -> usize {
+    let ratio = (offset / span).clamp(0.0, 1.0 - f64::EPSILON);
     let index = (ratio * f64::from(cells)).floor().to_u32().unwrap_or_default();
     usize::try_from(index).unwrap_or_default()
 }
@@ -1741,6 +1770,15 @@ adapter_version = "osm-v1""#,
 
         assert!((grid.sample(-0.8, 51.8) - 10.0).abs() < f32::EPSILON);
         assert!((grid.sample(-0.2, 51.2) - 40.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn dem_grid_with_bounds_samples_a_regional_north_up_raster() {
+        let grid = DemGrid::with_bounds([-2.0, 50.0, 2.0, 54.0], 2, 2, vec![10.0, 20.0, 30.0, 40.0])
+            .expect("regional grid");
+
+        assert!((grid.sample(-1.5, 53.5) - 10.0).abs() < f32::EPSILON);
+        assert!((grid.sample(1.5, 50.5) - 40.0).abs() < f32::EPSILON);
     }
 
     #[test]
