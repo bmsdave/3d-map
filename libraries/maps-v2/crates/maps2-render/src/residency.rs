@@ -6,7 +6,7 @@
 use std::{collections::HashSet, hash::BuildHasher};
 
 use maps2_camera::Camera;
-use maps2_units::{world_position_px, TileId};
+use maps2_units::{world_position_px, TileId, Zoom};
 use num_traits::ToPrimitive;
 
 /// One extra ring of tiles kept around the viewport so small pans do
@@ -92,10 +92,23 @@ pub fn normalise_source_levels(mut levels: Vec<u8>) -> Option<Vec<u8>> {
     (!levels.is_empty()).then_some(levels)
 }
 
+/// Below the shallowest source level, `target_level` already keeps the
+/// shallowest level's tiles resident (see its doc comment) — but the
+/// pixel math here has to agree, or it derives tile size from a true
+/// camera zoom far below what any resident tile represents. A world at
+/// zoom 2 has far fewer pixels than a single z12 tile normally spans, so
+/// "one tile's worth of world pixels" shrinks far below the viewport and
+/// the span below enumerates the *entire* z12 grid — millions of tiles,
+/// almost all "missing", every frame. Deep overzoom already stretches
+/// the deepest level to cover a smaller-than-normal span (comment on
+/// `target_level`); this clamp is the same idea the other way — the
+/// shallowest level's own zoom floors the math, so the same handful of
+/// tiles are asked to cover more than their normal span instead.
 fn tile_span(camera: &Camera, level: u8, viewport: (f64, f64)) -> (i64, i64, i64, i64) {
-    let world = camera.zoom().world_pixels();
+    let zoom = Zoom::new(camera.zoom().value().max(f64::from(level)));
+    let world = zoom.world_pixels();
     let tile_px = world / f64::from(1_u32 << level);
-    let (cx, cy) = world_position_px(camera.centre(), camera.zoom());
+    let (cx, cy) = world_position_px(camera.centre(), zoom);
     let x0 = tile_edge(cx - viewport.0 / 2.0, tile_px);
     let x1 = tile_edge(cx + viewport.0 / 2.0, tile_px);
     let y0 = tile_edge(cy - viewport.1 / 2.0, tile_px);
@@ -188,6 +201,24 @@ mod tests {
         assert_eq!(target_level(18.7, &LEVELS), 16);
         assert_eq!(target_level(0.5, &LEVELS), 0);
         assert_eq!(target_level(11.9, &LEVELS), 10);
+    }
+
+    #[test]
+    fn zooming_below_a_packages_shallowest_level_stays_a_handful_of_tiles() {
+        // A real bug, found live against the real London package (whose
+        // source levels start at 12, not 0): pulling the camera back
+        // past zoom 12 made `missing` enumerate the *entire* z12 grid —
+        // 16,777,216 tiles — because tile size was derived from the true
+        // (far shallower) camera zoom while the level stayed pinned at
+        // 12. The browser tab stalled on it every frame.
+        let levels = [12, 13, 14, 15, 16];
+        let plan = plan_residency(&camera(2.0), (800.0, 600.0), &levels, &HashSet::new());
+        assert!(plan.draw.iter().all(|id| id.z == 12));
+        assert!(
+            plan.draw.len() < 200,
+            "expected a viewport's worth of z12 tiles, got {}",
+            plan.draw.len()
+        );
     }
 
     #[test]
