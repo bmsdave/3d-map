@@ -17,8 +17,32 @@ function header(): HTMLElement {
   ]);
 }
 
+// Реальный, копируемый пример — та же последовательность вызовов SDK,
+// что использует каждая карточка ниже (см. src/sdk.ts createMap/loadPackCentre).
+const QUICK_START_SNIPPET = `import { createMap, loadPackCentre } from "./sdk";
+
+const canvas = document.querySelector("canvas")!;
+const centre = await loadPackCentre("ealing"); // synthetic fixture; see "Пакет: загрузка по спросу" for a real package
+const map = await createMap(canvas, "ealing");
+map.setCentre(centre.lon, centre.lat);
+map.setZoom(centre.zoom);
+map.render();`;
+
+function quickStart(): HTMLElement {
+  return el("section", { class: "quick-start", "data-testid": "quick-start" }, [
+    el("h2", {}, ["Quick start"]),
+    el("p", {}, [
+      "Every card below runs this same SDK call shape. Load your own MT2 package instead of a fixture through ",
+      el("a", { href: "#/card/package-loader" }, ["Пакет: загрузка по спросу"]),
+      ".",
+    ]),
+    el("pre", { class: "mono quick-start-code" }, [el("code", {}, [QUICK_START_SNIPPET])]),
+  ]);
+}
+
 function renderIndex(): HTMLElement {
   const main = el("main", { "data-testid": "index" });
+  main.append(quickStart());
   const groups = [...new Set(CARDS.map((card) => card.group))];
   for (const group of groups) {
     main.append(el("div", { class: "section-label" }, [group]));

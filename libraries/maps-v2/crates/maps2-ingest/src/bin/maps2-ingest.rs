@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, env, fs, fs::File, path::{Path, PathBuf}, process::{Command, ExitCode}};
 
 use maps2_ingest::{
-    SourceDescriptor, SourceKind, build_tiles, build_tiles_with_terrains, load_copernicus_dem, read_descriptor,
-    resolve_osm_pbf, scan_osm_pbf, validate_source_reader, OsmSummary,
+    SourceDescriptor, SourceKind, build_tiles, build_tiles_with_terrains, load_copernicus_dem, load_gebco_window,
+    read_descriptor, resolve_osm_pbf, scan_osm_pbf, validate_source, validate_source_reader, OsmSummary,
 };
 use maps2_units::{TileCoord, TileId, TilePoint, to_lonlat};
 use serde::Deserialize;
@@ -47,6 +47,9 @@ fn run(args: &[String]) -> Result<(), String> {
                 output,
             }),
         [command, path, west, south] if command == "dem-info" => dem_info(path, west, south),
+        [command, descriptor, input, west, south, east, north] if command == "gebco-window" => {
+            gebco_window(descriptor, input, west, south, east, north)
+        }
         _ => Err("usage: maps2-ingest scan <osm.pbf>".to_string()),
     }
 }
@@ -429,6 +432,36 @@ fn load_descriptor(path: &str) -> Result<maps2_ingest::SourceDescriptor, String>
     read_descriptor(&toml_text).map_err(|error| error.to_string())
 }
 
+/// Reads only the part of a pinned GEBCO/DEM source that covers the given
+/// window, printing its cost so a caller can see the bounded read actually
+/// stayed bounded.
+fn gebco_window(descriptor: &str, input: &str, west: &str, south: &str, east: &str, north: &str) -> Result<(), String> {
+    let descriptor = load_descriptor(descriptor)?;
+    let bytes = fs::read(input).map_err(|error| format!("cannot read {input}: {error}"))?;
+    validate_source(&descriptor.source, &bytes).map_err(|error| error.to_string())?;
+    let window = [
+        parse_degrees("west", west)?,
+        parse_degrees("south", south)?,
+        parse_degrees("east", east)?,
+        parse_degrees("north", north)?,
+    ];
+    let result = load_gebco_window(input, descriptor.bounds, window).map_err(|error| error.to_string())?;
+    let grid = result.grid();
+    let corner_lon = window[0];
+    let corner_lat = window[1];
+    println!(
+        "{{\"chunks_read\":{},\"chunks_total\":{},\"corner_sample_m\":{}}}",
+        result.chunks_read(),
+        result.chunks_total(),
+        grid.sample(corner_lon, corner_lat)
+    );
+    Ok(())
+}
+
+fn parse_degrees(name: &str, value: &str) -> Result<f64, String> {
+    value.parse::<f64>().map_err(|error| format!("invalid {name} {value}: {error}"))
+}
+
 fn scan(path: &str) -> Result<(), String> {
     let input = File::open(path).map_err(|error| format!("cannot open {path}: {error}"))?;
     let summary = scan_osm_pbf(input).map_err(|error| error.to_string())?;
@@ -445,7 +478,7 @@ fn summary_json(summary: OsmSummary) -> String {
 
 fn print_help() {
     println!(
-        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest verify-package <package-dir>\n  maps2-ingest fetch <source.toml> <output>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest build-terrain-range <osm-source.toml> <osm.pbf> <min-level> <max-level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>"
+        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest verify-package <package-dir>\n  maps2-ingest fetch <source.toml> <output>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest build-terrain-range <osm-source.toml> <osm.pbf> <min-level> <max-level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>\n  maps2-ingest gebco-window <source.toml> <grid.tif> <west> <south> <east> <north>"
     );
 }
 
@@ -475,7 +508,7 @@ adapter_version = "osm-v1""#,
         ];
         let digests = tile_digests(&tiles);
         let manifest = manifest_json(&[&descriptor], &[16], 10, &digests, 0).expect("manifest JSON");
-        assert!(manifest.contains("\"format_version\": 4"));
+        assert!(manifest.contains("\"format_version\": 5"));
         assert!(manifest.contains("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"));
         assert!(manifest.contains("© OpenStreetMap contributors"));
 

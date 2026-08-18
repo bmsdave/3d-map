@@ -178,6 +178,7 @@ fn encode_building(out: &mut Vec<u8>, building: Option<BuildingDraft>) -> Result
     out.extend_from_slice(&building.base_height_dm.to_le_bytes());
     out.extend_from_slice(&building.top_height_dm.to_le_bytes());
     out.push(building.roof as u8);
+    out.push(building.material as u8);
     Ok(())
 }
 

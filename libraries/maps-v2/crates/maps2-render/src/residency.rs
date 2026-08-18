@@ -13,6 +13,43 @@ use num_traits::ToPrimitive;
 /// not immediately evict and refetch the same neighbours.
 const KEEP_MARGIN_TILES: i64 = 1;
 
+/// Below this camera zoom, buildings draw as a bare footprint (no walls or
+/// roof shape). Buildings enter tiles at `Band::Micro` (z16), so this is the
+/// "just arrived" end of that band.
+const BUILDING_LOD_SIMPLIFIED_ZOOM: f64 = 17.0;
+
+/// At or above this camera zoom, buildings draw full walls and a shaped
+/// roof (gabled/hipped geometry, not just a flat cap).
+const BUILDING_LOD_FULL_ZOOM: f64 = 19.0;
+
+/// Building mesh detail. Every resident tile at a given frame shares one
+/// target zoom level (see [`target_level`]), so there is no per-building
+/// camera distance to key off within a frame; camera zoom itself is the
+/// distance proxy instead, exactly as [`target_level`] already uses it to
+/// pick which tile pyramid level is "close enough".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuildingLod {
+    /// Bare footprint, no walls or roof — cheapest, for buildings barely
+    /// past their entry zoom.
+    Footprint,
+    /// Walls and a flat cap, no roof shape.
+    Simplified,
+    /// Walls and the roof's real shape (gabled ridge, hipped slopes).
+    Full,
+}
+
+/// Chooses building detail for one frame's camera zoom.
+#[must_use]
+pub fn building_lod(zoom: f64) -> BuildingLod {
+    if zoom >= BUILDING_LOD_FULL_ZOOM {
+        BuildingLod::Full
+    } else if zoom >= BUILDING_LOD_SIMPLIFIED_ZOOM {
+        BuildingLod::Simplified
+    } else {
+        BuildingLod::Footprint
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResidencyPlan {
     /// Wanted on screen this frame, in draw order.
@@ -123,6 +160,16 @@ mod tests {
 
     fn camera(zoom: f64) -> Camera {
         Camera::new(EALING, Zoom::new(zoom))
+    }
+
+    #[test]
+    fn building_lod_steps_down_as_the_camera_pulls_back() {
+        assert_eq!(building_lod(20.0), BuildingLod::Full);
+        assert_eq!(building_lod(19.0), BuildingLod::Full);
+        assert_eq!(building_lod(18.0), BuildingLod::Simplified);
+        assert_eq!(building_lod(17.0), BuildingLod::Simplified);
+        assert_eq!(building_lod(16.0), BuildingLod::Footprint);
+        assert_eq!(building_lod(0.0), BuildingLod::Footprint);
     }
 
     #[test]

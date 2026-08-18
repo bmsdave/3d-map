@@ -38,7 +38,7 @@ are tracked by Git.
 | --- | --- |
 | London topology | Geometry repair and topology-aware area generalisation; fixtures for incomplete/overlapping relations and shared boundaries. |
 | London visual quality | A `roads-real` acceptance surface with intentional goldens for real roads, buildings, labels, water, parks, and terrain. |
-| Global inputs | A checked-in shard inventory for OSM, Copernicus land DEM, and GEBCO bathymetry. Each descriptor must pin version, URL, SHA-256, licence, attribution, bounds, and adapter version. |
+| Global inputs | A checked-in shard inventory for OSM, Copernicus land DEM, and GEBCO bathymetry. Each descriptor must pin version, URL, SHA-256, licence, attribution, bounds, and adapter version. GEBCO now has a bounded-window reader (`maps2-ingest::load_gebco_window`) that decodes only the TIFF chunks a requested region overlaps, capped at `WINDOW_CELL_LIMIT` cells, and one descriptor (`gebco-2025-n90-s0-w-90-e0.toml`) pinning the sub-grid covering London — its SHA-256 is still a placeholder pending an actual download. The OSM/Copernicus half of the inventory and the world-tiling check remain open. |
 | World assembly | Region-sharded low-zoom build, seam/border validation, aggregated source notices, and two clean identical runs across z0–z5. |
 | Data release | Owner approval of source attribution/redistribution review, package signing, hosting, rollback, and support ownership. |
 

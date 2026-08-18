@@ -14,6 +14,7 @@ pub use relief::{
     RELIEF_Z_FACTOR_MAX,
 };
 
+use maps2_tile::MaterialClass;
 use maps2_units::Zoom;
 use num_traits::ToPrimitive;
 
@@ -172,6 +173,24 @@ pub fn fill_color(class: Class) -> [u8; 4] {
     }
 }
 
+/// RGBA, 0–255, for a building facade by its MT2 material class. Style, not
+/// geometry — the tile carries the material code, this function decides what
+/// it looks like, so a palette change never rebuilds a package. `Unknown`
+/// (untagged OSM data, or a tile older than MT2 v5) uses the plain building
+/// fill colour rather than inventing a material.
+#[must_use]
+pub fn facade_colour(material: MaterialClass) -> [u8; 4] {
+    match material {
+        MaterialClass::Unknown => fill_color(Class::Building),
+        MaterialClass::Brick => [0xB6, 0x6A, 0x4F, 0xFF],
+        MaterialClass::Concrete => [0xB8, 0xB6, 0xB0, 0xFF],
+        MaterialClass::Stone => [0xC9, 0xC2, 0xAE, 0xFF],
+        MaterialClass::Glass => [0x9F, 0xC0, 0xCB, 0xFF],
+        MaterialClass::Metal => [0x9A, 0x9E, 0xA3, 0xFF],
+        MaterialClass::Wood => [0x9C, 0x7A, 0x54, 0xFF],
+    }
+}
+
 /// What is behind the world: the space around the globe, and the gap
 /// where no tile has arrived. Deliberately not the land colour — an
 /// empty canvas that reads as ground is a map that lies.
@@ -310,6 +329,24 @@ mod tests {
         assert_eq!(Band::at(Zoom::new(5.0)), Band::Region);
         assert_eq!(Band::at(Zoom::new(14.37)), Band::Address);
         assert_eq!(Band::at(Zoom::new(22.0)), Band::Micro);
+    }
+
+    #[test]
+    fn known_facade_materials_have_distinct_colours_and_unknown_matches_the_building_fill() {
+        let known = [
+            MaterialClass::Brick,
+            MaterialClass::Concrete,
+            MaterialClass::Stone,
+            MaterialClass::Glass,
+            MaterialClass::Metal,
+            MaterialClass::Wood,
+        ];
+        for (i, a) in known.iter().enumerate() {
+            for b in &known[i + 1..] {
+                assert_ne!(facade_colour(*a), facade_colour(*b), "{a:?} vs {b:?}");
+            }
+        }
+        assert_eq!(facade_colour(MaterialClass::Unknown), fill_color(Class::Building));
     }
 
     #[test]

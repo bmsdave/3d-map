@@ -61,6 +61,21 @@ a:hover {
 
 /* ---- index ---- */
 
+.quick-start {
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.quick-start-code {
+  overflow-x: auto;
+  background: var(--stage-bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px 16px;
+  white-space: pre;
+}
+
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
