@@ -2,7 +2,8 @@ use std::{collections::BTreeMap, env, fs, fs::File, path::{Path, PathBuf}, proce
 
 use maps2_ingest::{
     SourceDescriptor, SourceKind, build_tiles, build_tiles_with_terrains, load_copernicus_dem, load_gebco_window,
-    read_descriptor, resolve_osm_pbf, scan_osm_pbf, validate_source, validate_source_reader, OsmSummary,
+    read_descriptor, resolve_osm_pbf, resolve_water_polygons, scan_osm_pbf, validate_source, validate_source_reader,
+    OsmSummary,
 };
 use maps2_units::{TileCoord, TileId, TilePoint, to_lonlat};
 use serde::Deserialize;
@@ -35,6 +36,9 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         [command, args @ ..] if command == "build-terrain-many" => build_terrain_many(args),
         [command, args @ ..] if command == "build-terrain-range" => build_terrain_range(args),
+        [command, descriptor, shapefile, minimum, maximum, output] if command == "build-world" => {
+            build_world(descriptor, shapefile, minimum, maximum, output)
+        }
         [command, osm_descriptor, osm_input, dem_descriptor, dem_input, west, south, level, output]
             if command == "build-terrain" => build_terrain(&TerrainBuildArgs {
                 osm_descriptor,
@@ -182,6 +186,29 @@ fn write_terrain_levels(
     Ok(())
 }
 
+/// Builds a low-zoom world package from the OSM community's pre-simplified
+/// water-polygon shapefile: real global ocean coverage without parsing
+/// planet-scale OSM data, which the low-zoom globe band never needed
+/// vector detail for in the first place — see `world_water` for why.
+fn build_world(descriptor_path: &str, shapefile_path: &str, minimum: &str, maximum: &str, output: &str) -> Result<(), String> {
+    let descriptor = load_kind(descriptor_path, SourceKind::WaterPolygons)?;
+    validate_input(&descriptor, shapefile_path)?;
+    let levels = parse_levels(minimum, maximum)?;
+    let output = Path::new(output);
+    let mut feature_count = 0;
+    let mut digests = Vec::new();
+    for level in &levels {
+        let features = resolve_water_polygons(shapefile_path, *level).map_err(|error| error.to_string())?;
+        let tiles = build_tiles(&features).map_err(|error| format!("cannot encode MT2: {error:?}"))?;
+        feature_count += features.len();
+        digests.extend(tile_digests(&tiles));
+        write_tiles(output, &tiles)?;
+    }
+    write_manifest(output, &[&descriptor], &levels, feature_count, &digests, 0)?;
+    println!("{{\"features\":{feature_count},\"tiles\":{}}}", digests.len());
+    Ok(())
+}
+
 fn load_kind(path: &str, kind: SourceKind) -> Result<SourceDescriptor, String> {
     let descriptor = load_descriptor(path)?;
     (descriptor.kind == kind).then_some(descriptor).ok_or_else(|| format!("{path} has the wrong source kind"))
@@ -325,6 +352,7 @@ const fn source_kind_name(kind: SourceKind) -> &'static str {
         SourceKind::OsmPbf => "osm-pbf",
         SourceKind::CopernicusDem => "copernicus-dem",
         SourceKind::GebcoGrid => "gebco-grid",
+        SourceKind::WaterPolygons => "water-polygons",
     }
 }
 
@@ -478,7 +506,7 @@ fn summary_json(summary: OsmSummary) -> String {
 
 fn print_help() {
     println!(
-        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest verify-package <package-dir>\n  maps2-ingest fetch <source.toml> <output>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest build-terrain-range <osm-source.toml> <osm.pbf> <min-level> <max-level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>\n  maps2-ingest gebco-window <source.toml> <grid.tif> <west> <south> <east> <north>"
+        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest verify-package <package-dir>\n  maps2-ingest fetch <source.toml> <output>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest build-terrain-range <osm-source.toml> <osm.pbf> <min-level> <max-level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>\n  maps2-ingest gebco-window <source.toml> <grid.tif> <west> <south> <east> <north>\n  maps2-ingest build-world <water-source.toml> <water.shp> <min-level> <max-level> <output-dir>"
     );
 }
 

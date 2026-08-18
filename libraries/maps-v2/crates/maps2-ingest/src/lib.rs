@@ -21,8 +21,10 @@ use sha2::{Digest, Sha256};
 use tiff::decoder::{Decoder, DecodingResult};
 
 mod gebco;
+mod world_water;
 
 pub use gebco::{RasterWindow, WINDOW_CELL_LIMIT, load_gebco_window};
+pub use world_water::{WaterPolygonsError, resolve_water_polygons};
 
 /// A named pipeline input pinned to its SHA-256 digest.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,6 +95,9 @@ pub enum SourceKind {
     /// GEBCO global bathymetry raster.
     #[serde(rename = "gebco-grid")]
     GebcoGrid,
+    /// The OSM community's pre-simplified world water-polygon shapefile.
+    #[serde(rename = "water-polygons")]
+    WaterPolygons,
 }
 
 /// A reproducibly pinned source and its public legal metadata.

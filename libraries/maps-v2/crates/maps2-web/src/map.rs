@@ -394,10 +394,27 @@ impl Map {
 
     /// Replaces the fixture pyramid with the levels declared by a package.
     /// The host must set this before asking for tiles from a real package.
+    ///
+    /// A second package on the same map should call [`Self::add_source_levels`]
+    /// instead: this method *replaces* the pyramid, so calling it again for a
+    /// second package would drop the first package's levels — briefly
+    /// mis-planning residency for tiles that are already loaded and resident,
+    /// until one of them happens to reload and `load_tile` re-registers its
+    /// level. A host composing a low-zoom world package with a high-zoom
+    /// regional one (the globe-to-city case) wants the union, not a swap.
     pub fn set_source_levels(&mut self, levels: Vec<u8>) -> Result<(), JsValue> {
         self.source_levels = normalise_source_levels(levels)
             .ok_or_else(|| JsValue::from_str("a package needs at least one source level"))?;
         Ok(())
+    }
+
+    /// Adds a package's levels to the pyramid without disturbing any other
+    /// package already registered. Safe to call for every package a host
+    /// loads onto the same map, in any order.
+    pub fn add_source_levels(&mut self, levels: Vec<u8>) {
+        for level in levels {
+            register_source_level(&mut self.source_levels, level);
+        }
     }
 
     /// Tile paths that cover the viewport but have not reached the host yet.

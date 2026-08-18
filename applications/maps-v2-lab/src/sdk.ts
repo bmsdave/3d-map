@@ -69,6 +69,7 @@ export interface LabelEntry {
 export interface MapHandle {
   setZoom(zoom: number): void;
   setSourceLevels(levels: number[]): void;
+  addSourceLevels(levels: number[]): void;
   missingTiles(): string[];
   evictableTiles(): string[];
   loadTile(bytes: Uint8Array): void;
@@ -237,13 +238,25 @@ async function sha256(bytes: Uint8Array): Promise<string> {
  * package view, then calls `loadVisible` after camera changes. Network policy
  * stays in the host instead of leaking into the render loop.
  */
-export async function createTilePackageLoader(map: MapHandle, manifestUrl: string): Promise<TilePackageLoader> {
+export async function createTilePackageLoader(
+  map: MapHandle,
+  manifestUrl: string,
+  options: { additive?: boolean } = {},
+): Promise<TilePackageLoader> {
   const manifest = await fetchPackageManifest(manifestUrl);
   const base = new URL(manifestUrl, window.location.href);
   const paths = new Map(manifest.tiles.map((path) => [path, new URL(path, base).toString()]));
   const loaded = new Set<string>();
   const inFlight = new Set<string>();
-  map.setSourceLevels(packageLevels(manifest));
+  // A second package composed onto the same map (e.g. a low-zoom world
+  // package under a high-zoom regional one) must add its levels rather
+  // than replace the first package's — see addSourceLevels's doc comment
+  // in maps2-web for why a replace silently mis-plans residency.
+  if (options.additive) {
+    map.addSourceLevels(packageLevels(manifest));
+  } else {
+    map.setSourceLevels(packageLevels(manifest));
+  }
   return {
     manifest,
     async loadVisible(): Promise<PackageLoadResult> {
@@ -295,6 +308,7 @@ let nextCanvasId = 0;
 
 interface PackageMapApi {
   set_source_levels(levels: Uint8Array): void;
+  add_source_levels(levels: Uint8Array): void;
   missing_tiles(): string;
   evictable_tiles(): string;
   unload_tile(z: number, x: number, y: number): void;
@@ -326,6 +340,7 @@ export async function createMap(canvas: HTMLCanvasElement, pack: string | null):
   const handle: MapHandle = {
     setZoom: (zoom) => map.set_zoom(zoom),
     setSourceLevels: (levels) => packageApi.set_source_levels(new Uint8Array(levels)),
+    addSourceLevels: (levels) => packageApi.add_source_levels(new Uint8Array(levels)),
     missingTiles: () => JSON.parse(packageApi.missing_tiles()) as string[],
     evictableTiles: () => JSON.parse(packageApi.evictable_tiles()) as string[],
     loadTile: (bytes) => map.load_tile(bytes),
