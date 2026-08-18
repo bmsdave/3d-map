@@ -19,8 +19,12 @@ terrain, and globe relief.
   fixtures, and a WebGL2/Wasm binding.
 - A browser lab with isolated visual cards for zoom bands, road joins and
   casing, input, point-label collision, density, terrain, and globe relief.
-- An **MT2 v4** tile format with v1/v2/v3 readers, deterministic synthetic fixtures, Rust unit
-  tests, Playwright visual tests, and an executable p95 frame budget of ≤10 ms.
+- An **MT2 v5** tile format with v1–v4 readers, deterministic synthetic fixtures, Rust unit
+  tests, Playwright visual tests, and an executable p95 frame budget of ≤10 ms. Buildings
+  carry base/top height, roof shape, and facade material, with documented fallbacks for
+  incomplete OSM tags — see the [tile format spec](libraries/maps-v2/docs/tile-format.md).
+- A bounded regional GEBCO/DEM reader that decodes only the raster window a build
+  actually needs, never a whole world grid, for ocean terrain ingestion.
 
 ## What is not included
 
@@ -78,6 +82,59 @@ To inspect a locally hosted London or regional package, open
 URL, and choose **Загрузить пакет**. The package host must permit browser CORS
 requests; the loader verifies every requested tile against the manifest’s
 SHA-256 digest before rendering it.
+
+## Demos
+
+The lab's index page (`npm run dev`, then `http://localhost:5178`) opens with
+a **Quick start** panel showing the exact SDK call shape every card below it
+runs — copy it directly, it is not pseudocode:
+
+```ts
+import { createMap, loadPackCentre } from "./sdk";
+
+const canvas = document.querySelector("canvas")!;
+const centre = await loadPackCentre("ealing"); // synthetic fixture; see below for a real package
+const map = await createMap(canvas, "ealing");
+map.setCentre(centre.lon, centre.lat);
+map.setZoom(centre.zoom);
+map.render();
+```
+
+A few cards worth opening directly:
+
+| Route | What it shows |
+| --- | --- |
+| `/#/showcase` | Twenty animated, live SDK studies in one gallery. |
+| `/#/card/buildings3d` | Terrain-clamped 3D buildings, roof shapes, and tilt. |
+| `/#/card/roads-micro` | Road classes, joins, casing, and screen-pixel widths at z17. |
+| `/#/card/package-loader` | Demand-loaded MT2 packages: point it at a real `manifest.json`. |
+
+### A real local London demo
+
+The synthetic fixtures above need no data download. To see the SDK render
+**real** OpenStreetMap and Copernicus terrain data instead, build a local
+London package from the pinned sources (see the [pipeline
+guide](pipelines/maps-v2-ingest/README.md) for `fetch`/`verify` first):
+
+```sh
+cd libraries/maps-v2
+cargo run --release -p maps2-ingest -- build-terrain-range \
+  ../../pipelines/maps-v2-ingest/sources/london.toml \
+  /path/to/cache/greater-london-260814.osm.pbf 12 16 \
+  ../../pipelines/maps-v2-ingest/packages/london-v5 \
+  ../../pipelines/maps-v2-ingest/sources/london-dem-n51w001.toml \
+  /path/to/cache/Copernicus_DSM_COG_10_N51_00_W001_00_DEM.tif -1 51 \
+  ../../pipelines/maps-v2-ingest/sources/london-dem-n51e000.toml \
+  /path/to/cache/Copernicus_DSM_COG_10_N51_00_E000_00_DEM.tif 0 51
+```
+
+Serve `pipelines/maps-v2-ingest/packages/london-v5/` locally with CORS enabled
+(for example `npx http-server pipelines/maps-v2-ingest/packages/london-v5
+--cors`), open `/#/card/package-loader` in the running lab, paste that host's
+`manifest.json` URL into **Manifest URL**, and choose **Загрузить пакет**. This
+is the same manifest-driven demand-loading path the lab's opt-in
+`MAPS2_REAL_PACKAGE_ROOT` Playwright test exercises against real terrain,
+attribution, and the ≤10 ms p95 frame budget.
 
 ## 20 animated studies
 
@@ -158,7 +215,7 @@ working Wasm integration example.
 | Area | Responsibility |
 | --- | --- |
 | `maps2-units`, `maps2-camera` | Coordinate units, camera state, flat/globe projection |
-| `maps2-tile` | MT2 v4 writing and validated v1/v2/v3 reading |
+| `maps2-tile` | MT2 v5 writing and validated v1–v4 reading |
 | `maps2-style`, `maps2-render` | Class visibility, persistent mesh buckets, road and terrain draws |
 | `maps2-text` | Deterministic SDF atlas and collision-managed point labels |
 | `maps2-fixtures` | Reproducible synthetic Ealing, road-pathology, and ridge packages |
@@ -168,10 +225,11 @@ working Wasm integration example.
 ## MT2 tile format
 
 MT2 uses a fixed header, an O(1) section table, integer tile coordinates,
-delta/varint vector geometry, building base/top/roof data, and optional height
-rasters. Version 4 is the current write format and readers accept versions
-1–3: a layout change requires a version bump, fixture migration, and an
-intentional golden update. Read the full [MT2 specification](libraries/maps-v2/docs/tile-format.md).
+delta/varint vector geometry, building base/top/roof/material data, and
+optional height rasters. Version 5 is the current write format and readers
+accept versions 1–4: a layout change requires a version bump, fixture
+migration, and an intentional golden update. Read the full [MT2
+specification](libraries/maps-v2/docs/tile-format.md).
 
 ## Supported environment
 

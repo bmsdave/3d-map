@@ -21,10 +21,13 @@ pub use line::{
     LineRange, LineVertex, Pass, RoadLevel, RoadPass, LINESOFAR_STEP, MITER_LIMIT_MAX,
     NORMAL_SCALE, POS_BIAS, ROAD_LEVELS, ROAD_ORDER, ROUND_CAP_SEGMENTS,
 };
-pub use building::{BuildingBucket, BuildingVertex, build_building_bucket};
+pub use building::{BuildingBucket, BuildingVertex, MaterialRange, build_building_bucket};
 pub use labels::{build_label_bucket, LabelBucket, LabelPoint, LABEL_CLASSES};
 pub use globe::{project_normalised, tile_frame, Projected, TileFrame, View};
-pub use residency::{normalise_source_levels, plan_residency, register_source_level, target_level, ResidencyPlan};
+pub use residency::{
+    building_lod, normalise_source_levels, plan_residency, register_source_level, target_level,
+    BuildingLod, ResidencyPlan,
+};
 pub use terrain::{
     gradient_at, HIGHLIGHT_GAIN, ground_mesh, relative_shade, relief_radius_scale, shading_z_factor, texel_metres,
     GroundMesh, GROUND_MESH_CELLS,
@@ -244,10 +247,69 @@ mod tests {
         let bytes = builder.build().expect("building tile");
         let tile = TileView::parse(&bytes).expect("tile parses");
 
-        let bucket = build_building_bucket(&tile).expect("building bucket");
+        let bucket = build_building_bucket(&tile, BuildingLod::Full).expect("building bucket");
 
         assert_eq!(bucket.indices.len(), 21);
         assert!(bucket.vertices.iter().any(|vertex| vertex.height_dm == 0));
         assert!(bucket.vertices.iter().any(|vertex| vertex.height_dm == 120));
+        assert_eq!(bucket.ranges.len(), 1, "one material, one range");
+        assert_eq!(bucket.ranges[0].material, maps2_tile::MaterialClass::Unknown);
+    }
+
+    #[test]
+    fn footprint_lod_has_no_walls_and_simplified_lod_has_a_flat_cap() {
+        let mut builder = maps2_tile::TileBuilder::new(maps2_units::TileId { z: 16, x: 0, y: 0 });
+        builder.push_building(
+            Class::Building.code(),
+            maps2_tile::FeatureDraft::geometry(
+                17,
+                0,
+                vec![
+                    maps2_units::TileCoord(10, 10),
+                    maps2_units::TileCoord(30, 10),
+                    maps2_units::TileCoord(20, 30),
+                    maps2_units::TileCoord(10, 10),
+                ],
+            ),
+            maps2_tile::BuildingDraft::flat(0, 120),
+        );
+        let bytes = builder.build().expect("building tile");
+        let tile = TileView::parse(&bytes).expect("tile parses");
+
+        let footprint = build_building_bucket(&tile, BuildingLod::Footprint).expect("bucket");
+        // Roof triangle only, no walls: 1 triangle = 3 indices.
+        assert_eq!(footprint.indices.len(), 3);
+        assert!(footprint.vertices.iter().all(|vertex| vertex.height_dm == 0), "footprint sits at base height");
+
+        let simplified = build_building_bucket(&tile, BuildingLod::Simplified).expect("bucket");
+        // Flat cap (3) + three walls (6 each) = 21, same shape as Full with a
+        // flat roof — Simplified only differs from Full on shaped roofs.
+        assert_eq!(simplified.indices.len(), 21);
+    }
+
+    #[test]
+    fn full_lod_gives_a_gabled_roof_a_ridge_above_the_eave() {
+        let mut builder = maps2_tile::TileBuilder::new(maps2_units::TileId { z: 16, x: 0, y: 0 });
+        builder.push_building(
+            Class::Building.code(),
+            maps2_tile::FeatureDraft::geometry(
+                17,
+                0,
+                vec![
+                    maps2_units::TileCoord(1000, 1000),
+                    maps2_units::TileCoord(5000, 1000),
+                    maps2_units::TileCoord(5000, 3000),
+                    maps2_units::TileCoord(1000, 3000),
+                    maps2_units::TileCoord(1000, 1000),
+                ],
+            ),
+            maps2_tile::BuildingDraft { base_height_dm: 0, top_height_dm: 120, roof: maps2_tile::RoofType::Gabled, material: maps2_tile::MaterialClass::Unknown },
+        );
+        let bytes = builder.build().expect("building tile");
+        let tile = TileView::parse(&bytes).expect("tile parses");
+
+        let bucket = build_building_bucket(&tile, BuildingLod::Full).expect("bucket");
+
+        assert!(bucket.vertices.iter().any(|vertex| vertex.height_dm > 120), "a ridge must rise above the eave");
     }
 }

@@ -6,8 +6,9 @@ use maps2_units::{TileCoord, TileId};
 
 use crate::varint::{read_varint, zigzag_decode};
 use crate::{
-    BuildingView, ClassCode, FeatureFlags, RoofType, TileError, TileHeader, FORMAT_VERSION,
-    HOLES_FORMAT_VERSION, LEGACY_FORMAT_VERSION, MAGIC, PREVIOUS_FORMAT_VERSION, RASTER_CLASS_BASE,
+    BuildingView, ClassCode, FeatureFlags, MaterialClass, RoofType, TileError, TileHeader,
+    FORMAT_VERSION, HOLES_FORMAT_VERSION, LEGACY_FORMAT_VERSION, MAGIC, MATERIAL_FORMAT_VERSION,
+    RASTER_CLASS_BASE, WIDE_ID_FORMAT_VERSION,
 };
 
 const HEADER_BYTES: usize = 20;
@@ -35,10 +36,7 @@ impl<'a> TileView<'a> {
             return Err(TileError::BadMagic);
         }
         let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-        if !matches!(
-            version,
-            LEGACY_FORMAT_VERSION | 2 | PREVIOUS_FORMAT_VERSION | FORMAT_VERSION
-        ) {
+        if !(LEGACY_FORMAT_VERSION..=FORMAT_VERSION).contains(&version) {
             return Err(TileError::UnsupportedVersion(version));
         }
         let id = TileId {
@@ -207,24 +205,25 @@ impl<'a> FeaturesIter<'a> {
     }
 }
 
-const fn feature_head_bytes(version: u16) -> usize {
+/// Bytes the building payload occupies within a feature head: none before
+/// building data existed, five bytes (base/top/roof) from v2, six from v5
+/// once the material byte joins them.
+const fn building_field_bytes(version: u16) -> usize {
     if version == LEGACY_FORMAT_VERSION {
-        8
-    } else if version == FORMAT_VERSION {
-        17
+        0
+    } else if version >= MATERIAL_FORMAT_VERSION {
+        6
     } else {
-        13
+        5
     }
 }
 
+const fn feature_head_bytes(version: u16) -> usize {
+    feature_name_offset(version) + 2
+}
+
 const fn feature_name_offset(version: u16) -> usize {
-    if version == LEGACY_FORMAT_VERSION {
-        6
-    } else if version == FORMAT_VERSION {
-        15
-    } else {
-        11
-    }
+    feature_id_bytes(version) + 2 + building_field_bytes(version)
 }
 
 fn decode_building(version: u16, head: &[u8]) -> Result<Option<BuildingView>, TileError> {
@@ -235,6 +234,11 @@ fn decode_building(version: u16, head: &[u8]) -> Result<Option<BuildingView>, Ti
     let base_height_dm = u16::from_le_bytes([head[offset], head[offset + 1]]);
     let top_height_dm = u16::from_le_bytes([head[offset + 2], head[offset + 3]]);
     let roof = RoofType::from_wire(head[offset + 4]).ok_or(TileError::BadBuilding)?;
+    let material = if version >= MATERIAL_FORMAT_VERSION {
+        MaterialClass::from_wire(head[offset + 5]).ok_or(TileError::BadBuilding)?
+    } else {
+        MaterialClass::Unknown
+    };
     if base_height_dm == 0 && top_height_dm == 0 {
         return Ok(None);
     }
@@ -243,13 +247,14 @@ fn decode_building(version: u16, head: &[u8]) -> Result<Option<BuildingView>, Ti
             base_height_dm,
             top_height_dm,
             roof,
+            material,
         })
         .map(Some)
         .ok_or(TileError::BadBuilding)
 }
 
 const fn feature_id_bytes(version: u16) -> usize {
-    if version == FORMAT_VERSION {
+    if version >= WIDE_ID_FORMAT_VERSION {
         8
     } else {
         4
@@ -257,7 +262,7 @@ const fn feature_id_bytes(version: u16) -> usize {
 }
 
 fn feature_id(version: u16, head: &[u8]) -> u64 {
-    if version == FORMAT_VERSION {
+    if version >= WIDE_ID_FORMAT_VERSION {
         u64::from_le_bytes(
             head[..8]
                 .try_into()

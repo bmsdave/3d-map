@@ -388,7 +388,9 @@ mod tests {
     /// change shows up as a hash change and is made knowingly.
     ///
     /// Changed when the micro fixture gained deterministic building heights.
-    const GOLDEN_FNV1A: u64 = 0x6DB9_8AEA_42AF_B038;
+    // MT2 v5 (2026-08-18): building features gained a material byte, and the
+    // fallback base/roof/material now flow from ingest, changing tile bytes.
+    const GOLDEN_FNV1A: u64 = 0x2732_F1FA_CAA3_084E;
 
     fn fnv1a(bytes: &[u8], mut hash: u64) -> u64 {
         for byte in bytes {

@@ -8,13 +8,14 @@
 //! through the header table rather than by scanning, and geometry is
 //! decoded lazily as it is iterated.
 //!
-//! Format v2 — **frozen**. Version 1 remains readable; changing anything
-//! below means a new version in the header and a knowing migration, never a
-//! silent edit. The byte-exact layout lives in `../../docs/tile-format.md`.
+//! Format v5 — **frozen**. Versions 1 through 4 remain readable; changing
+//! anything below means a new version in the header and a knowing migration,
+//! never a silent edit. The byte-exact layout lives in
+//! `../../docs/tile-format.md`.
 //!
 //! ```text
 //! 0   magic  "MT2\0"
-//! 4   version u16 LE (= 1)
+//! 4   version u16 LE (= 5)
 //! 6   z u8, reserved u8
 //! 8   x u32, y u32
 //! 16  section_count u16, reserved u16
@@ -22,7 +23,7 @@
 //! …   payload: sections back to back (offsets relative to payload base)
 //!
 //! vector section (class < 0xFF00): feature_count u16, then features:
-//!   id u32, flags u8, rank u8, base_dm u16, top_dm u16, roof u8,
+//!   id u64, flags u8, rank u8, base_dm u16, top_dm u16, roof u8, material u8,
 //!   name_len u16, name utf8,
 //!   vertex_count u16, first vertex (x u16, y u16),
 //!   deltas: (vertex_count − 1) × (dx, dy) zigzag varint
@@ -45,8 +46,12 @@ pub use heights::{
 pub use view::{FeatureView, SectionView, TileView};
 
 pub const MAGIC: [u8; 4] = *b"MT2\0";
-pub const FORMAT_VERSION: u16 = 4;
-pub const PREVIOUS_FORMAT_VERSION: u16 = 3;
+pub const FORMAT_VERSION: u16 = 5;
+pub const PREVIOUS_FORMAT_VERSION: u16 = 4;
+/// The format version building features gained a material byte.
+pub const MATERIAL_FORMAT_VERSION: u16 = 5;
+/// The format version feature IDs widened to 64 bits.
+pub const WIDE_ID_FORMAT_VERSION: u16 = 4;
 pub const HOLES_FORMAT_VERSION: u16 = 3;
 pub const LEGACY_FORMAT_VERSION: u16 = 1;
 
@@ -100,6 +105,9 @@ pub struct BuildingData {
     pub base_height_dm: u16,
     pub top_height_dm: u16,
     pub roof: RoofType,
+    /// Facade material class, added in MT2 v5. Style, not geometry — it
+    /// selects a colour/texture and never rebuilds a tile on its own.
+    pub material: MaterialClass,
 }
 
 /// The builder-side name for [`BuildingData`].
@@ -114,6 +122,7 @@ impl BuildingData {
             base_height_dm,
             top_height_dm,
             roof: RoofType::Flat,
+            material: MaterialClass::Unknown,
         }
     }
 }
@@ -135,6 +144,35 @@ impl RoofType {
             1 => Some(Self::Gabled),
             2 => Some(Self::Hipped),
             3 => Some(Self::Other),
+            _ => None,
+        }
+    }
+}
+
+/// The facade material class exposed by MT2 v5 and later. Older tiles carry
+/// no material byte on the wire and decode as [`MaterialClass::Unknown`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum MaterialClass {
+    Unknown = 0,
+    Brick = 1,
+    Concrete = 2,
+    Stone = 3,
+    Glass = 4,
+    Metal = 5,
+    Wood = 6,
+}
+
+impl MaterialClass {
+    pub(crate) const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Unknown),
+            1 => Some(Self::Brick),
+            2 => Some(Self::Concrete),
+            3 => Some(Self::Stone),
+            4 => Some(Self::Glass),
+            5 => Some(Self::Metal),
+            6 => Some(Self::Wood),
             _ => None,
         }
     }
@@ -487,6 +525,7 @@ mod tests {
                     base_height_dm: 10,
                     top_height_dm: 20,
                     roof,
+                    material: MaterialClass::Unknown,
                 },
             );
             let bytes = builder.build().expect("building tile");
@@ -501,5 +540,89 @@ mod tests {
 
             assert_eq!(feature.building.map(|building| building.roof), Some(roof));
         }
+    }
+
+    #[test]
+    fn every_declared_material_round_trips() {
+        for material in [
+            MaterialClass::Brick,
+            MaterialClass::Concrete,
+            MaterialClass::Stone,
+            MaterialClass::Glass,
+            MaterialClass::Metal,
+            MaterialClass::Wood,
+        ] {
+            let mut builder = TileBuilder::new(TileId { z: 16, x: 1, y: 2 });
+            builder.push_building(
+                3,
+                FeatureDraft::geometry(17, 0, vec![TileCoord(10, 10)]),
+                BuildingDraft {
+                    base_height_dm: 10,
+                    top_height_dm: 20,
+                    roof: RoofType::Flat,
+                    material,
+                },
+            );
+            let bytes = builder.build().expect("building tile");
+            let feature = TileView::parse(&bytes)
+                .expect("parses")
+                .section(3)
+                .expect("section")
+                .features()
+                .next()
+                .expect("feature")
+                .expect("valid");
+
+            assert_eq!(feature.building.map(|building| building.material), Some(material));
+        }
+    }
+
+    #[test]
+    fn a_v4_tile_decodes_with_unknown_material() {
+        // Hand-built v4 bytes: header (version 4), one vector section with
+        // one building feature using the pre-v5 5-byte building layout (no
+        // material byte). A v5 reader must still parse this and default the
+        // material to Unknown rather than misreading the name length as part
+        // of the building payload.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&MAGIC);
+        bytes.extend_from_slice(&PREVIOUS_FORMAT_VERSION.to_le_bytes()); // version 4
+        bytes.push(16); // z
+        bytes.push(0); // reserved
+        bytes.extend_from_slice(&1_u32.to_le_bytes()); // x
+        bytes.extend_from_slice(&2_u32.to_le_bytes()); // y
+        bytes.extend_from_slice(&1_u16.to_le_bytes()); // section_count
+        bytes.extend_from_slice(&0_u16.to_le_bytes()); // reserved
+        let class: u16 = 3;
+        let offset: u32 = 0;
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&1_u16.to_le_bytes()); // feature_count
+        payload.extend_from_slice(&7_u64.to_le_bytes()); // id (v4: 8 bytes)
+        payload.push(0); // flags
+        payload.push(0); // rank
+        payload.extend_from_slice(&10_u16.to_le_bytes()); // base_dm
+        payload.extend_from_slice(&20_u16.to_le_bytes()); // top_dm
+        payload.push(RoofType::Flat as u8); // roof, no material byte at v4
+        payload.extend_from_slice(&0_u16.to_le_bytes()); // name_len
+        payload.extend_from_slice(&1_u16.to_le_bytes()); // vertex_count
+        payload.extend_from_slice(&10_u16.to_le_bytes()); // first x
+        payload.extend_from_slice(&10_u16.to_le_bytes()); // first y
+        payload.extend_from_slice(&0_u16.to_le_bytes()); // hole_count
+        let length = u32::try_from(payload.len()).expect("small payload");
+        bytes.extend_from_slice(&class.to_le_bytes());
+        bytes.extend_from_slice(&offset.to_le_bytes());
+        bytes.extend_from_slice(&length.to_le_bytes());
+        bytes.extend_from_slice(&payload);
+
+        let feature = TileView::parse(&bytes)
+            .expect("parses v4 bytes")
+            .section(3)
+            .expect("section")
+            .features()
+            .next()
+            .expect("feature")
+            .expect("valid");
+
+        assert_eq!(feature.building.map(|building| building.material), Some(MaterialClass::Unknown));
     }
 }

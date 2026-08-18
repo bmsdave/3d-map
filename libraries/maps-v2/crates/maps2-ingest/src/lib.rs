@@ -10,8 +10,8 @@ use std::{
 
 use maps2_style::{Class, FLAG_BRIDGE, FLAG_TUNNEL, entry_band};
 use maps2_tile::{
-    CLASS_HEIGHTS, BuildingDraft, FeatureDraft, TileBuilder, TileError, HEIGHTS_BYTES, HEIGHTS_SIDE,
-    encode_height,
+    CLASS_HEIGHTS, BuildingDraft, FeatureDraft, MaterialClass, RoofType, TileBuilder, TileError,
+    HEIGHTS_BYTES, HEIGHTS_SIDE, encode_height,
 };
 use maps2_units::{Lonlat, TileCoord, TileId, TilePoint, Zoom, locate, to_lonlat, world_position_px};
 use num_traits::ToPrimitive;
@@ -19,6 +19,10 @@ use osmpbfreader::{NodeId, OsmId, OsmObj, OsmPbfReader, Relation, WayId};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tiff::decoder::{Decoder, DecodingResult};
+
+mod gebco;
+
+pub use gebco::{RasterWindow, WINDOW_CELL_LIMIT, load_gebco_window};
 
 /// A named pipeline input pinned to its SHA-256 digest.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -258,6 +262,52 @@ pub fn building_height_m(tags: &[(&str, &str)]) -> BuildingHeight {
         return BuildingHeight::Levels(levels * 3.0);
     }
     BuildingHeight::Default(DEFAULT_BUILDING_HEIGHT_M)
+}
+
+/// Maps OSM's `roof:shape` to MT2's [`RoofType`], documented fallbacks:
+/// `gabled` → Gabled; `hipped`/`pyramidal` → Hipped; any other declared shape
+/// → Other; no tag at all → Flat, the common OSM default.
+#[must_use]
+pub fn building_roof(tags: &[(&str, &str)]) -> RoofType {
+    match tag(tags, "roof:shape") {
+        Some("gabled") => RoofType::Gabled,
+        Some("hipped" | "pyramidal") => RoofType::Hipped,
+        Some(_) => RoofType::Other,
+        None => RoofType::Flat,
+    }
+}
+
+/// Maps OSM's facade-material tags to MT2's [`MaterialClass`], documented
+/// fallbacks: `building:material`, then `building:facade:material`, then the
+/// generic `wall` tag, first match wins; an unrecognised or absent value
+/// falls back to `Unknown` rather than guessing.
+#[must_use]
+pub fn building_material(tags: &[(&str, &str)]) -> MaterialClass {
+    let value = tag(tags, "building:material")
+        .or_else(|| tag(tags, "building:facade:material"))
+        .or_else(|| tag(tags, "wall"));
+    match value {
+        Some("brick") => MaterialClass::Brick,
+        Some("concrete") => MaterialClass::Concrete,
+        Some("stone") => MaterialClass::Stone,
+        Some("glass") => MaterialClass::Glass,
+        Some("metal" | "steel") => MaterialClass::Metal,
+        Some("wood" | "timber_framing") => MaterialClass::Wood,
+        _ => MaterialClass::Unknown,
+    }
+}
+
+/// Maps OSM's `min_height`/`building:min_level` to MT2's base height in
+/// decimetres above datum, documented fallback: an explicit metric
+/// `min_height` wins, then `building:min_level` at three metres per level
+/// (matching [`building_height_m`]'s levels normalisation), then `0` — the
+/// building rises directly from the terrain.
+#[must_use]
+pub fn building_base_height_dm(tags: &[(&str, &str)]) -> u16 {
+    let metres = tag(tags, "min_height")
+        .and_then(parse_metres)
+        .or_else(|| tag(tags, "building:min_level").and_then(parse_positive).map(|levels| levels * 3.0));
+    metres.map_or(0, |metres| (metres * 10.0).round().to_u16().unwrap_or(u16::MAX))
 }
 
 fn tag<'a>(tags: &'a [(&str, &str)], key: &str) -> Option<&'a str> {
@@ -666,6 +716,12 @@ pub enum DemError {
     Read(String),
     /// The TIFF sample type is not an elevation raster this adapter supports.
     SampleType,
+    /// The requested window does not overlap the source raster's bounds.
+    WindowOutside,
+    /// The requested window would materialise more cells than the bounded
+    /// reader permits; a caller must ask for a smaller region instead of
+    /// loading the whole source grid.
+    WindowTooLarge(usize),
 }
 
 impl fmt::Display for DemError {
@@ -676,6 +732,10 @@ impl fmt::Display for DemError {
             Self::Bounds => f.write_str("DEM bounds must be finite and strictly ordered"),
             Self::Read(error) => write!(f, "cannot read DEM: {error}"),
             Self::SampleType => f.write_str("unsupported DEM sample type"),
+            Self::WindowOutside => f.write_str("requested window does not overlap the source raster"),
+            Self::WindowTooLarge(cells) => {
+                write!(f, "requested window has {cells} cells, above the bounded-read limit")
+            }
         }
     }
 }
@@ -696,7 +756,7 @@ pub fn load_copernicus_dem(path: impl AsRef<Path>, west: f64, south: f64) -> Res
     DemGrid::new(west, south, width, height, dem_samples(image)?)
 }
 
-fn dem_samples(image: DecodingResult) -> Result<Vec<f32>, DemError> {
+pub(crate) fn dem_samples(image: DecodingResult) -> Result<Vec<f32>, DemError> {
     match image {
         DecodingResult::I16(samples) => Ok(samples.into_iter().map(f32::from).collect()),
         DecodingResult::U16(samples) => Ok(samples.into_iter().map(f32::from).collect()),
@@ -768,11 +828,11 @@ impl DemGrid {
     }
 }
 
-fn grid_len(width: u32, height: u32) -> Option<usize> {
+pub(crate) fn grid_len(width: u32, height: u32) -> Option<usize> {
     usize::try_from(width).ok()?.checked_mul(usize::try_from(height).ok()?)
 }
 
-fn valid_dem_bounds(west: f64, south: f64, east: f64, north: f64) -> bool {
+pub(crate) fn valid_dem_bounds(west: f64, south: f64, east: f64, north: f64) -> bool {
     [west, south, east, north].into_iter().all(f64::is_finite) && west < east && south < north
 }
 
@@ -823,6 +883,40 @@ pub struct PreparedFeature {
     pub feature: FeatureDraft,
     /// The normalized height source, only for buildings.
     pub building_height: Option<BuildingHeight>,
+    /// The normalized roof form. Meaningful only when `building_height` is
+    /// `Some`; [`building_roof`]'s documented fallback otherwise.
+    pub roof: RoofType,
+    /// The normalized facade material. Meaningful only when
+    /// `building_height` is `Some`; [`building_material`]'s documented
+    /// fallback otherwise.
+    pub material: MaterialClass,
+    /// The normalized base height in decimetres above datum. Meaningful
+    /// only when `building_height` is `Some`; [`building_base_height_dm`]'s
+    /// documented fallback (`0`) otherwise.
+    pub base_height_dm: u16,
+}
+
+/// The building-only attributes normalized from OSM tags, bundled so the
+/// three preparation paths (point, line, polygon) compute them identically
+/// instead of repeating the same four lookups each.
+struct BuildingAttrs {
+    height: Option<BuildingHeight>,
+    roof: RoofType,
+    material: MaterialClass,
+    base_height_dm: u16,
+}
+
+fn building_attrs(class: Class, tags: &[(&str, &str)]) -> BuildingAttrs {
+    if class == Class::Building {
+        BuildingAttrs {
+            height: Some(building_height_m(tags)),
+            roof: building_roof(tags),
+            material: building_material(tags),
+            base_height_dm: building_base_height_dm(tags),
+        }
+    } else {
+        BuildingAttrs { height: None, roof: RoofType::Flat, material: MaterialClass::Unknown, base_height_dm: 0 }
+    }
 }
 
 /// Converts a classified OSM geometry that fits one tile to its MT2 form.
@@ -853,8 +947,16 @@ pub fn prepare_feature(
         vertices: points.into_iter().map(|point| point.coord).collect(),
         holes: Vec::new(),
     };
-    let building_height = (class == Class::Building).then(|| building_height_m(tags));
-    Some(PreparedFeature { tile, class, feature, building_height })
+    let building = building_attrs(class, tags);
+    Some(PreparedFeature {
+        tile,
+        class,
+        feature,
+        building_height: building.height,
+        roof: building.roof,
+        material: building.material,
+        base_height_dm: building.base_height_dm,
+    })
 }
 
 /// Clips a classified OSM way into all MT2 tiles it covers.
@@ -889,14 +991,18 @@ fn prepare_line_features(
     id: u64, class: Class, tags: &[(&str, &str)], vertices: &[Lonlat], level: u8,
 ) -> Vec<PreparedFeature> {
     let points = simplify_road(grid_points(vertices, level), class, level);
-    let height = (class == Class::Building).then(|| building_height_m(tags));
+    let building = building_attrs(class, tags);
     let name = tag(tags, "name").unwrap_or_default();
     let flags = osm_flags(tags);
     let rank = osm_rank(tags);
     let tiles = covered_tiles(&points, level);
     tiles.into_iter().flat_map(|tile| {
         clipped_line_parts(&points, tile).into_iter().filter_map(move |part| {
-            prepared_part(PartInput { id, class, tile, points: part, building_height: height, flags, rank, name })
+            prepared_part(PartInput {
+                id, class, tile, points: part,
+                building_height: building.height, roof: building.roof, material: building.material,
+                base_height_dm: building.base_height_dm, flags, rank, name,
+            })
         })
     }).collect()
 }
@@ -947,7 +1053,7 @@ fn prepare_polygon_part(
 ) -> Vec<PreparedFeature> {
     let outer_points = grid_points(outer, level);
     let hole_points = holes.iter().map(|ring| grid_points(ring, level)).collect::<Vec<_>>();
-    let height = (class == Class::Building).then(|| building_height_m(tags));
+    let building = building_attrs(class, tags);
     let name = tag(tags, "name").unwrap_or_default();
     let flags = osm_flags(tags);
     let rank = osm_rank(tags);
@@ -957,7 +1063,10 @@ fn prepare_polygon_part(
             class,
             tile,
             points: simplify_area_ring(clip_polygon(&outer_points, tile), class, level, tile),
-            building_height: height,
+            building_height: building.height,
+            roof: building.roof,
+            material: building.material,
+            base_height_dm: building.base_height_dm,
             flags,
             rank,
             name,
@@ -1247,13 +1356,17 @@ struct PartInput<'a> {
     tile: TileId,
     points: Vec<GridPoint>,
     building_height: Option<BuildingHeight>,
+    roof: RoofType,
+    material: MaterialClass,
+    base_height_dm: u16,
     flags: u8,
     rank: u8,
     name: &'a str,
 }
 
 fn prepared_part(part: PartInput<'_>) -> Option<PreparedFeature> {
-    let PartInput { id, class, tile, points, building_height, flags, rank, name } = part;
+    let PartInput { id, class, tile, points, building_height, roof, material, base_height_dm, flags, rank, name } =
+        part;
     let mut vertices = points.into_iter().map(|point| tile_coord(point, tile)).collect::<Vec<_>>();
     vertices.dedup();
     if is_area(class) && vertices.first() != vertices.last() {
@@ -1261,7 +1374,7 @@ fn prepared_part(part: PartInput<'_>) -> Option<PreparedFeature> {
     }
     let required = if is_area(class) { 4 } else { 2 };
     (vertices.len() >= required).then(|| PreparedFeature {
-        tile, class, building_height,
+        tile, class, building_height, roof, material, base_height_dm,
         feature: FeatureDraft { id, flags, rank, name: name.to_string(), vertices, holes: Vec::new() },
     })
 }
@@ -1351,7 +1464,15 @@ fn build_tile(
 
 fn push_feature(builder: &mut TileBuilder, feature: &PreparedFeature) {
     if let Some(height) = feature.building_height {
-        builder.push_building(feature.class.code(), feature.feature.clone(), BuildingDraft::flat(0, height_dm(height)));
+        let base = feature.base_height_dm;
+        let top = height_dm(height);
+        // OSM's min_height and height/levels are tagged independently, so a
+        // malformed combination (base at or above the computed top) is
+        // possible; the documented fallback is to drop the base to keep the
+        // building rising at all, rather than reject a real building.
+        let base = if top > base { base } else { 0 };
+        let building = BuildingDraft { base_height_dm: base, top_height_dm: top, roof: feature.roof, material: feature.material };
+        builder.push_building(feature.class.code(), feature.feature.clone(), building);
     } else {
         builder.push(feature.class.code(), feature.feature.clone());
     }
@@ -1420,6 +1541,42 @@ attribution = "© OpenStreetMap contributors""#;
         assert_eq!(building_height_m(&[("height", "42 m")]), BuildingHeight::Explicit(42.0));
         assert_eq!(building_height_m(&[("building:levels", "8")]), BuildingHeight::Levels(24.0));
         assert_eq!(building_height_m(&[("height", "unknown")]), BuildingHeight::Default(9.0));
+    }
+
+    #[test]
+    fn building_roof_maps_declared_shapes_and_falls_back_to_flat() {
+        assert_eq!(building_roof(&[("roof:shape", "gabled")]), RoofType::Gabled);
+        assert_eq!(building_roof(&[("roof:shape", "hipped")]), RoofType::Hipped);
+        assert_eq!(building_roof(&[("roof:shape", "pyramidal")]), RoofType::Hipped);
+        assert_eq!(building_roof(&[("roof:shape", "skillion")]), RoofType::Other);
+        assert_eq!(building_roof(&[]), RoofType::Flat);
+    }
+
+    #[test]
+    fn building_material_prefers_material_over_facade_over_wall_then_falls_back_to_unknown() {
+        assert_eq!(building_material(&[("building:material", "brick")]), MaterialClass::Brick);
+        assert_eq!(
+            building_material(&[("building:material", "brick"), ("wall", "concrete")]),
+            MaterialClass::Brick,
+            "building:material must win over wall"
+        );
+        assert_eq!(building_material(&[("building:facade:material", "glass")]), MaterialClass::Glass);
+        assert_eq!(building_material(&[("wall", "wood")]), MaterialClass::Wood);
+        assert_eq!(building_material(&[("wall", "steel")]), MaterialClass::Metal);
+        assert_eq!(building_material(&[]), MaterialClass::Unknown);
+        assert_eq!(building_material(&[("wall", "unobtainium")]), MaterialClass::Unknown);
+    }
+
+    #[test]
+    fn building_base_height_prefers_min_height_over_min_level_then_falls_back_to_zero() {
+        assert_eq!(building_base_height_dm(&[("min_height", "3 m")]), 30);
+        assert_eq!(building_base_height_dm(&[("building:min_level", "2")]), 60);
+        assert_eq!(
+            building_base_height_dm(&[("min_height", "3 m"), ("building:min_level", "2")]),
+            30,
+            "min_height must win over building:min_level"
+        );
+        assert_eq!(building_base_height_dm(&[]), 0);
     }
 
     #[test]
@@ -1590,6 +1747,93 @@ adapter_version = "osm-v1""#,
         assert_eq!(feature.class, Class::Building);
         assert_eq!(feature.feature.vertices.len(), vertices.len());
         assert_eq!(feature.building_height, Some(BuildingHeight::Explicit(42.0)));
+    }
+
+    #[test]
+    fn geometry_adapter_carries_roof_material_and_base_height_into_the_prepared_building() {
+        let vertices = [
+            Lonlat { lon: -0.1278, lat: 51.5074 },
+            Lonlat { lon: -0.1277, lat: 51.5074 },
+            Lonlat { lon: -0.1277, lat: 51.5075 },
+            Lonlat { lon: -0.1278, lat: 51.5074 },
+        ];
+        let feature = prepare_feature(
+            17,
+            &[("building", "yes"), ("height", "42"), ("roof:shape", "hipped"), ("building:material", "brick"), ("min_height", "3 m")],
+            &vertices,
+            16,
+        )
+        .expect("a small building fits one tile");
+
+        assert_eq!(feature.roof, RoofType::Hipped);
+        assert_eq!(feature.material, MaterialClass::Brick);
+        assert_eq!(feature.base_height_dm, 30);
+    }
+
+    #[test]
+    fn a_prepared_building_reaches_the_tile_with_its_real_base_roof_and_material() {
+        let vertices = [
+            Lonlat { lon: -0.1278, lat: 51.5074 },
+            Lonlat { lon: -0.1277, lat: 51.5074 },
+            Lonlat { lon: -0.1277, lat: 51.5075 },
+            Lonlat { lon: -0.1278, lat: 51.5074 },
+        ];
+        let feature = prepare_feature(
+            17,
+            &[("building", "yes"), ("height", "42"), ("roof:shape", "gabled"), ("wall", "stone"), ("min_height", "3 m")],
+            &vertices,
+            16,
+        )
+        .expect("a small building fits one tile");
+
+        let tiles = build_tiles(&[feature]).expect("build");
+        let (_, bytes) = &tiles[0];
+        let building = maps2_tile::TileView::parse(bytes)
+            .expect("parses")
+            .section(Class::Building.code())
+            .expect("building section")
+            .features()
+            .next()
+            .expect("feature")
+            .expect("valid")
+            .building
+            .expect("building payload");
+
+        assert_eq!(building.roof, RoofType::Gabled);
+        assert_eq!(building.material, MaterialClass::Stone);
+        assert_eq!(building.base_height_dm, 30);
+        assert_eq!(building.top_height_dm, 420);
+    }
+
+    #[test]
+    fn a_base_height_at_or_above_the_computed_top_falls_back_to_zero_rather_than_reject_the_building() {
+        // A malformed OSM combination: min_height higher than the computed
+        // top from height/levels. The documented fallback keeps the building
+        // valid by dropping its base to the ground instead of erroring.
+        let vertices = [
+            Lonlat { lon: -0.1278, lat: 51.5074 },
+            Lonlat { lon: -0.1277, lat: 51.5074 },
+            Lonlat { lon: -0.1277, lat: 51.5075 },
+            Lonlat { lon: -0.1278, lat: 51.5074 },
+        ];
+        let feature = prepare_feature(17, &[("building", "yes"), ("height", "1"), ("min_height", "50 m")], &vertices, 16)
+            .expect("a small building fits one tile");
+
+        let tiles = build_tiles(&[feature]).expect("build");
+        let (_, bytes) = &tiles[0];
+        let building = maps2_tile::TileView::parse(bytes)
+            .expect("parses")
+            .section(Class::Building.code())
+            .expect("building section")
+            .features()
+            .next()
+            .expect("feature")
+            .expect("valid")
+            .building
+            .expect("building payload");
+
+        assert_eq!(building.base_height_dm, 0);
+        assert_eq!(building.top_height_dm, 10);
     }
 
     #[test]

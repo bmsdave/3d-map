@@ -92,3 +92,32 @@ The resulting manifest records all sources and counts tiles carrying an MT2
 height raster. The two pinned cells cover every current z16 Greater London
 vector tile. Copernicus GLO-30 is a surface model, so it is not yet appropriate
 to describe the output as ground-true terrain.
+
+## Bounded GEBCO ingestion
+
+GEBCO ships global bathymetry as multi-gigabyte 90°×90° `GeoTIFF` grids. A
+regional build must never decode a whole grid into memory to sample one city's
+worth of ocean cells, so `maps2-ingest` reads a geographic window directly out
+of the source file: it maps the window to a pixel rectangle, then decodes only
+the TIFF strips or tiles that rectangle overlaps. Cost tracks the requested
+region, not the file on disk — a window's cell count is capped at
+`WINDOW_CELL_LIMIT` (4 Mi cells, 16 MiB of `f32`), so a caller that forgot to
+bound its request fails fast instead of silently paging in gigabytes.
+
+`sources/gebco-2025-n90-s0-w-90-e0.toml` pins the north-west 90°×90° sub-grid
+that covers London. Its `sha256` is a deliberate all-zero placeholder — this
+repository has not downloaded the file — so `fetch`/`verify` fail loudly
+against it until an operator pulls the pinned GEBCO_2025 release from the
+[official grid distribution](https://www.gebco.net/data-products-gridded-bathymetry-data/gebco2025-grid)
+and records the real digest.
+
+Inspect a window once a real grid is cached locally:
+
+```sh
+cd libraries/maps-v2
+cargo run -p maps2-ingest -- gebco-window ../../pipelines/maps-v2-ingest/sources/gebco-2025-n90-s0-w-90-e0.toml /path/to/cache/gebco_2025_n90.0_s0.0_w-90.0_e0.0.tif -1 51 0 52
+```
+
+The command prints how many TIFF chunks it read against how many the whole
+grid holds, plus a corner sample, so a bounded read is a directly observable
+property rather than an assumption.

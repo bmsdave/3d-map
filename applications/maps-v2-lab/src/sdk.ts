@@ -164,8 +164,9 @@ async function loadFixtureTiles(map: InstanceType<typeof SdkMap>, pack: string):
 function isTilePackageManifest(value: unknown): value is TilePackageManifest {
   if (!value || typeof value !== "object") return false;
   const manifest = value as Partial<TilePackageManifest>;
+  const version = manifest.format_version;
   return manifest.format === "MT2"
-    && (manifest.format_version === 2 || manifest.format_version === 3 || manifest.format_version === 4)
+    && typeof version === "number" && Number.isInteger(version) && version >= 2 && version <= 5
     && Array.isArray(manifest.tiles)
     && manifest.tiles.every((path) => typeof path === "string" && /^\d+\/\d+\/\d+\.mt2$/.test(path))
     && !!manifest.tile_digests

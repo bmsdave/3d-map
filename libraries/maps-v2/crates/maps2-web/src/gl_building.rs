@@ -3,7 +3,7 @@
 use wasm_bindgen::JsValue;
 use web_sys::{WebGl2RenderingContext as Gl, WebGlBuffer, WebGlProgram, WebGlUniformLocation};
 
-use maps2_render::BuildingBucket;
+use maps2_render::{BuildingBucket, MaterialRange};
 use maps2_tile::{HEIGHT_OFFSET_M, HEIGHTS_SIDE};
 
 use crate::gl::{as_bytes, link_program};
@@ -98,7 +98,10 @@ impl BuildingProgram {
 pub struct GpuBuildingBucket {
     vertices: WebGlBuffer,
     indices: WebGlBuffer,
-    index_count: i32,
+    /// One draw per material range, so each can bind its own facade
+    /// colour — the mesh itself is one buffer pair, only the draw calls
+    /// are split.
+    ranges: Vec<MaterialRange>,
 }
 
 impl GpuBuildingBucket {
@@ -109,8 +112,7 @@ impl GpuBuildingBucket {
         let indices = gl.create_buffer().ok_or("no building index buffer")?;
         gl.bind_buffer(Gl::ELEMENT_ARRAY_BUFFER, Some(&indices));
         gl.buffer_data_with_u8_array(Gl::ELEMENT_ARRAY_BUFFER, as_bytes(&bucket.indices), Gl::STATIC_DRAW);
-        let index_count = i32::try_from(bucket.indices.len()).map_err(|_| "too many building indices")?;
-        Ok(Self { vertices, indices, index_count })
+        Ok(Self { vertices, indices, ranges: bucket.ranges.clone() })
     }
 
     pub fn delete(&self, gl: &Gl) {
@@ -118,13 +120,27 @@ impl GpuBuildingBucket {
         gl.delete_buffer(Some(&self.indices));
     }
 
-    pub fn draw(&self, gl: &Gl, program: &BuildingProgram) {
+    /// The material ranges to draw, in bucket order — the caller sets the
+    /// facade colour for each before calling `draw_range`.
+    pub fn ranges(&self) -> &[MaterialRange] {
+        &self.ranges
+    }
+
+    fn bind_attributes(&self, gl: &Gl, program: &BuildingProgram) {
         gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&self.vertices));
         gl.bind_buffer(Gl::ELEMENT_ARRAY_BUFFER, Some(&self.indices));
         gl.enable_vertex_attrib_array(program.pos);
         gl.vertex_attrib_pointer_with_i32(program.pos, 2, Gl::UNSIGNED_SHORT, false, 6, 0);
         gl.enable_vertex_attrib_array(program.height_dm);
         gl.vertex_attrib_pointer_with_i32(program.height_dm, 1, Gl::UNSIGNED_SHORT, false, 6, 4);
-        gl.draw_elements_with_i32(Gl::TRIANGLES, self.index_count, Gl::UNSIGNED_INT, 0);
+    }
+
+    /// Draws one material range. `first_index`/`index_count` are index
+    /// counts, not bytes — `u32` indices, so the byte offset is ×4.
+    pub fn draw_range(&self, gl: &Gl, program: &BuildingProgram, range: MaterialRange) {
+        self.bind_attributes(gl, program);
+        let offset = i32::try_from(range.first_index).unwrap_or(0) * 4;
+        let count = i32::try_from(range.index_count).unwrap_or(0);
+        gl.draw_elements_with_i32(Gl::TRIANGLES, count, Gl::UNSIGNED_INT, offset);
     }
 }

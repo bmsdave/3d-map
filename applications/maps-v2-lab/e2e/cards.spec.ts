@@ -72,3 +72,20 @@ test("индекс открывает карточку по прямой ссы�
   await page.goto("/#/card/toggle-district-street");
   await expect(page.locator("main")).toHaveAttribute("data-card", "toggle-district-street");
 });
+
+test("индекс показывает copy-pasteable quick start и ссылку на каждую карточку", async ({ page }) => {
+  await page.goto("/#/");
+  const quickStart = page.getByTestId("quick-start");
+  await expect(quickStart).toBeVisible();
+  await expect(quickStart.locator("code")).toContainText("createMap");
+  await expect(quickStart.locator("code")).toContainText("loadPackCentre");
+
+  const cardLinks = page.locator('[data-testid="index"] .card-grid a[href^="#/card/"]');
+  const count = await cardLinks.count();
+  expect(count).toBeGreaterThan(10);
+
+  const firstHref = await cardLinks.first().getAttribute("href");
+  await cardLinks.first().click();
+  await expect(page).toHaveURL(new RegExp(`${firstHref}$`));
+  await expect(page.getByTestId("stage")).toHaveAttribute("data-state", "ready");
+});

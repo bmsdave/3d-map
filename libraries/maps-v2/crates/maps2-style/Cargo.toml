@@ -6,6 +6,7 @@ description = "Classes, entry bands, palette and zoom ramps for the Maps SDK v2"
 license = "MIT"
 
 [dependencies]
+maps2-tile = { path = "../maps2-tile" }
 maps2-units = { path = "../maps2-units" }
 num-traits = "0.2"
 

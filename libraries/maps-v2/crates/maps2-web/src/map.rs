@@ -7,13 +7,14 @@ use web_sys::WebGl2RenderingContext as Gl;
 
 use maps2_camera::{Camera, CameraPatch, Globeness};
 use maps2_render::{
-    build_building_bucket, build_fill_bucket, build_label_bucket, build_line_bucket, normalise_source_levels, plan_residency, register_source_level, road_passes,
-    shading_z_factor, target_level, texel_metres, tile_frame, FillBucket, LabelBucket,
-    LineOptions, Pass, RoadLevel, RoadPass, MITER_LIMIT_MAX, View,
+    build_building_bucket, build_fill_bucket, build_label_bucket, build_line_bucket, building_lod,
+    normalise_source_levels, plan_residency, register_source_level, road_passes, shading_z_factor,
+    target_level, texel_metres, tile_frame, BuildingLod, FillBucket, LabelBucket, LineOptions,
+    Pass, RoadLevel, RoadPass, MITER_LIMIT_MAX, View,
 };
 use maps2_style::{
-    background_color, class_alpha, fill_color, road_width_px, Band, Class, CASING_EXTRA_PX,
-    ROAD_CASING_COLOR, TUNNEL_ALPHA, TUNNEL_DASH_ON_PX, TUNNEL_DASH_PERIOD_PX,
+    background_color, class_alpha, facade_colour, fill_color, road_width_px, Band, Class,
+    CASING_EXTRA_PX, ROAD_CASING_COLOR, TUNNEL_ALPHA, TUNNEL_DASH_ON_PX, TUNNEL_DASH_PERIOD_PX,
 };
 use maps2_text::{layout_line, measure_line, Atlas, Placement, Rejection, ScreenBox};
 use maps2_tile::{HeightsRaster, TileView, CLASS_HEIGHTS, HEIGHTS_SIDE};
@@ -101,6 +102,10 @@ pub struct Map {
     /// The package pyramid supplied by the host. Fixture levels make the lab
     /// useful before tiles arrive; real packages add their own levels.
     source_levels: Vec<u8>,
+    /// Building mesh detail for the current camera zoom. Checked once a
+    /// frame and only rebuilds CPU/GPU buckets on a tier change, not on
+    /// every frame — the same one-off-rebuild shape as `rebuild_lines`.
+    building_lod: BuildingLod,
 }
 
 /// Everything the label pass is steered by, and the last answer it gave.
@@ -232,6 +237,7 @@ impl Map {
             width_overrides: HashMap::new(),
             passes: road_passes(),
             source_levels: DEFAULT_SOURCE_LEVELS.to_vec(),
+            building_lod: building_lod(12.0),
         })
     }
 
@@ -353,7 +359,7 @@ impl Map {
         let id = view.header().id;
         register_source_level(&mut self.source_levels, id.z);
         let fills = build_fill_bucket(&view).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-        let buildings = build_building_bucket(&view).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
+        let buildings = build_building_bucket(&view, self.building_lod).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
         let roads = build_line_bucket(&view, self.line_options)
             .map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
         let names = build_label_bucket(&view).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
@@ -506,6 +512,7 @@ impl Map {
             self.draw_labels(&[]);
             return;
         }
+        self.sync_building_lod();
         let draw = self.apply_residency();
         self.draw_ground(&draw);
         self.draw_buildings(&draw);
@@ -710,14 +717,6 @@ impl Map {
             self.camera.tilt_deg(),
         );
         self.building_program.view.set_view(&self.gl, &self.view());
-        let colour = fill_color(Class::Building);
-        self.gl.uniform4f(
-            Some(&self.building_program.color),
-            f32::from(colour[0]) / 255.0,
-            f32::from(colour[1]) / 255.0,
-            f32::from(colour[2]) / 255.0,
-            f32::from(colour[3]) / 255.0,
-        );
         for id in draw {
             let Some(bucket) = self.gpu_buildings.get(id) else {
                 continue;
@@ -727,8 +726,20 @@ impl Map {
                 .set_tile(&self.gl, tile_frame(*id), self.tile_pixels(*id));
             self.building_program
                 .bind_heights(&self.gl, self.height_textures.get(id));
-            bucket.draw(&self.gl, &self.building_program);
-            self.frame_draw_calls += 1;
+            // One draw call per facade material present in this tile's
+            // buildings, not one per building: `ranges` is already grouped.
+            for &range in bucket.ranges() {
+                let colour = facade_colour(range.material);
+                self.gl.uniform4f(
+                    Some(&self.building_program.color),
+                    f32::from(colour[0]) / 255.0,
+                    f32::from(colour[1]) / 255.0,
+                    f32::from(colour[2]) / 255.0,
+                    f32::from(colour[3]) / 255.0,
+                );
+                bucket.draw_range(&self.gl, &self.building_program, range);
+                self.frame_draw_calls += 1;
+            }
         }
     }
 
@@ -845,6 +856,50 @@ impl Map {
                 continue;
             };
             if let Some(previous) = self.gpu_lines.insert(id, gpu) {
+                previous.delete(&self.gl);
+            }
+        }
+    }
+
+    /// Checks whether the camera zoom crossed a building-detail tier
+    /// boundary and, only then, rebuilds building buckets — the steady
+    /// state pays one comparison, not a rebuild.
+    fn sync_building_lod(&mut self) {
+        let wanted = building_lod(self.camera.zoom().value());
+        if wanted != self.building_lod {
+            self.building_lod = wanted;
+            self.rebuild_buildings();
+        }
+    }
+
+    /// Rebuilds every building bucket from the bytes still held, and
+    /// replaces the GPU copy of each tile that is already resident. Same
+    /// shape as `rebuild_lines`: residency does not know the LOD tier
+    /// changed, so dropping the buffers here and waiting for residency to
+    /// notice would leave stale-detail buildings on screen.
+    fn rebuild_buildings(&mut self) {
+        for (id, bytes) in &self.tiles {
+            let Ok(view) = TileView::parse(bytes) else {
+                continue;
+            };
+            if let Ok(bucket) = build_building_bucket(&view, self.building_lod) {
+                self.buildings.insert(*id, bucket);
+            }
+        }
+        for id in self.gpu_buildings.keys().copied().collect::<Vec<_>>() {
+            let Some(cpu) = self.buildings.get(&id) else {
+                continue;
+            };
+            if cpu.indices.is_empty() {
+                if let Some(previous) = self.gpu_buildings.remove(&id) {
+                    previous.delete(&self.gl);
+                }
+                continue;
+            }
+            let Ok(gpu) = GpuBuildingBucket::upload(&self.gl, cpu) else {
+                continue;
+            };
+            if let Some(previous) = self.gpu_buildings.insert(id, gpu) {
                 previous.delete(&self.gl);
             }
         }

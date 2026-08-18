@@ -194,7 +194,9 @@ mod tests {
     use num_traits::ToPrimitive;
 
     /// The package must be bit-for-bit stable, like the Ealing one.
-    const GOLDEN_FNV1A: u64 = 0xEE77_8B7F_CF3D_4914;
+    // MT2 v5 (2026-08-18): building features gained a material byte, changing
+    // tile bytes even for fixtures that never set one explicitly.
+    const GOLDEN_FNV1A: u64 = 0x8570_284B_DEF7_E330;
 
     fn fnv1a(bytes: &[u8], mut hash: u64) -> u64 {
         for byte in bytes {
