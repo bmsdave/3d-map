@@ -28,6 +28,8 @@ test("globe-real: a real world package and a real city package compose on one ma
   await page.goto("/#/card/globe-real");
 
   const stage = page.getByTestId("stage");
+  await expect(stage).toHaveAttribute("data-state", "idle");
+  await page.getByTestId("globe-real-load").click();
   // The world package alone carries 1,048 tiles (real global coastline
   // coverage) - more than the synthetic fixtures other specs load - so
   // the initial fetch can outrun the default timeout under a loaded

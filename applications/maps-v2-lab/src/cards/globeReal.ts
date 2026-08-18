@@ -88,11 +88,21 @@ export const globeReal: CardSpec = {
       activeMap.render();
       activeRefresh?.();
     };
-    const showError = (error: unknown) => {
+    const showError = (error: unknown, manifestUrl?: string) => {
       const retry = el("button", { type: "button" }, ["Повторить"]);
       retry.addEventListener("click", () => void loadBoth());
+      const detail = manifestUrl
+        ? `Не удалось загрузить ${manifestUrl}: ${String(error)}. Проверьте URL — по умолчанию это заглушка, а не рабочий сервер.`
+        : String(error);
       stage.setAttribute("data-state", "error");
-      stage.replaceChildren(String(error), retry);
+      stage.replaceChildren(detail, retry);
+    };
+    const showIdle = () => {
+      stage.setAttribute("data-state", "idle");
+      stage.replaceChildren(
+        "Введите URL двух реальных manifest-пакетов (мир и город) и нажмите «Загрузить оба пакета». " +
+          "По умолчанию поля указывают на заглушку — она никогда не отвечает.",
+      );
     };
 
     const loadBoth = async () => {
@@ -104,14 +114,16 @@ export const globeReal: CardSpec = {
       stage.replaceChildren(canvas);
       activeMap = null;
       activeRefresh = null;
+      let attemptedUrl = worldInput.value.trim();
       try {
         const map = await createMap(canvas, null);
         // World first, plain (replace) so its z0-z5 pyramid is the base;
         // city second, additive so its z12+ levels join rather than
         // wipe the world's — see addSourceLevels's doc comment.
-        const worldLoader: TilePackageLoader = await createTilePackageLoader(map, worldInput.value.trim());
+        const worldLoader: TilePackageLoader = await createTilePackageLoader(map, attemptedUrl);
+        attemptedUrl = cityInput.value.trim();
         const cityLoader: TilePackageLoader = await createTilePackageLoader(
-          map, cityInput.value.trim(), { additive: true },
+          map, attemptedUrl, { additive: true },
         );
         if (request !== generation) return;
         map.setCentre(worldLoader.manifest.view.lon, worldLoader.manifest.view.lat);
@@ -146,7 +158,7 @@ export const globeReal: CardSpec = {
         stage.setAttribute("data-state", "ready");
         attachNavigation(canvas, map, () => void refresh());
       } catch (error) {
-        if (request === generation) showError(error);
+        if (request === generation) showError(error, attemptedUrl);
       }
     };
 
@@ -156,6 +168,12 @@ export const globeReal: CardSpec = {
       applyControls();
     });
     panel.append(source);
-    void loadBoth();
+    // The default field values are documentation, not a working
+    // manifest — unlike packageLoader's bundled fixture, real world +
+    // city packages are too large to ship in the lab itself (see the
+    // README's Demos section for how to build and serve them locally).
+    // Fetching them unconditionally on mount previously failed instantly
+    // with an opaque "TypeError: Failed to fetch" and no indication why.
+    showIdle();
   },
 };
