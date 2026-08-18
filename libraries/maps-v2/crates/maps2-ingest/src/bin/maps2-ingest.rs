@@ -1,8 +1,9 @@
 use std::{collections::BTreeMap, env, fs, fs::File, path::{Path, PathBuf}, process::{Command, ExitCode}};
 
 use maps2_ingest::{
-    SourceDescriptor, SourceKind, build_tiles, build_tiles_with_terrains, load_copernicus_dem, load_gebco_window,
-    read_descriptor, resolve_osm_pbf, scan_osm_pbf, validate_source, validate_source_reader, OsmSummary,
+    DemGrid, SourceDescriptor, SourceKind, build_tiles, build_tiles_with_terrains, load_copernicus_dem,
+    load_gebco_quadrant_decimated, load_gebco_window, read_descriptor, resolve_osm_pbf, resolve_water_polygons,
+    scan_osm_pbf, stitch_world_quadrants, validate_source, validate_source_reader, OsmSummary,
 };
 use maps2_units::{TileCoord, TileId, TilePoint, to_lonlat};
 use serde::Deserialize;
@@ -35,6 +36,9 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         [command, args @ ..] if command == "build-terrain-many" => build_terrain_many(args),
         [command, args @ ..] if command == "build-terrain-range" => build_terrain_range(args),
+        [command, descriptor, shapefile, minimum, maximum, output, terrain @ ..] if command == "build-world" => {
+            build_world(descriptor, shapefile, minimum, maximum, output, terrain)
+        }
         [command, osm_descriptor, osm_input, dem_descriptor, dem_input, west, south, level, output]
             if command == "build-terrain" => build_terrain(&TerrainBuildArgs {
                 osm_descriptor,
@@ -182,6 +186,80 @@ fn write_terrain_levels(
     Ok(())
 }
 
+/// Builds a low-zoom world package from the OSM community's pre-simplified
+/// water-polygon shapefile: real global ocean coverage without parsing
+/// planet-scale OSM data, which the low-zoom globe band never needed
+/// vector detail for in the first place — see `world_water` for why.
+///
+/// `terrain` is zero or more `<gebco-source.toml> <gebco.tif> <stride>`
+/// triples, each a whole GEBCO quadrant decimated by `stride` — see
+/// `world_terrain` for why a bounded window is the wrong tool at this
+/// scale. A world tile gets a height raster when one quadrant's bounds
+/// fully cover it (the same `covers_tile` rule regional builds already
+/// use for their DEM tiles); a z0/z1 tile is wider than any single
+/// quadrant, so when the quadrants tile a regular rectangle (the whole
+/// globe, given all eight) they are also stitched into one coarser
+/// whole-world grid and appended as a fallback — checked only after
+/// every individual quadrant, so the more precise per-quadrant grid
+/// still wins wherever one covers a tile.
+fn build_world(
+    descriptor_path: &str, shapefile_path: &str, minimum: &str, maximum: &str, output: &str,
+    terrain: &[String],
+) -> Result<(), String> {
+    let descriptor = load_kind(descriptor_path, SourceKind::WaterPolygons)?;
+    validate_input(&descriptor, shapefile_path)?;
+    let levels = parse_levels(minimum, maximum)?;
+    let terrain = parse_world_terrain_inputs(terrain)?;
+    let mut grids = terrain.iter().map(|input| input.grid.clone()).collect::<Vec<_>>();
+    if let Ok(world) = stitch_world_quadrants(&grids) {
+        grids.push(world);
+    }
+    let output = Path::new(output);
+    let mut feature_count = 0;
+    let mut height_tile_count = 0;
+    let mut digests = Vec::new();
+    for level in &levels {
+        let features = resolve_water_polygons(shapefile_path, *level).map_err(|error| error.to_string())?;
+        let tiles = build_tiles_with_terrains(&features, &grids)
+            .map_err(|error| format!("cannot encode MT2: {error:?}"))?;
+        height_tile_count += tiles.iter().filter(|(tile, _)| grids.iter().any(|grid| grid.covers_tile(*tile))).count();
+        feature_count += features.len();
+        digests.extend(tile_digests(&tiles));
+        write_tiles(output, &tiles)?;
+    }
+    let mut sources = vec![&descriptor];
+    sources.extend(terrain.iter().map(|input| &input.descriptor));
+    write_manifest(output, &sources, &levels, feature_count, &digests, height_tile_count)?;
+    println!("{{\"features\":{feature_count},\"tiles\":{},\"height_tiles\":{height_tile_count}}}", digests.len());
+    Ok(())
+}
+
+struct WorldTerrainInput {
+    descriptor: SourceDescriptor,
+    grid: DemGrid,
+}
+
+fn parse_world_terrain_inputs(args: &[String]) -> Result<Vec<WorldTerrainInput>, String> {
+    if args.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !args.len().is_multiple_of(3) {
+        return Err("each world terrain input needs <gebco-source.toml> <gebco.tif> <stride>".to_string());
+    }
+    args.chunks_exact(3).map(|input| load_world_terrain_input(&input[0], &input[1], &input[2])).collect()
+}
+
+fn load_world_terrain_input(
+    descriptor_path: &str, input_path: &str, stride: &str,
+) -> Result<WorldTerrainInput, String> {
+    let descriptor = load_kind(descriptor_path, SourceKind::GebcoGrid)?;
+    validate_input(&descriptor, input_path)?;
+    let stride = stride.parse::<u32>().map_err(|error| format!("invalid stride {stride}: {error}"))?;
+    let grid = load_gebco_quadrant_decimated(input_path, descriptor.bounds, stride)
+        .map_err(|error| error.to_string())?;
+    Ok(WorldTerrainInput { descriptor, grid })
+}
+
 fn load_kind(path: &str, kind: SourceKind) -> Result<SourceDescriptor, String> {
     let descriptor = load_descriptor(path)?;
     (descriptor.kind == kind).then_some(descriptor).ok_or_else(|| format!("{path} has the wrong source kind"))
@@ -325,6 +403,7 @@ const fn source_kind_name(kind: SourceKind) -> &'static str {
         SourceKind::OsmPbf => "osm-pbf",
         SourceKind::CopernicusDem => "copernicus-dem",
         SourceKind::GebcoGrid => "gebco-grid",
+        SourceKind::WaterPolygons => "water-polygons",
     }
 }
 
@@ -478,7 +557,7 @@ fn summary_json(summary: OsmSummary) -> String {
 
 fn print_help() {
     println!(
-        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest verify-package <package-dir>\n  maps2-ingest fetch <source.toml> <output>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest build-terrain-range <osm-source.toml> <osm.pbf> <min-level> <max-level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>\n  maps2-ingest gebco-window <source.toml> <grid.tif> <west> <south> <east> <north>"
+        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest verify-package <package-dir>\n  maps2-ingest fetch <source.toml> <output>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest build-terrain-range <osm-source.toml> <osm.pbf> <min-level> <max-level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>\n  maps2-ingest gebco-window <source.toml> <grid.tif> <west> <south> <east> <north>\n  maps2-ingest build-world <water-source.toml> <water.shp> <min-level> <max-level> <output-dir> [<gebco-source.toml> <gebco.tif> <stride>]..."
     );
 }
 

@@ -1,0 +1,10 @@
+[source]
+name = "simplified_water_polygons.shp"
+kind = "water-polygons"
+url = "https://osmdata.openstreetmap.de/download/simplified-water-polygons-split-3857.zip"
+sha256 = "61cc9fa781373aa48c3588d43d86b5ddf95ac953d255a9d8e8b6ecb83a0ed627"
+source_date = "2026-08-18"
+licence = "ODbL-1.0"
+attribution = "© OpenStreetMap contributors"
+bounds = [-180.0, -85.0511, 180.0, 85.0511]
+adapter_version = "water-polygons-v1"
