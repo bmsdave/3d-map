@@ -23,6 +23,14 @@
   snippet, and the README gained a **Demos** section with a real local-London
   build-and-load walkthrough. Fixed the manifest loader's `format_version`
   check, which only accepted 2–4 and would have rejected real v5 packages.
+- Fixed a real multipolygon bug: a relation listing the same outer member way
+  twice emitted that ring's geometry twice. Caught against the real Greater
+  London extract — the fix removed 11 duplicate feature parts. A full z12–z16
+  London rebuild from the pinned real inputs now produces 4,017,061 feature
+  parts across 16,246 terrain-bearing tiles, reproducibly
+  (`c6e61742d63afd68a40bc07a331a358d9d5b16f16e022ea291eaf193c6ce3f28` across
+  two independent clean builds), and passes the local real-package Chromium
+  acceptance test under MT2 v5.
 
 ## 0.1.0-alpha — 2026-08-15
 

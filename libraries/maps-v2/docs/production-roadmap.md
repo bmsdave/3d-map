@@ -19,18 +19,26 @@ pipeline then produces the global package.
 - Derived packages, downloaded source data, and pipeline caches are ignored by
   Git. Small synthetic fixtures remain the only committed map content.
 
-## Current position (2026-08-16)
+## Current position (2026-08-18)
 
 The project has the beginnings of the London path: pinned Greater London OSM
 and two Copernicus DEM descriptors, HTTPS-only atomic source acquisition with
-checksum validation, deterministic MT2 v4 encoding with v1/v2/v3 readers, terrain rasters, OSM
-building-height fallbacks, and deterministic
+checksum validation, deterministic MT2 v5 encoding with v1–v4 readers, terrain rasters, OSM
+building-height/roof/material/base-height fallbacks, and deterministic
 tile-border clipping, outer/inner-ring multipolygon relations whose member
 ways are not emitted a second time, named places, bridge/tunnel road structure
 flags, and
-amenity points. A local z16 London rebuild currently emits 2,128,113 feature
-parts in 11,944 terrain-bearing tiles from those validated inputs. MT2 v4
-preserves 64-bit OSM source IDs, including node IDs beyond the 32-bit range.
+amenity points. Relations whose outer member lists the same way id twice — a
+real OSM data-quality issue — no longer double-emit that ring's geometry; on
+the real London extract this fix removed 11 duplicate feature parts. A local
+z12–z16 London rebuild from real inputs now emits 4,017,061 feature parts in
+16,246 terrain-bearing tiles (2.2 GB); two independent clean builds produced
+the identical package digest
+`c6e61742d63afd68a40bc07a331a358d9d5b16f16e022ea291eaf193c6ce3f28`, and that
+real package passed the local Chromium acceptance test (demand loading,
+attribution, terrain, tilt, ≤10 ms p95). MT2 v5
+preserves 64-bit OSM source IDs, including node IDs beyond the 32-bit range,
+and adds a facade material byte to the building payload.
 MT2 v3 carries interior rings and MT2 v4 preserves full 64-bit source IDs; the renderer excludes holes from fills. Complex
 relation topology and geometry repair remain unfinished.
 
@@ -47,7 +55,8 @@ geometry while retaining each segment's farthest deviation. A conservative
 per-tile area pass removes nearly collinear interior vertices while preserving
 every tile-edge vertex, so adjacent tiles remain exact. Two independent local
 v4 z12 rebuilds emitted 159,726 parts in 70 terrain-bearing tiles and produced
-identical aggregate and per-tile hashes (`db15c97fd6983f2577e8ed4b997e9f11952e118bdcf00ee66bbcd29a5d41849a`).
+identical aggregate and per-tile hashes (`db15c97fd6983f2577e8ed4b997e9f11952e118bdcf00ee66bbcd29a5d41849a`);
+the same determinism now holds at v5 across the full z12–z16 range (see above).
 The area pass does not yet perform global topology-aware generalisation, so
 this is not yet production-quality cartographic generalisation.
 
@@ -94,11 +103,16 @@ operations rather than the Rust lint gate.
    validate coordinates, geometry, topology, source checksum, feature counts,
    and tile completeness. Classify land, water, parks, roads, POIs, labels, and
    building footprints; simplify by zoom and produce deterministic MT2 tiles.
-4. **True 3D city rendering.** Bump the MT2 format for an explicit building
-   payload (base height, top height, roof type, and material class), retain v1
-   decoding for existing fixtures, and render terrain-clamped building walls
-   and roofs with LODs. Use OSM `height` when valid, then `building:levels` ×
-   3 m, then a documented class default; provenance records the fallback mix.
+4. **True 3D city rendering.** Done for the base payload and renderer: MT2 v5
+   carries base height, top height, roof type, and material class; v1–v4
+   remain readable. The renderer draws terrain-clamped walls with LOD tiers
+   and shapes gabled/hipped roofs (a bounding-box ridge approximation, not a
+   straight-skeleton solver). OSM `height` is used when valid, then
+   `building:levels` × 3 m, then a documented class default; `roof:shape`,
+   `building:material`/`facade:material`/`wall`, and `min_height`/
+   `building:min_level` map with documented fallbacks. Remaining: a richer
+   roof solver for non-rectangular footprints, and provenance reporting the
+   fallback mix per package.
 5. **Production browser SDK.** Expose a stable package loader, visible data
    attribution, abortable fetches, retry/error states, resource bounds, context
    loss recovery, accessibility-friendly controls, and labels for roads and

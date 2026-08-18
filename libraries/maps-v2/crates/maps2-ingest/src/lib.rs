@@ -623,7 +623,13 @@ fn prepare_relations(
 fn relation_rings(
     ids: &[WayId], index: &HashMap<WayId, &RawWay>, nodes: &HashMap<NodeId, Lonlat>, relation_id: u64,
 ) -> Result<Vec<Vec<Lonlat>>, OsmError> {
-    stitch_rings(ids.iter().filter_map(|id| index.get(id).map(|way| way.nodes.clone())).collect())
+    // A relation that lists the same member way twice (a real OSM data
+    // quality issue) must not emit that ring's geometry twice: dedupe by
+    // way id, keeping first-listed order, before stitching.
+    let mut seen = HashSet::new();
+    let ways = ids.iter().filter(|id| seen.insert(**id))
+        .filter_map(|id| index.get(id).map(|way| way.nodes.clone())).collect();
+    stitch_rings(ways)
         .into_iter().map(|ring| ring.into_iter().map(|node| {
             nodes.get(&node).copied().ok_or(OsmError::MissingNode { way_id: relation_id, node_id: node.0 })
         }).collect()).collect()
@@ -1927,6 +1933,35 @@ adapter_version = "osm-v1""#,
 
         assert_eq!(features.len(), 1);
         assert_eq!(features[0].feature.id, 20);
+    }
+
+    #[test]
+    fn a_relation_listing_the_same_outer_member_twice_emits_its_ring_once() {
+        // A real OSM data-quality issue: the same way id appears twice under
+        // the "outer" role. Without deduping, the second copy of an
+        // already-closed single-way ring would be stitched into a second,
+        // duplicate ring — doubling that feature's geometry in the tile.
+        let way = RawWay {
+            id: 10,
+            tags: vec![("natural".to_string(), "water".to_string())],
+            nodes: vec![NodeId(1), NodeId(2), NodeId(3), NodeId(4), NodeId(1)],
+        };
+        let relation = RawRelation {
+            id: 20,
+            tags: vec![("natural".to_string(), "water".to_string())],
+            outer: vec![WayId(10), WayId(10)],
+            inner: Vec::new(),
+        };
+        let nodes = HashMap::from([
+            (NodeId(1), Lonlat { lon: -0.1278, lat: 51.5074 }),
+            (NodeId(2), Lonlat { lon: -0.1277, lat: 51.5074 }),
+            (NodeId(3), Lonlat { lon: -0.1277, lat: 51.5075 }),
+            (NodeId(4), Lonlat { lon: -0.1278, lat: 51.5075 }),
+        ]);
+
+        let features = prepare_osm_features(&[relation], &[way], &[], &nodes, 16).expect("valid relation");
+
+        assert_eq!(features.len(), 1, "a duplicated outer member must not double the emitted ring");
     }
 
     #[test]
