@@ -9,7 +9,7 @@
 
 use maps2_camera::Camera;
 use maps2_render::LabelBucket;
-use maps2_style::Class;
+use maps2_style::{entry_band, Class, ALL_BANDS};
 use maps2_text::{
     layout_line, measure_line, place, Atlas, Candidate, GlyphQuad, Placement, ASCENDER_EM,
     LINE_HEIGHT_EM,
@@ -54,6 +54,15 @@ pub fn class_of(identity: u128) -> Option<Class> {
 /// Candidates of one frame, in tile order. Order does not matter to the
 /// answer — placement sorts by `(rank, id)` — but it does keep the
 /// assembly cheap.
+///
+/// Text shaping (`measure_line`) is the expensive part of building a
+/// candidate, so a class is skipped below [`label_ready_zoom`] rather
+/// than measured and then rejected by the placer. A real city can carry
+/// tens of thousands of named residential streets the moment their
+/// geometry enters at [`maps2_style::entry_band`]'s zoom; at that same
+/// zoom they are city-wide and every one of them loses to place names on
+/// both budget and collision, so shaping their text is pure waste. See
+/// [`label_ready_zoom`] for the rule.
 #[must_use]
 pub fn frame_candidates(
     buckets: &[(TileId, &LabelBucket)],
@@ -61,9 +70,13 @@ pub fn frame_candidates(
     viewport: (f64, f64),
     atlas: &Atlas,
 ) -> Vec<Candidate> {
+    let zoom = camera.zoom().value();
     let mut out = Vec::new();
     for (id, bucket) in buckets {
         for point in &bucket.points {
+            if zoom < label_ready_zoom(point.class) {
+                continue;
+            }
             let size_px = label_size_px(point.class, point.rank);
             let (width, height) = measure_line(atlas, &point.name, size_px);
             out.push(Candidate {
@@ -79,6 +92,29 @@ pub fn frame_candidates(
         }
     }
     out
+}
+
+/// The zoom at which a class's name becomes worth shaping at all.
+///
+/// A road's geometry and its name do not have to earn the screen at the
+/// same zoom: the name only needs to compete once the class has had a
+/// full band to itself, i.e. from the entry zoom of the band *after*
+/// the one its geometry entered at. `Label` and `Poi` keep their
+/// existing entry zoom — `Label`'s candidate pool is already rank-gated
+/// by zoom in ingest, and `Poi` was never the volume problem.
+#[must_use]
+fn label_ready_zoom(class: Class) -> f64 {
+    match class {
+        Class::Label | Class::Poi => entry_band(class).entry_zoom(),
+        _ => {
+            let entry = entry_band(class);
+            ALL_BANDS
+                .iter()
+                .position(|band| *band == entry)
+                .and_then(|index| ALL_BANDS.get(index + 1))
+                .map_or(f64::INFINITY, |band| band.entry_zoom())
+        }
+    }
 }
 
 /// Where a tile-grid point lands on screen, in logical pixels.
@@ -139,7 +175,7 @@ mod tests {
     use super::*;
     use maps2_camera::CameraPatch;
     use maps2_fixtures::{coverage, tile_bytes, BOUNDARY_ID, EALING};
-    use maps2_render::build_label_bucket;
+    use maps2_render::{build_label_bucket, LabelPoint};
     use maps2_text::Rejection;
     use maps2_tile::TileView;
     use maps2_units::{locate, Zoom};
@@ -226,6 +262,32 @@ mod tests {
         // Exactly one copy competes; the others never reach the grid at
         // all, whatever happens to the one that does.
         assert_eq!(duplicates, copies - 1, "{duplicates} of {copies} copies were deduped");
+    }
+
+    #[test]
+    fn a_road_class_stops_shaping_text_at_its_own_entry_zoom() {
+        // RoadResidential's geometry enters at the Street band (12.0);
+        // its name only becomes a candidate one band later, at Address
+        // (14.0). At exactly its own entry zoom, real cities carry tens
+        // of thousands of these — none of them can ever win a place
+        // name's budget, so they must not be shaped at all.
+        let atlas = Atlas::build();
+        let tile = locate(EALING, 12).tile;
+        let bucket = LabelBucket {
+            points: vec![LabelPoint {
+                id: 1,
+                rank: 0,
+                class: Class::RoadResidential,
+                name: "Any Street".to_string(),
+                coord: TileCoord(32768, 32768),
+            }],
+        };
+        let owned = vec![(tile, bucket)];
+        let at_entry = frame_candidates(&borrowed(&owned), &camera_at(12.0), VIEWPORT, &atlas);
+        assert!(at_entry.is_empty(), "RoadResidential was shaped at its own entry zoom");
+        let one_band_later =
+            frame_candidates(&borrowed(&owned), &camera_at(14.0), VIEWPORT, &atlas);
+        assert_eq!(one_band_later.len(), 1, "RoadResidential never becomes a candidate at all");
     }
 
     #[test]
