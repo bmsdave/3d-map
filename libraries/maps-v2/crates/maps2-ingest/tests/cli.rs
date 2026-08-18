@@ -43,7 +43,7 @@ fn every_committed_source_descriptor_parses() {
 #[test]
 fn the_gebco_descriptor_declares_the_gebco_grid_adapter() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../pipelines/maps-v2-ingest/sources/gebco-2025-n90-s0-w-90-e0.toml");
+        .join("../../../../pipelines/maps-v2-ingest/sources/gebco-2026-n90-s0-w-90-e0.toml");
     let text = fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
     let descriptor = read_descriptor(&text).expect("gebco descriptor parses");
     assert_eq!(descriptor.kind, SourceKind::GebcoGrid);

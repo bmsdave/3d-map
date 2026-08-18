@@ -21,9 +21,11 @@ use sha2::{Digest, Sha256};
 use tiff::decoder::{Decoder, DecodingResult};
 
 mod gebco;
+mod world_terrain;
 mod world_water;
 
 pub use gebco::{RasterWindow, WINDOW_CELL_LIMIT, load_gebco_window};
+pub use world_terrain::{load_gebco_quadrant_decimated, stitch_world_quadrants};
 pub use world_water::{WaterPolygonsError, resolve_water_polygons};
 
 /// A named pipeline input pinned to its SHA-256 digest.
@@ -813,6 +815,22 @@ impl DemGrid {
             return Err(DemError::SampleCount);
         }
         Ok(Self { west, south, east, north, width, height, samples })
+    }
+
+    /// This grid's own west, south, east, north bounds.
+    #[must_use]
+    pub(crate) const fn bounds(&self) -> [f64; 4] {
+        [self.west, self.south, self.east, self.north]
+    }
+
+    #[must_use]
+    pub(crate) const fn dimensions(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    #[must_use]
+    pub(crate) fn samples(&self) -> &[f32] {
+        &self.samples
     }
 
     /// Samples the containing north-up raster cell, clamped to this tile.

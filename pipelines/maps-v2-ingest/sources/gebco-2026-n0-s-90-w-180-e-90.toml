@@ -1,0 +1,10 @@
+[source]
+name = "gebco_2026_sub_ice_n0.0_s-90.0_w-180.0_e-90.0_geotiff.tif"
+kind = "gebco-grid"
+url = "https://dap.ceda.ac.uk/bodc/gebco/global/gebco_2026/sub_ice_topography_bathymetry/geotiff/gebco_2026_sub_ice_topo_geotiff.zip?download=1"
+sha256 = "b45f45bd1e3dc9a2500158369c7a2d0ba2e8307fa8fda6824420dcb2dfa02c18"
+source_date = "2026-04-22"
+licence = "GEBCO Grid Terms of Use"
+attribution = "GEBCO Compilation Group (2026) GEBCO 2026 Grid"
+bounds = [-180.0, -90.0, -90.0, 0.0]
+adapter_version = "gebco-grid-v1"
