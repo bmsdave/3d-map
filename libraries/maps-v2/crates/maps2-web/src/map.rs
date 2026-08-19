@@ -439,6 +439,18 @@ impl Map {
         tile_paths(&plan.prefetch)
     }
 
+    /// Coarser ancestors of the viewport worth fetching so something can
+    /// stand in wherever the current level has no data — see
+    /// `ResidencyPlan::fallback`. Unlike `missing_tiles`, a path here
+    /// being absent from the host's package is normal, not a hole: only
+    /// the package that reaches this ground carries these levels.
+    #[must_use]
+    pub fn fallback_tiles(&self) -> String {
+        let available = self.tiles.keys().copied().collect::<HashSet<_>>();
+        let plan = plan_residency(&self.camera, self.viewport, &self.source_levels, &available);
+        tile_paths(&plan.fallback)
+    }
+
     /// Loaded tile paths outside the viewport and one-tile keep margin.
     /// The host owns fetching and CPU memory, so it releases these bytes.
     #[must_use]
@@ -818,49 +830,68 @@ impl Map {
     }
 
     /// The second application of the zoom rule: promote wanted tiles to
-    /// the GPU, delete the buffers of evicted ones.
+    /// the GPU, delete the buffers of everything the frame no longer draws.
+    ///
+    /// Residency is planned against the tiles the host has actually handed
+    /// in, not against the GPU copies: a coarse stand-in is chosen from
+    /// what is *available* (see `ResidencyPlan::fallback`), and asking the
+    /// GPU set instead would never find a tile that has not been uploaded
+    /// yet — the stand-in would be picked only after something else had
+    /// already uploaded it, which is to say never.
     fn apply_residency(&mut self) -> Vec<TileId> {
-        let resident: HashSet<TileId> = self.gpu.keys().copied().collect();
-        let plan = plan_residency(&self.camera, self.viewport, &self.source_levels, &resident);
-        for id in &plan.evict {
-            if let Some(bucket) = self.gpu.remove(id) {
-                bucket.delete(&self.gl);
-                self.evictions += 1;
-            }
-            if let Some(bucket) = self.gpu_lines.remove(id) {
-                bucket.delete(&self.gl);
-            }
-            if let Some(bucket) = self.gpu_buildings.remove(id) {
-                bucket.delete(&self.gl);
-            }
-            if let Some(texture) = self.height_textures.remove(id) {
-                texture.delete(&self.gl);
-            }
+        let available: HashSet<TileId> = self.tiles.keys().copied().collect();
+        let plan = plan_residency(&self.camera, self.viewport, &self.source_levels, &available);
+        let drawn: HashSet<TileId> = plan.draw.iter().copied().collect();
+        let stale: Vec<TileId> = self.gpu.keys().copied().filter(|id| !drawn.contains(id)).collect();
+        for id in stale {
+            self.release_gpu(id);
         }
-        for id in &plan.missing {
-            if let Some(cpu) = self.cpu.get(id)
-                && let Ok(gpu) = GpuBucket::upload(&self.gl, cpu)
-            {
-                self.gpu.insert(*id, gpu);
-            }
-            if let Some(cpu) = self.lines.get(id)
-                && let Ok(gpu) = GpuLineBucket::upload(&self.gl, cpu)
-            {
-                self.gpu_lines.insert(*id, gpu);
-            }
-            if let Some(cpu) = self.buildings.get(id)
-                && !cpu.indices.is_empty()
-                && let Ok(gpu) = GpuBuildingBucket::upload(&self.gl, cpu)
-            {
-                self.gpu_buildings.insert(*id, gpu);
-            }
-            if let Some(bytes) = self.heights.get(id)
-                && let Ok(texture) = HeightTexture::upload(&self.gl, bytes)
-            {
-                self.height_textures.insert(*id, texture);
-            }
+        for id in &plan.draw {
+            self.upload_gpu(*id);
         }
         plan.draw
+    }
+
+    /// Drops every GPU copy of one tile. The CPU bytes stay: the host
+    /// owns those, and `evictable_tiles` is where it is told to let go.
+    fn release_gpu(&mut self, id: TileId) {
+        if let Some(bucket) = self.gpu.remove(&id) {
+            bucket.delete(&self.gl);
+            self.evictions += 1;
+        }
+        if let Some(bucket) = self.gpu_lines.remove(&id) { bucket.delete(&self.gl); }
+        if let Some(bucket) = self.gpu_buildings.remove(&id) { bucket.delete(&self.gl); }
+        if let Some(texture) = self.height_textures.remove(&id) { texture.delete(&self.gl); }
+    }
+
+    /// Uploads whatever of one tile is not on the GPU yet. Idempotent, so
+    /// the draw list can be walked every frame without rebuilding buffers.
+    fn upload_gpu(&mut self, id: TileId) {
+        if !self.gpu.contains_key(&id)
+            && let Some(cpu) = self.cpu.get(&id)
+            && let Ok(gpu) = GpuBucket::upload(&self.gl, cpu)
+        {
+            self.gpu.insert(id, gpu);
+        }
+        if !self.gpu_lines.contains_key(&id)
+            && let Some(cpu) = self.lines.get(&id)
+            && let Ok(gpu) = GpuLineBucket::upload(&self.gl, cpu)
+        {
+            self.gpu_lines.insert(id, gpu);
+        }
+        if !self.gpu_buildings.contains_key(&id)
+            && let Some(cpu) = self.buildings.get(&id)
+            && !cpu.indices.is_empty()
+            && let Ok(gpu) = GpuBuildingBucket::upload(&self.gl, cpu)
+        {
+            self.gpu_buildings.insert(id, gpu);
+        }
+        if !self.height_textures.contains_key(&id)
+            && let Some(bytes) = self.heights.get(&id)
+            && let Ok(texture) = HeightTexture::upload(&self.gl, bytes)
+        {
+            self.height_textures.insert(id, texture);
+        }
     }
 
     /// Rebuilds every line bucket from the bytes still held, and

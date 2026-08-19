@@ -63,3 +63,43 @@ test("globe-real: a real world package and a real city package compose on one ma
   const p95Ms = await page.evaluate(() => window.maps2?.measureFrames(30) ?? Number.POSITIVE_INFINITY);
   expect(p95Ms).toBeLessThanOrEqual(10);
 });
+
+test("globe-real: street zoom outside the city package still draws the world underneath", async ({ page }) => {
+  test.skip(
+    !worldPackageRoot || !cityPackageRoot,
+    "set MAPS2_WORLD_PACKAGE_ROOT and MAPS2_REAL_PACKAGE_ROOT to run this real-data acceptance test",
+  );
+  await page.route("https://maps2.local/world/**", (route) => fulfillPrefixed(route, "world", worldPackageRoot!));
+  await page.route("https://maps2.local/city/**", (route) => fulfillPrefixed(route, "city", cityPackageRoot!));
+  await page.goto("/#/card/globe-real");
+  const stage = page.getByTestId("stage");
+  await page.getByTestId("globe-real-load").click();
+  await expect(stage).toHaveAttribute("data-state", "ready", { timeout: 15_000 });
+
+  // Paris: the city package covers London and nothing else, so the
+  // target level (13) has no tile here at all. The reported bug was a
+  // blank grey canvas — target_level is global, so it demanded z13
+  // everywhere and drew nothing where z13 did not exist. The world
+  // package's own coverage has to stand in instead.
+  await page.evaluate(() => {
+    window.maps2?.setCentre(2.3522, 48.8566);
+    window.maps2?.setZoom(13);
+    window.maps2?.render();
+  });
+  const canvas = stage.locator("canvas");
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await canvas.dispatchEvent("pointerdown", { clientX: 1, clientY: 1 });
+    await canvas.dispatchEvent("pointermove", { clientX: 2, clientY: 2 });
+    await canvas.dispatchEvent("pointerup", { clientX: 2, clientY: 2 });
+  }
+  await expect(stage).toHaveAttribute("data-tile-level", "13");
+
+  const state = await page.evaluate(() => {
+    window.maps2?.render();
+    return { debug: window.maps2?.debug(), pixel: window.maps2?.samplePixel(360, 240) };
+  });
+  expect(state.debug?.tiles_drawn).toBeGreaterThan(0);
+  expect(state.debug?.height_tiles).toBeGreaterThan(0);
+  // Opaque ground, not the cleared canvas showing through.
+  expect(state.pixel?.[3]).toBe(255);
+});

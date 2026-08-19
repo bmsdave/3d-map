@@ -72,6 +72,7 @@ export interface MapHandle {
   addSourceLevels(levels: number[]): void;
   missingTiles(): string[];
   prefetchTiles(): string[];
+  fallbackTiles(): string[];
   evictableTiles(): string[];
   loadTile(bytes: Uint8Array): void;
   unloadTile(z: number, x: number, y: number): void;
@@ -271,9 +272,17 @@ export async function createTilePackageLoader(
       // comment in maps2-web) — fetching both here means a package
       // boundary's deeper level is already resident by the time the
       // camera's zoom actually crosses it, instead of popping in.
+      // Missing tiles are wanted on screen now; fallback tiles are the
+      // coarser ancestors that stand in wherever this package has no
+      // coverage at all; prefetch tiles are a level deeper the camera
+      // hasn't reached yet (see the doc comments on prefetch_tiles and
+      // fallback_tiles in maps2-web). All three are fetched here, but
+      // only a genuinely missing tile counts as a hole in the map —
+      // a package legitimately carries no tile at most of these paths.
       const missing = map.missingTiles();
       const prefetch = map.prefetchTiles();
-      const requested = [...missing, ...prefetch];
+      const fallback = map.fallbackTiles();
+      const requested = [...missing, ...fallback, ...prefetch];
       const available = requested.filter((path) => paths.has(path) && !loaded.has(path) && !inFlight.has(path));
       const unavailable = missing.filter((path) => !paths.has(path)).length;
       available.forEach((path) => inFlight.add(path));
@@ -283,7 +292,7 @@ export async function createTilePackageLoader(
       } finally {
         available.forEach((path) => inFlight.delete(path));
       }
-      const stillWanted = new Set([...map.missingTiles(), ...map.prefetchTiles()]);
+      const stillWanted = new Set([...map.missingTiles(), ...map.fallbackTiles(), ...map.prefetchTiles()]);
       let loadedNow = 0;
       for (const [path, tile] of bytes) {
         if (!stillWanted.has(path)) continue;
@@ -319,6 +328,7 @@ interface PackageMapApi {
   add_source_levels(levels: Uint8Array): void;
   missing_tiles(): string;
   prefetch_tiles(): string;
+  fallback_tiles(): string;
   evictable_tiles(): string;
   unload_tile(z: number, x: number, y: number): void;
 }
@@ -352,6 +362,7 @@ export async function createMap(canvas: HTMLCanvasElement, pack: string | null):
     addSourceLevels: (levels) => packageApi.add_source_levels(new Uint8Array(levels)),
     missingTiles: () => JSON.parse(packageApi.missing_tiles()) as string[],
     prefetchTiles: () => JSON.parse(packageApi.prefetch_tiles()) as string[],
+    fallbackTiles: () => JSON.parse(packageApi.fallback_tiles()) as string[],
     evictableTiles: () => JSON.parse(packageApi.evictable_tiles()) as string[],
     loadTile: (bytes) => map.load_tile(bytes),
     unloadTile: (z, x, y) => packageApi.unload_tile(z, x, y),

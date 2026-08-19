@@ -44,7 +44,7 @@ export const globeReal: CardSpec = {
   id: "globe-real",
   title: "Глобус: мир + реальный город",
   purpose:
-    "Два реальных пакета на одной карте: мир (z0–z5, реальные береговые линии) снизу, город (z12+) поверх — addSourceLevels объединяет уровни без замены.",
+    "Два реальных пакета на одной карте: мир (мелкие зумы, реальные береговые линии и рельеф GEBCO) снизу, город (крупные зумы) поверх — addSourceLevels объединяет уровни без замены. Там, где у города нет покрытия, подкладывается ближайший мировой тайл, а не пустота.",
   group: "Глобус",
   mount(stage, panel) {
     const out = readout([
@@ -71,8 +71,8 @@ export const globeReal: CardSpec = {
       "data-testid": "globe-real-zoom", "aria-label": "Зум карты",
     });
     const source = section("Источники", el("div", {}, [
-      controlRow("Мир (z0–z5)", worldInput),
-      controlRow("Город (z12+)", cityInput),
+      controlRow("Мир (мелкие зумы)", worldInput),
+      controlRow("Город (крупные зумы)", cityInput),
       load,
       controlRow("Наклон", tilt),
       controlRow("Зум", zoomSlider),
@@ -117,15 +117,22 @@ export const globeReal: CardSpec = {
       let attemptedUrl = worldInput.value.trim();
       try {
         const map = await createMap(canvas, null);
-        // World first, plain (replace) so its z0-z5 pyramid is the base;
-        // city second, additive so its z12+ levels join rather than
-        // wipe the world's — see addSourceLevels's doc comment.
+        // World first, plain (replace) so its shallow pyramid is the
+        // base; city second, additive so its deep levels join rather
+        // than wipe the world's — see addSourceLevels's doc comment.
         const worldLoader: TilePackageLoader = await createTilePackageLoader(map, attemptedUrl);
         attemptedUrl = cityInput.value.trim();
         const cityLoader: TilePackageLoader = await createTilePackageLoader(
           map, attemptedUrl, { additive: true },
         );
         if (request !== generation) return;
+        // The world package's land carries no vector features at all —
+        // only the water polygons and a GEBCO height raster. With relief
+        // off, every continent renders as bare background: real terrain
+        // data is resident (see the height-tiles readout) and simply not
+        // being shaded. Relief is what makes this package's ground visible.
+        map.setRelief(true);
+        map.setHypsometric(true);
         map.setCentre(worldLoader.manifest.view.lon, worldLoader.manifest.view.lat);
         map.setZoom(Number(zoomSlider.value));
         let worldLoaded = 0;

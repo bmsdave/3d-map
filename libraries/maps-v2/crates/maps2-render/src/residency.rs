@@ -63,7 +63,9 @@ pub fn building_lod(zoom: f64) -> BuildingLod {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResidencyPlan {
-    /// Wanted on screen this frame, in draw order.
+    /// Wanted on screen this frame, in draw order: the coarse stand-in
+    /// underneath (see [`ResidencyPlan::fallback`]) before the target
+    /// level's own tiles, so detail paints over its own backdrop.
     pub draw: Vec<TileId>,
     /// Resident but no longer welcome: wrong level or far off screen.
     pub evict: Vec<TileId>,
@@ -73,7 +75,17 @@ pub struct ResidencyPlan {
     /// see [`PREFETCH_LOOKAHEAD_ZOOM`]. Never drawn until the camera's own
     /// zoom makes them the current [`target_level`].
     pub prefetch: Vec<TileId>,
+    /// Coarser ancestors of the viewport, for levels shallower than the
+    /// target. Worth fetching but not evidence of a hole: a composed
+    /// pyramid is only complete where each package has coverage, so
+    /// these are the tiles that stand in where the target level's
+    /// package has none. Counted apart from [`ResidencyPlan::missing`]
+    /// so an absent one is not reported as a gap in the map.
+    pub fallback: Vec<TileId>,
 }
+
+/// A tile span in tile indices: `(x0, y0, x1, y1)`, inclusive.
+type Span = (i64, i64, i64, i64);
 
 /// The deepest available level the camera zoom admits; below the
 /// shallowest source the shallowest is used, past the deepest the
@@ -142,7 +154,7 @@ fn clamp_tile(value: i64, level: u8) -> Option<u32> {
 
 /// Every valid tile id at `level` within a pixel-space span, in row-major
 /// order. Shared by the current draw level and the prefetch level below.
-fn tiles_in_span(level: u8, span: (i64, i64, i64, i64)) -> Vec<TileId> {
+fn tiles_in_span(level: u8, span: Span) -> Vec<TileId> {
     let (x0, y0, x1, y1) = span;
     let mut ids = Vec::new();
     for y in y0..=y1 {
@@ -155,12 +167,43 @@ fn tiles_in_span(level: u8, span: (i64, i64, i64, i64)) -> Vec<TileId> {
 }
 
 /// Whether a resident tile falls within a level's span plus keep margin.
-fn within_span(id: TileId, level: u8, span: (i64, i64, i64, i64)) -> bool {
+fn within_span(id: TileId, level: u8, span: Span) -> bool {
     let (x0, y0, x1, y1) = span;
     let m = KEEP_MARGIN_TILES;
     id.z == level
         && (x0 - m..=x1 + m).contains(&i64::from(id.x))
         && (y0 - m..=y1 + m).contains(&i64::from(id.y))
+}
+
+/// Every source level shallower than `target`, deepest first, with the
+/// span that covers the viewport at that level. Deepest first because
+/// the closest ancestor is the best-looking stand-in.
+fn coarser_spans(
+    camera: &Camera, viewport: (f64, f64), source_levels: &[u8], target: u8,
+) -> Vec<(u8, Span)> {
+    source_levels
+        .iter()
+        .copied()
+        .filter(|&level| level < target)
+        .rev()
+        .map(|level| (level, tile_span(camera, level, viewport)))
+        .collect()
+}
+
+/// The finest already-resident coarse cover, or empty when nothing
+/// coarser is loaded yet. One level only: a single stand-in is enough,
+/// and drawing every ancestor would repaint the viewport once per level.
+fn deepest_resident_cover<S: BuildHasher>(
+    coarser: &[(u8, Span)], resident: &HashSet<TileId, S>,
+) -> Vec<TileId> {
+    coarser
+        .iter()
+        .find_map(|&(level, span)| {
+            let drawable: Vec<TileId> =
+                tiles_in_span(level, span).into_iter().filter(|id| resident.contains(id)).collect();
+            (!drawable.is_empty()).then_some(drawable)
+        })
+        .unwrap_or_default()
 }
 
 /// Decides draw, evict and missing for one frame. Pure — the caller
@@ -174,13 +217,27 @@ pub fn plan_residency<S: BuildHasher>(
 ) -> ResidencyPlan {
     let level = target_level(camera.zoom().value(), source_levels);
     let span = tile_span(camera, level, viewport);
+    let coarser = coarser_spans(camera, viewport, source_levels, level);
     let mut plan = ResidencyPlan::default();
-    for id in tiles_in_span(level, span) {
-        plan.draw.push(id);
-        if !resident.contains(&id) {
-            plan.missing.push(id);
-        }
+    let wanted = tiles_in_span(level, span);
+    plan.missing = wanted.iter().copied().filter(|id| !resident.contains(id)).collect();
+
+    // A coarse stand-in only earns its draw call where the target level
+    // has a hole. Composing a world package (shallow, global) with a
+    // city one (deep, local) leaves holes everywhere the city has no
+    // coverage, and before this they rendered as the background colour.
+    if !plan.missing.is_empty() {
+        plan.draw = deepest_resident_cover(&coarser, resident);
     }
+    plan.draw.extend(wanted);
+    // Every coarser level is worth fetching, not just the one drawn: the
+    // deeper ones are better stand-ins once they arrive, and the host
+    // skips whichever its package does not carry.
+    plan.fallback = coarser
+        .iter()
+        .flat_map(|&(coarse, coarse_span)| tiles_in_span(coarse, coarse_span))
+        .filter(|id| !resident.contains(id))
+        .collect();
 
     // The next deeper source level's span is computed unconditionally (not
     // only once the lookahead gate opens) so a tile prefetched a moment ago
@@ -192,14 +249,7 @@ pub fn plan_residency<S: BuildHasher>(
         .find(|&&candidate| candidate > level)
         .map(|&next| (next, tile_span(camera, next, viewport)));
 
-    for id in resident {
-        let keep = within_span(*id, level, span)
-            || next_span.is_some_and(|(next, next_span)| within_span(*id, next, next_span));
-        if !keep {
-            plan.evict.push(*id);
-        }
-    }
-    plan.evict.sort_by_key(|id| (id.z, id.x, id.y));
+    plan.evict = evictions(resident, (level, span), &coarser, next_span);
 
     if let Some((next, next_span)) = next_span
         && camera.zoom().value() + PREFETCH_LOOKAHEAD_ZOOM >= f64::from(next)
@@ -208,6 +258,30 @@ pub fn plan_residency<S: BuildHasher>(
     }
 
     plan
+}
+
+/// Resident tiles no level in play still wants. Coarse stand-ins are
+/// kept alongside the target level: they are few (one level's span
+/// shrinks to a tile or two once the camera is far below it) and
+/// dropping them would refetch the same backdrop on the next frame.
+fn evictions<S: BuildHasher>(
+    resident: &HashSet<TileId, S>,
+    target: (u8, Span),
+    coarser: &[(u8, Span)],
+    next: Option<(u8, Span)>,
+) -> Vec<TileId> {
+    let mut evict: Vec<TileId> = resident
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let keep = within_span(id, target.0, target.1)
+                || coarser.iter().any(|&(level, span)| within_span(id, level, span))
+                || next.is_some_and(|(level, span)| within_span(id, level, span));
+            !keep
+        })
+        .collect();
+    evict.sort_by_key(|id| (id.z, id.x, id.y));
+    evict
 }
 
 #[cfg(test)]
@@ -292,6 +366,74 @@ mod tests {
         // 800×600 at 256 px per tile wants at least a 4×3 cover.
         assert!(plan.draw.len() >= 12, "only {} tiles wanted", plan.draw.len());
         assert_eq!(plan.missing, plan.draw);
+    }
+
+    /// The world+city pyramid the globe demo composes: a global package
+    /// with only shallow levels, a city package with only deep ones.
+    const COMPOSED: [u8; 11] = [1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17];
+
+    #[test]
+    fn a_deep_zoom_where_only_the_world_package_has_data_draws_the_world_tile() {
+        // Reported live: zoom to street level anywhere that is not the
+        // one real city and the map went grey. target_level is global,
+        // so it picked z13 for Paris too — where no z13 tile exists —
+        // and nothing was drawn at all. The world's z5 tile covers that
+        // ground and must stand in.
+        let paris = Lonlat { lon: 2.3522, lat: 48.8566 };
+        let world_tile = locate(paris, 5).tile;
+        let resident: HashSet<_> = [world_tile].into();
+        let camera = Camera::new(paris, Zoom::new(13.0));
+
+        let plan = plan_residency(&camera, (800.0, 600.0), &COMPOSED, &resident);
+
+        assert_eq!(plan.draw.first(), Some(&world_tile), "the world tile draws underneath");
+        assert!(!plan.evict.contains(&world_tile), "and must not be evicted to do it");
+        assert!(plan.draw.iter().any(|id| id.z == 13), "the z13 wants are still asked for");
+    }
+
+    #[test]
+    fn a_half_covered_viewport_still_draws_the_coarse_tile_under_the_hole() {
+        // The other half of the same report: at the city package's own
+        // edge, half the screen had real streets and half was void.
+        let edge = Lonlat { lon: -0.50, lat: 51.50 };
+        let camera = Camera::new(edge, Zoom::new(12.0));
+        let mut resident: HashSet<TileId> = HashSet::new();
+        resident.insert(locate(edge, 5).tile);
+        // Only the eastern half of the z12 span is loaded, as if the
+        // city package stopped there.
+        let centre = locate(edge, 12).tile;
+        resident.insert(centre);
+        resident.insert(TileId { z: 12, x: centre.x + 1, y: centre.y });
+
+        let plan = plan_residency(&camera, (800.0, 600.0), &COMPOSED, &resident);
+
+        assert!(!plan.missing.is_empty(), "the unloaded half is still a want");
+        assert_eq!(plan.draw.first().map(|id| id.z), Some(5), "coarse cover goes down first");
+        assert!(plan.draw.contains(&centre), "and the real detail paints over it");
+    }
+
+    #[test]
+    fn a_fully_covered_viewport_pays_nothing_for_a_coarse_stand_in() {
+        let camera = Camera::new(EALING, Zoom::new(14.0));
+        let resident: HashSet<TileId> =
+            tiles_in_span(14, tile_span(&camera, 14, (800.0, 600.0))).into_iter().collect();
+
+        let plan = plan_residency(&camera, (800.0, 600.0), &LEVELS, &resident);
+
+        assert!(plan.missing.is_empty(), "nothing is missing");
+        assert!(plan.draw.iter().all(|id| id.z == 14), "so no coarse tile is drawn: {:?}", plan.draw);
+    }
+
+    #[test]
+    fn coarser_levels_are_offered_for_fetching_without_counting_as_holes() {
+        let paris = Lonlat { lon: 2.3522, lat: 48.8566 };
+        let camera = Camera::new(paris, Zoom::new(13.0));
+
+        let plan = plan_residency(&camera, (800.0, 600.0), &COMPOSED, &HashSet::new());
+
+        assert!(plan.fallback.iter().any(|id| id.z == 5), "the world level is worth fetching");
+        assert!(plan.fallback.iter().all(|id| id.z < 13));
+        assert!(plan.missing.iter().all(|id| id.z == 13), "only the target level counts as missing");
     }
 
     #[test]
