@@ -427,6 +427,18 @@ impl Map {
         tile_paths(&plan.missing)
     }
 
+    /// Tile paths not wanted yet, but worth the host fetching ahead of the
+    /// camera — see [`plan_residency`]'s `prefetch`. Loading these through
+    /// `load_tile` early has no visual effect until the camera's zoom
+    /// actually reaches that level; it just means no fetch has to happen
+    /// at that exact moment.
+    #[must_use]
+    pub fn prefetch_tiles(&self) -> String {
+        let available = self.tiles.keys().copied().collect::<HashSet<_>>();
+        let plan = plan_residency(&self.camera, self.viewport, &self.source_levels, &available);
+        tile_paths(&plan.prefetch)
+    }
+
     /// Loaded tile paths outside the viewport and one-tile keep margin.
     /// The host owns fetching and CPU memory, so it releases these bytes.
     #[must_use]

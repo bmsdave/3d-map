@@ -71,6 +71,7 @@ export interface MapHandle {
   setSourceLevels(levels: number[]): void;
   addSourceLevels(levels: number[]): void;
   missingTiles(): string[];
+  prefetchTiles(): string[];
   evictableTiles(): string[];
   loadTile(bytes: Uint8Array): void;
   unloadTile(z: number, x: number, y: number): void;
@@ -265,9 +266,16 @@ export async function createTilePackageLoader(
         unloadPackageTile(map, path);
         loaded.delete(path);
       }
-      const requested = map.missingTiles();
+      // Missing tiles are wanted on screen now; prefetch tiles are a level
+      // deeper the camera hasn't reached yet (see prefetch_tiles's doc
+      // comment in maps2-web) — fetching both here means a package
+      // boundary's deeper level is already resident by the time the
+      // camera's zoom actually crosses it, instead of popping in.
+      const missing = map.missingTiles();
+      const prefetch = map.prefetchTiles();
+      const requested = [...missing, ...prefetch];
       const available = requested.filter((path) => paths.has(path) && !loaded.has(path) && !inFlight.has(path));
-      const unavailable = requested.filter((path) => !paths.has(path)).length;
+      const unavailable = missing.filter((path) => !paths.has(path)).length;
       available.forEach((path) => inFlight.add(path));
       let bytes: readonly (readonly [string, Uint8Array])[] = [];
       try {
@@ -275,7 +283,7 @@ export async function createTilePackageLoader(
       } finally {
         available.forEach((path) => inFlight.delete(path));
       }
-      const stillWanted = new Set(map.missingTiles());
+      const stillWanted = new Set([...map.missingTiles(), ...map.prefetchTiles()]);
       let loadedNow = 0;
       for (const [path, tile] of bytes) {
         if (!stillWanted.has(path)) continue;
@@ -310,6 +318,7 @@ interface PackageMapApi {
   set_source_levels(levels: Uint8Array): void;
   add_source_levels(levels: Uint8Array): void;
   missing_tiles(): string;
+  prefetch_tiles(): string;
   evictable_tiles(): string;
   unload_tile(z: number, x: number, y: number): void;
 }
@@ -342,6 +351,7 @@ export async function createMap(canvas: HTMLCanvasElement, pack: string | null):
     setSourceLevels: (levels) => packageApi.set_source_levels(new Uint8Array(levels)),
     addSourceLevels: (levels) => packageApi.add_source_levels(new Uint8Array(levels)),
     missingTiles: () => JSON.parse(packageApi.missing_tiles()) as string[],
+    prefetchTiles: () => JSON.parse(packageApi.prefetch_tiles()) as string[],
     evictableTiles: () => JSON.parse(packageApi.evictable_tiles()) as string[],
     loadTile: (bytes) => map.load_tile(bytes),
     unloadTile: (z, x, y) => packageApi.unload_tile(z, x, y),

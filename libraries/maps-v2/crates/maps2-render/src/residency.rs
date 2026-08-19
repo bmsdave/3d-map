@@ -13,6 +13,17 @@ use num_traits::ToPrimitive;
 /// not immediately evict and refetch the same neighbours.
 const KEEP_MARGIN_TILES: i64 = 1;
 
+/// How many zoom levels before the camera actually reaches a deeper
+/// source level its tiles start prefetching. Without this, a package
+/// boundary with a big level gap (e.g. a world package's z5 handing off
+/// to a city package's z12) draws nothing new for the whole climb and
+/// then pops in — missing tiles, a grey flash, then streets — the moment
+/// the camera crosses z12. Prefetched tiles land in the host's CPU-side
+/// store via `load_tile` but are not resident (see [`plan_residency`]'s
+/// `draw`), so they carry no visual effect of their own until the camera
+/// actually reaches that level, at which point they are already there.
+const PREFETCH_LOOKAHEAD_ZOOM: f64 = 4.0;
+
 /// Below this camera zoom, buildings draw as a bare footprint (no walls or
 /// roof shape). Buildings enter tiles at `Band::Micro` (z16), so this is the
 /// "just arrived" end of that band.
@@ -58,6 +69,10 @@ pub struct ResidencyPlan {
     pub evict: Vec<TileId>,
     /// Wanted but not yet resident: the host should load these.
     pub missing: Vec<TileId>,
+    /// Not wanted yet, but worth having ready before the camera arrives —
+    /// see [`PREFETCH_LOOKAHEAD_ZOOM`]. Never drawn until the camera's own
+    /// zoom makes them the current [`target_level`].
+    pub prefetch: Vec<TileId>,
 }
 
 /// The deepest available level the camera zoom admits; below the
@@ -125,6 +140,29 @@ fn clamp_tile(value: i64, level: u8) -> Option<u32> {
     (0..=max).contains(&value).then(|| u32::try_from(value).unwrap_or_default())
 }
 
+/// Every valid tile id at `level` within a pixel-space span, in row-major
+/// order. Shared by the current draw level and the prefetch level below.
+fn tiles_in_span(level: u8, span: (i64, i64, i64, i64)) -> Vec<TileId> {
+    let (x0, y0, x1, y1) = span;
+    let mut ids = Vec::new();
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let (Some(x), Some(y)) = (clamp_tile(x, level), clamp_tile(y, level)) else { continue };
+            ids.push(TileId { z: level, x, y });
+        }
+    }
+    ids
+}
+
+/// Whether a resident tile falls within a level's span plus keep margin.
+fn within_span(id: TileId, level: u8, span: (i64, i64, i64, i64)) -> bool {
+    let (x0, y0, x1, y1) = span;
+    let m = KEEP_MARGIN_TILES;
+    id.z == level
+        && (x0 - m..=x1 + m).contains(&i64::from(id.x))
+        && (y0 - m..=y1 + m).contains(&i64::from(id.y))
+}
+
 /// Decides draw, evict and missing for one frame. Pure — the caller
 /// owns the resident set and applies the plan.
 #[must_use]
@@ -135,30 +173,40 @@ pub fn plan_residency<S: BuildHasher>(
     resident: &HashSet<TileId, S>,
 ) -> ResidencyPlan {
     let level = target_level(camera.zoom().value(), source_levels);
-    let (x0, y0, x1, y1) = tile_span(camera, level, viewport);
+    let span = tile_span(camera, level, viewport);
     let mut plan = ResidencyPlan::default();
-    for y in y0..=y1 {
-        for x in x0..=x1 {
-            let (Some(x), Some(y)) = (clamp_tile(x, level), clamp_tile(y, level)) else {
-                continue;
-            };
-            let id = TileId { z: level, x, y };
-            plan.draw.push(id);
-            if !resident.contains(&id) {
-                plan.missing.push(id);
-            }
+    for id in tiles_in_span(level, span) {
+        plan.draw.push(id);
+        if !resident.contains(&id) {
+            plan.missing.push(id);
         }
     }
-    let m = KEEP_MARGIN_TILES;
+
+    // The next deeper source level's span is computed unconditionally (not
+    // only once the lookahead gate opens) so a tile prefetched a moment ago
+    // stays protected below even if the camera's zoom dips back under the
+    // gate before it reaches `level` for real — otherwise it would be
+    // fetched, evicted next frame, then re-fetched, forever.
+    let next_span = source_levels
+        .iter()
+        .find(|&&candidate| candidate > level)
+        .map(|&next| (next, tile_span(camera, next, viewport)));
+
     for id in resident {
-        let keep = id.z == level
-            && (x0 - m..=x1 + m).contains(&i64::from(id.x))
-            && (y0 - m..=y1 + m).contains(&i64::from(id.y));
+        let keep = within_span(*id, level, span)
+            || next_span.is_some_and(|(next, next_span)| within_span(*id, next, next_span));
         if !keep {
             plan.evict.push(*id);
         }
     }
     plan.evict.sort_by_key(|id| (id.z, id.x, id.y));
+
+    if let Some((next, next_span)) = next_span
+        && camera.zoom().value() + PREFETCH_LOOKAHEAD_ZOOM >= f64::from(next)
+    {
+        plan.prefetch = tiles_in_span(next, next_span).into_iter().filter(|id| !resident.contains(id)).collect();
+    }
+
     plan
 }
 
@@ -244,6 +292,38 @@ mod tests {
         // 800×600 at 256 px per tile wants at least a 4×3 cover.
         assert!(plan.draw.len() >= 12, "only {} tiles wanted", plan.draw.len());
         assert_eq!(plan.missing, plan.draw);
+    }
+
+    #[test]
+    fn a_big_level_gap_starts_prefetching_before_the_camera_arrives() {
+        // The globe-to-city demo's reported bug: world levels stop at 5,
+        // city levels start at 12. Climbing that gap must not draw a grey
+        // gap and then pop in the city tiles only once z12 is crossed.
+        let levels = [0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16];
+        let plan = plan_residency(&camera(8.0), (800.0, 600.0), &levels, &HashSet::new());
+        assert!(plan.draw.iter().all(|id| id.z == 5), "still drawing the world level");
+        assert!(!plan.prefetch.is_empty(), "z12 tiles should already be prefetching by zoom 8");
+        assert!(plan.prefetch.iter().all(|id| id.z == 12));
+    }
+
+    #[test]
+    fn a_prefetched_tile_is_not_immediately_evicted_next_frame() {
+        // Loading a prefetch hint through `load_tile` makes it resident.
+        // If the very next residency plan evicted it (it is not at the
+        // current draw level), the host would fetch it, throw it away,
+        // and fetch it again — forever, right up to the boundary.
+        let levels = [0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16];
+        let prefetched = locate(EALING, 12).tile;
+        let resident: HashSet<_> = [prefetched].into();
+        let plan = plan_residency(&camera(8.0), (800.0, 600.0), &levels, &resident);
+        assert!(!plan.evict.contains(&prefetched), "a freshly prefetched tile must survive");
+    }
+
+    #[test]
+    fn prefetch_stays_empty_far_below_the_next_level() {
+        let levels = [0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16];
+        let plan = plan_residency(&camera(2.0), (800.0, 600.0), &levels, &HashSet::new());
+        assert!(plan.prefetch.iter().all(|id| id.z != 12), "z12 is far past the lookahead margin at zoom 2");
     }
 
     #[test]
