@@ -262,7 +262,12 @@ export async function createTilePackageLoader(
   return {
     manifest,
     async loadVisible(): Promise<PackageLoadResult> {
-      const evicted = map.evictableTiles();
+      // Only ever unload this package's own tiles. `evictableTiles` speaks
+      // for the whole map, and several packages compose onto one map — a
+      // world package dropping the city package's tiles would leave that
+      // loader still believing they were resident, so it would never
+      // refetch them and the city would simply never come back.
+      const evicted = map.evictableTiles().filter((path) => loaded.has(path));
       for (const path of evicted) {
         unloadPackageTile(map, path);
         loaded.delete(path);

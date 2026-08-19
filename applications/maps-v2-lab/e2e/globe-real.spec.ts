@@ -64,6 +64,44 @@ test("globe-real: a real world package and a real city package compose on one ma
   expect(p95Ms).toBeLessThanOrEqual(10);
 });
 
+test("globe-real: approaching the city through the prefetch band still renders it", async ({ page }) => {
+  test.skip(
+    !worldPackageRoot || !cityPackageRoot,
+    "set MAPS2_WORLD_PACKAGE_ROOT and MAPS2_REAL_PACKAGE_ROOT to run this real-data acceptance test",
+  );
+  await page.route("https://maps2.local/world/**", (route) => fulfillPrefixed(route, "world", worldPackageRoot!));
+  await page.route("https://maps2.local/city/**", (route) => fulfillPrefixed(route, "city", cityPackageRoot!));
+  await page.goto("/#/card/globe-real");
+  const stage = page.getByTestId("stage");
+  await page.getByTestId("globe-real-load").click();
+  await expect(stage).toHaveAttribute("data-state", "ready", { timeout: 15_000 });
+  const canvas = stage.locator("canvas");
+  const settle = async () => {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await canvas.dispatchEvent("pointerdown", { clientX: 1, clientY: 1 });
+      await canvas.dispatchEvent("pointermove", { clientX: 2, clientY: 2 });
+      await canvas.dispatchEvent("pointerup", { clientX: 2, clientY: 2 });
+      if ((await page.evaluate(() => window.maps2?.missingTiles().length)) === 0) return;
+    }
+  };
+
+  // Stopping at 11 first is the point: the city's levels are one step
+  // deeper, so they prefetch here. Two packages share one map and
+  // `evictableTiles` speaks for all of it, so a loader that unloaded
+  // paths it did not own would drop these again while the other loader
+  // still believed them resident — and the city would never reappear.
+  await page.evaluate(() => { window.maps2?.setCentre(-0.1278, 51.5074); window.maps2?.setZoom(11); });
+  await settle();
+  await page.evaluate(() => window.maps2?.setZoom(12));
+  await settle();
+
+  await expect(stage).toHaveAttribute("data-tile-level", "12");
+  const state = await page.evaluate(() => window.maps2?.debug());
+  expect(state?.tiles_drawn).toBeGreaterThan(1);
+  expect(state?.resident_classes).toContain("Water");
+  expect(state?.labels_placed).toBeGreaterThan(0);
+});
+
 test("globe-real: street zoom outside the city package still draws the world underneath", async ({ page }) => {
   test.skip(
     !worldPackageRoot || !cityPackageRoot,
