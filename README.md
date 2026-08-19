@@ -136,6 +136,50 @@ is the same manifest-driven demand-loading path the lab's opt-in
 `MAPS2_REAL_PACKAGE_ROOT` Playwright test exercises against real terrain,
 attribution, and the ≤10 ms p95 frame budget.
 
+### A real global globe, composed with the city
+
+The city package covers one city. The world package covers everything else:
+real coastlines from the OSM community's split water polygons, and real
+GEBCO relief from the eight 90°×90° quadrants. Built together they give a
+globe you can spin and then zoom all the way into the city without the map
+going blank in between.
+
+```sh
+cd pipelines/maps-v2-ingest
+# One <source.toml> <quadrant.tif> <stride> triple per GEBCO quadrant.
+# Stride 4 keeps the whole build under a few GB of RAM and still carries
+# more samples than a z7 tile's 256×256 height raster can hold.
+../../libraries/maps-v2/target/release/maps2-ingest build-world \
+  sources/world-water-polygons.toml \
+  cache/global/simplified-water-polygons-split-3857/simplified_water_polygons.shp \
+  1 7 packages/world-v7 \
+  sources/gebco-2026-n0-s-90-w-180-e-90.toml  cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w-180.0_e-90.0_geotiff.tif  4 \
+  sources/gebco-2026-n0-s-90-w-90-e0.toml     cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w-90.0_e0.0_geotiff.tif     4 \
+  sources/gebco-2026-n0-s-90-w0-e90.toml      cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w0.0_e90.0_geotiff.tif      4 \
+  sources/gebco-2026-n0-s-90-w90-e180.toml    cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w90.0_e180.0_geotiff.tif    4 \
+  sources/gebco-2026-n90-s0-w-180-e-90.toml   cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w-180.0_e-90.0_geotiff.tif   4 \
+  sources/gebco-2026-n90-s0-w-90-e0.toml      cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w-90.0_e0.0_geotiff.tif      4 \
+  sources/gebco-2026-n90-s0-w0-e90.toml       cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w0.0_e90.0_geotiff.tif       4 \
+  sources/gebco-2026-n90-s0-w90-e180.toml     cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w90.0_e180.0_geotiff.tif     4
+```
+
+That writes 14,684 tiles across z1–z7 (~1.9 GB) and a manifest naming all
+nine sources; `verify-package` checks it. Serve it with CORS alongside the
+London package, open `/#/card/globe-real`, and put the two `manifest.json`
+URLs in **Мир** and **Город**. The two packages compose on one map:
+`addSourceLevels` unions the pyramids rather than replacing them, and
+wherever the city package has no coverage the renderer draws the nearest
+world tile underneath instead of leaving a hole.
+
+Both packages are also what the opt-in acceptance suite runs against:
+
+```sh
+cd applications/maps-v2-lab
+MAPS2_WORLD_PACKAGE_ROOT=../../pipelines/maps-v2-ingest/packages/world-v7 \
+MAPS2_REAL_PACKAGE_ROOT=../../pipelines/maps-v2-ingest/packages/london-v5 \
+npx playwright test
+```
+
 ## 20 animated studies
 
 Launch the full gallery at `/#/showcase`. Every study is a live WebGL2 canvas
