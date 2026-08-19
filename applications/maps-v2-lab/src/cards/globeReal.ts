@@ -5,6 +5,11 @@ import type { CardSpec } from "./types";
 const WORLD_MANIFEST = "https://maps2.local/world/manifest.json";
 const CITY_MANIFEST = "https://maps2.local/city/manifest.json";
 
+/// The zoom a street-level city package conventionally starts at, and so
+/// the zoom this demo hands the ground over from world terrain to real
+/// city geometry.
+const CITY_ENTRY_ZOOM = 12;
+
 function canvasPoint(canvas: HTMLCanvasElement, event: PointerEvent | WheelEvent): [number, number] {
   const rect = canvas.getBoundingClientRect();
   return [(event.clientX - rect.left) * canvas.width / rect.width, (event.clientY - rect.top) * canvas.height / rect.height];
@@ -126,18 +131,32 @@ export const globeReal: CardSpec = {
           map, attemptedUrl, { additive: true },
         );
         if (request !== generation) return;
-        // The world package's land carries no vector features at all —
-        // only the water polygons and a GEBCO height raster. With relief
-        // off, every continent renders as bare background: real terrain
-        // data is resident (see the height-tiles readout) and simply not
-        // being shaded. Relief is what makes this package's ground visible.
-        map.setRelief(true);
-        map.setHypsometric(true);
+        // Relief is the backdrop, not the subject: at the default
+        // expressiveness GEBCO's slopes come out loud enough to bury the
+        // roads, borders and place names drawn over them.
+        map.setReliefExpressiveness(0.22);
         map.setCentre(worldLoader.manifest.view.lon, worldLoader.manifest.view.lat);
         map.setZoom(Number(zoomSlider.value));
         let worldLoaded = 0;
         let cityLoaded = 0;
+        let terrainShown: boolean | null = null;
+        // Terrain is what makes the *world* package visible at all: its
+        // land carries no vector features, only water polygons and a
+        // height raster, so with relief off every continent renders as
+        // bare background. Inside the city package the same setting
+        // works against the map — hypsometric green over streets reads
+        // as countryside, and shading a 30 m DEM speckles them — so the
+        // relief belongs to the zooms the world package actually serves.
+        const applyTerrainForZoom = (): boolean => {
+          const wanted = map.debug().zoom < CITY_ENTRY_ZOOM;
+          if (wanted === terrainShown) return false;
+          terrainShown = wanted;
+          map.setRelief(wanted);
+          map.setHypsometric(wanted);
+          return true;
+        };
         const refresh = async () => {
+          if (applyTerrainForZoom()) map.render();
           const [worldResult, cityResult] = await Promise.all([worldLoader.loadVisible(), cityLoader.loadVisible()]);
           if (request !== generation) return;
           worldLoaded += worldResult.loaded;

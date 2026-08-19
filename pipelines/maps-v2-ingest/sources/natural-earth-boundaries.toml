@@ -1,0 +1,10 @@
+[source]
+name = "ne_10m_admin_0_boundary_lines_land.shp"
+kind = "natural-earth-boundaries"
+url = "https://naciscdn.org/naturalearth/10m/cultural/ne_10m_admin_0_boundary_lines_land.zip"
+sha256 = "b6811b9e2f6ed40b31622e6d261210c5e6afded9b7ad71977d3658293f56373f"
+source_date = "2026-08-19"
+licence = "public-domain"
+attribution = "Made with Natural Earth"
+bounds = [-180.0, -90.0, 180.0, 90.0]
+adapter_version = "natural-earth-boundaries-v1"

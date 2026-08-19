@@ -148,11 +148,15 @@ going blank in between.
 cd pipelines/maps-v2-ingest
 # One <source.toml> <quadrant.tif> <stride> triple per GEBCO quadrant.
 # Stride 4 keeps the whole build under a few GB of RAM and still carries
-# more samples than a z7 tile's 256×256 height raster can hold.
+# more samples than a z7 tile's 256x256 height raster can hold.
+NE=cache/global/naturalearth
 ../../libraries/maps-v2/target/release/maps2-ingest build-world \
   sources/world-water-polygons.toml \
   cache/global/simplified-water-polygons-split-3857/simplified_water_polygons.shp \
-  1 7 packages/world-v7 \
+  1 7 packages/world-v8 \
+  --places     sources/natural-earth-places.toml     $NE/ne_10m_populated_places/ne_10m_populated_places.shp \
+  --boundaries sources/natural-earth-boundaries.toml $NE/ne_10m_admin_0_boundary_lines_land/ne_10m_admin_0_boundary_lines_land.shp \
+  --roads      sources/natural-earth-roads.toml      $NE/ne_10m_roads/ne_10m_roads.shp \
   sources/gebco-2026-n0-s-90-w-180-e-90.toml  cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w-180.0_e-90.0_geotiff.tif  4 \
   sources/gebco-2026-n0-s-90-w-90-e0.toml     cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w-90.0_e0.0_geotiff.tif     4 \
   sources/gebco-2026-n0-s-90-w0-e90.toml      cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w0.0_e90.0_geotiff.tif      4 \
@@ -163,8 +167,19 @@ cd pipelines/maps-v2-ingest
   sources/gebco-2026-n90-s0-w90-e180.toml     cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w90.0_e180.0_geotiff.tif     4
 ```
 
-That writes 14,684 tiles across z1–z7 (~1.9 GB) and a manifest naming all
-nine sources; `verify-package` checks it. Serve it with CORS alongside the
+The three Natural Earth layers are what make the low zooms a *map* rather
+than a relief model: place names, country borders and the trunk road
+network. Without them the world package carries only coastlines and a
+height raster, and every zoom below the city package draws hill shading
+and nothing else. Fetch them into the cache first (public domain, ~13 MB
+total, pinned by SHA-256 in the three `sources/natural-earth-*.toml`
+descriptors) from `https://naciscdn.org/naturalearth/10m/cultural/`:
+`ne_10m_populated_places`, `ne_10m_admin_0_boundary_lines_land` and
+`ne_10m_roads`.
+
+That writes 16,132 tiles across z1–z7 (~2.1 GB) and a manifest naming all
+twelve sources; `verify-package` checks it, and building it twice from
+clean gives byte-identical tile digests. Serve it with CORS alongside the
 London package, open `/#/card/globe-real`, and put the two `manifest.json`
 URLs in **Мир** and **Город**. The two packages compose on one map:
 `addSourceLevels` unions the pyramids rather than replacing them, and
@@ -175,7 +190,7 @@ Both packages are also what the opt-in acceptance suite runs against:
 
 ```sh
 cd applications/maps-v2-lab
-MAPS2_WORLD_PACKAGE_ROOT=../../pipelines/maps-v2-ingest/packages/world-v7 \
+MAPS2_WORLD_PACKAGE_ROOT=../../pipelines/maps-v2-ingest/packages/world-v8 \
 MAPS2_REAL_PACKAGE_ROOT=../../pipelines/maps-v2-ingest/packages/london-v5 \
 npx playwright test
 ```

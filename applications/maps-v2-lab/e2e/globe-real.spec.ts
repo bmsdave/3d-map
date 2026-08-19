@@ -64,6 +64,39 @@ test("globe-real: a real world package and a real city package compose on one ma
   expect(p95Ms).toBeLessThanOrEqual(10);
 });
 
+test("globe-real: the world package carries labels and roads, not only relief", async ({ page }) => {
+  test.skip(
+    !worldPackageRoot || !cityPackageRoot,
+    "set MAPS2_WORLD_PACKAGE_ROOT and MAPS2_REAL_PACKAGE_ROOT to run this real-data acceptance test",
+  );
+  await page.route("https://maps2.local/world/**", (route) => fulfillPrefixed(route, "world", worldPackageRoot!));
+  await page.route("https://maps2.local/city/**", (route) => fulfillPrefixed(route, "city", cityPackageRoot!));
+  await page.goto("/#/card/globe-real");
+  const stage = page.getByTestId("stage");
+  await page.getByTestId("globe-real-load").click();
+  await expect(stage).toHaveAttribute("data-state", "ready", { timeout: 15_000 });
+  const canvas = stage.locator("canvas");
+
+  // Every zoom the world package serves has to read as a map, not as a
+  // relief model: before Natural Earth was ingested these levels drew
+  // hill shading and a coastline and nothing else at all — no place
+  // name, no border, no road anywhere on Earth outside one city.
+  for (const zoom of [3, 6, 9]) {
+    await page.evaluate((z) => { window.maps2?.setCentre(2.0, 49.5); window.maps2?.setZoom(z); }, zoom);
+    for (let attempt = 0; attempt < 14; attempt += 1) {
+      await canvas.dispatchEvent("pointerdown", { clientX: 1, clientY: 1 });
+      await canvas.dispatchEvent("pointermove", { clientX: 2, clientY: 2 });
+      await canvas.dispatchEvent("pointerup", { clientX: 2, clientY: 2 });
+      if ((await page.evaluate(() => window.maps2?.missingTiles().length)) === 0) break;
+    }
+    const placed = await page.evaluate(() => {
+      window.maps2?.render();
+      return window.maps2?.labelDebug().filter((label) => label.state === "placed").length ?? 0;
+    });
+    expect(placed, `place names at z${zoom}`).toBeGreaterThan(0);
+  }
+});
+
 test("globe-real: approaching the city through the prefetch band still renders it", async ({ page }) => {
   test.skip(
     !worldPackageRoot || !cityPackageRoot,

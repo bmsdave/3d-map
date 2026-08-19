@@ -159,6 +159,11 @@ const ALPHA_STEP: f32 = 0.25;
 
 /// Width of the anti-aliased edge of a ribbon, in screen pixels.
 const LINE_FEATHER_PX: f32 = 1.0;
+
+/// The dash an administrative boundary is drawn with: long strokes with
+/// a short gap, the convention every atlas uses for a border.
+const BOUNDARY_DASH_PERIOD_PX: f32 = 9.0;
+const BOUNDARY_DASH_ON_PX: f32 = 6.0;
 /// How much of the screen labels may take before the frame stops
 /// choosing. Eight percent is a quiet map; the density card argues with
 /// the number, which is why it is a knob and not a constant in a shader.
@@ -672,7 +677,9 @@ fn entry_json(
 /// interrupted: both its passes take the same dash, and dimming alone
 /// would only make a white road paler than the near-white land.
 fn set_dash(gl: &Gl, program: &LineProgram, pass: RoadPass) {
-    let (period, on) = if pass.level == RoadLevel::Tunnel {
+    let (period, on) = if pass.class == Class::Boundary {
+        (BOUNDARY_DASH_PERIOD_PX, BOUNDARY_DASH_ON_PX)
+    } else if pass.level == RoadLevel::Tunnel {
         (TUNNEL_DASH_PERIOD_PX, TUNNEL_DASH_ON_PX)
     } else {
         (0.0, 0.0)
@@ -998,6 +1005,12 @@ impl Map {
         // white fill under the near-white land would read as a
         // highlight, which is the opposite of running underground.
         if pass.level == RoadLevel::Tunnel && pass.pass == Pass::Fill {
+            return;
+        }
+        // A border is one dashed rule, not a ribbon: a casing would give
+        // it the white-fill-over-grey-outline look every road here has,
+        // and the one thing it must not read as is a road.
+        if pass.class == Class::Boundary && pass.pass == Pass::Casing {
             return;
         }
         let alpha = class_alpha(pass.class, self.camera.zoom(), self.override_band)

@@ -1,9 +1,11 @@
 use std::{collections::BTreeMap, env, fs, fs::File, path::{Path, PathBuf}, process::{Command, ExitCode}};
 
 use maps2_ingest::{
-    DemGrid, SourceDescriptor, SourceKind, build_tiles, build_tiles_with_terrains, load_copernicus_dem,
-    load_gebco_quadrant_decimated, load_gebco_window, read_descriptor, resolve_osm_pbf, resolve_water_polygons,
-    scan_osm_pbf, stitch_world_quadrants, validate_source, validate_source_reader, OsmSummary,
+    DemGrid, PreparedFeature, SourceDescriptor, SourceKind, build_tiles, build_tiles_with_terrains,
+    load_copernicus_dem, load_gebco_quadrant_decimated, load_gebco_window, read_descriptor,
+    resolve_boundary_lines, resolve_major_roads, resolve_osm_pbf, resolve_place_labels,
+    resolve_water_polygons, scan_osm_pbf, stitch_world_quadrants, validate_source,
+    validate_source_reader, OsmSummary,
 };
 use maps2_units::{TileCoord, TileId, TilePoint, to_lonlat};
 use serde::Deserialize;
@@ -209,8 +211,8 @@ fn build_world(
     let descriptor = load_kind(descriptor_path, SourceKind::WaterPolygons)?;
     validate_input(&descriptor, shapefile_path)?;
     let levels = parse_levels(minimum, maximum)?;
-    let terrain = parse_world_terrain_inputs(terrain)?;
-    let mut grids = terrain.iter().map(|input| input.grid.clone()).collect::<Vec<_>>();
+    let layers = parse_world_layers(terrain)?;
+    let mut grids = layers.terrain.iter().map(|input| input.grid.clone()).collect::<Vec<_>>();
     if let Ok(world) = stitch_world_quadrants(&grids) {
         grids.push(world);
     }
@@ -219,7 +221,13 @@ fn build_world(
     let mut height_tile_count = 0;
     let mut digests = Vec::new();
     for level in &levels {
-        let features = resolve_water_polygons(shapefile_path, *level).map_err(|error| error.to_string())?;
+        // Coastline first, then the furniture that makes it a map rather
+        // than a relief model: borders, roads, and the place names that
+        // are the only thing readable at a world zoom.
+        let mut features = resolve_water_polygons(shapefile_path, *level).map_err(|error| error.to_string())?;
+        for layer in layers.vector_layers() {
+            features.extend(layer.resolve(*level)?);
+        }
         let tiles = build_tiles_with_terrains(&features, &grids)
             .map_err(|error| format!("cannot encode MT2: {error:?}"))?;
         height_tile_count += tiles.iter().filter(|(tile, _)| grids.iter().any(|grid| grid.covers_tile(*tile))).count();
@@ -228,7 +236,8 @@ fn build_world(
         write_tiles(output, &tiles)?;
     }
     let mut sources = vec![&descriptor];
-    sources.extend(terrain.iter().map(|input| &input.descriptor));
+    sources.extend(layers.terrain.iter().map(|input| &input.descriptor));
+    sources.extend(layers.vector_layers().iter().map(|layer| &layer.descriptor));
     write_manifest(output, &sources, &levels, feature_count, &digests, height_tile_count)?;
     println!("{{\"features\":{feature_count},\"tiles\":{},\"height_tiles\":{height_tile_count}}}", digests.len());
     Ok(())
@@ -237,6 +246,79 @@ fn build_world(
 struct WorldTerrainInput {
     descriptor: SourceDescriptor,
     grid: DemGrid,
+}
+
+/// One Natural Earth shapefile layer: which resolver reads it, and the
+/// descriptor that pins the bytes it read.
+struct WorldVectorLayer {
+    descriptor: SourceDescriptor,
+    path: String,
+    kind: SourceKind,
+}
+
+impl WorldVectorLayer {
+    fn resolve(&self, level: u8) -> Result<Vec<PreparedFeature>, String> {
+        let features = match self.kind {
+            SourceKind::NaturalEarthPlaces => resolve_place_labels(&self.path, level),
+            SourceKind::NaturalEarthBoundaries => resolve_boundary_lines(&self.path, level),
+            _ => resolve_major_roads(&self.path, level),
+        };
+        features.map_err(|error| error.to_string())
+    }
+}
+
+/// Everything `build-world` layers onto the coastline, however the
+/// command line happened to order it.
+struct WorldLayers {
+    terrain: Vec<WorldTerrainInput>,
+    places: Option<WorldVectorLayer>,
+    boundaries: Option<WorldVectorLayer>,
+    roads: Option<WorldVectorLayer>,
+}
+
+impl WorldLayers {
+    fn vector_layers(&self) -> Vec<&WorldVectorLayer> {
+        [self.boundaries.as_ref(), self.roads.as_ref(), self.places.as_ref()]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+}
+
+/// The terrain triples stay positional, as they were; the Natural Earth
+/// layers are flagged, because they are optional and a package built
+/// without them is still a valid globe.
+fn parse_world_layers(args: &[String]) -> Result<WorldLayers, String> {
+    let mut terrain = Vec::new();
+    let (mut places, mut boundaries, mut roads) = (None, None, None);
+    let mut index = 0;
+    while index < args.len() {
+        let kind = match args[index].as_str() {
+            "--places" => SourceKind::NaturalEarthPlaces,
+            "--boundaries" => SourceKind::NaturalEarthBoundaries,
+            "--roads" => SourceKind::NaturalEarthRoads,
+            _ => {
+                terrain.push(args[index].clone());
+                index += 1;
+                continue;
+            }
+        };
+        let flag = &args[index];
+        let (Some(descriptor_path), Some(shapefile)) = (args.get(index + 1), args.get(index + 2))
+        else {
+            return Err(format!("{flag} needs <source.toml> <shapefile.shp>"));
+        };
+        let descriptor = load_kind(descriptor_path, kind)?;
+        validate_input(&descriptor, shapefile)?;
+        let layer = WorldVectorLayer { descriptor, path: shapefile.clone(), kind };
+        match kind {
+            SourceKind::NaturalEarthPlaces => places = Some(layer),
+            SourceKind::NaturalEarthBoundaries => boundaries = Some(layer),
+            _ => roads = Some(layer),
+        }
+        index += 3;
+    }
+    Ok(WorldLayers { terrain: parse_world_terrain_inputs(&terrain)?, places, boundaries, roads })
 }
 
 fn parse_world_terrain_inputs(args: &[String]) -> Result<Vec<WorldTerrainInput>, String> {
@@ -404,6 +486,9 @@ const fn source_kind_name(kind: SourceKind) -> &'static str {
         SourceKind::CopernicusDem => "copernicus-dem",
         SourceKind::GebcoGrid => "gebco-grid",
         SourceKind::WaterPolygons => "water-polygons",
+        SourceKind::NaturalEarthPlaces => "natural-earth-places",
+        SourceKind::NaturalEarthBoundaries => "natural-earth-boundaries",
+        SourceKind::NaturalEarthRoads => "natural-earth-roads",
     }
 }
 

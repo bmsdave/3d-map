@@ -21,10 +21,14 @@ use sha2::{Digest, Sha256};
 use tiff::decoder::{Decoder, DecodingResult};
 
 mod gebco;
+mod natural_earth;
 mod world_terrain;
 mod world_water;
 
 pub use gebco::{RasterWindow, WINDOW_CELL_LIMIT, load_gebco_window};
+pub use natural_earth::{
+    NaturalEarthError, resolve_boundary_lines, resolve_major_roads, resolve_place_labels,
+};
 pub use world_terrain::{load_gebco_quadrant_decimated, stitch_world_quadrants};
 pub use world_water::{WaterPolygonsError, resolve_water_polygons};
 
@@ -100,6 +104,15 @@ pub enum SourceKind {
     /// The OSM community's pre-simplified world water-polygon shapefile.
     #[serde(rename = "water-polygons")]
     WaterPolygons,
+    /// Natural Earth populated places: the world-zoom label layer.
+    #[serde(rename = "natural-earth-places")]
+    NaturalEarthPlaces,
+    /// Natural Earth country boundary lines.
+    #[serde(rename = "natural-earth-boundaries")]
+    NaturalEarthBoundaries,
+    /// Natural Earth generalised road network.
+    #[serde(rename = "natural-earth-roads")]
+    NaturalEarthRoads,
 }
 
 /// A reproducibly pinned source and its public legal metadata.
@@ -366,6 +379,9 @@ pub fn classify_osm_tags(tags: &[(&str, &str)]) -> Option<Class> {
         .or_else(|| tag(tags, "building").filter(|value| *value != "no").map(|_| Class::Building))
         .or_else(|| tag(tags, "natural").filter(|value| *value == "water").map(|_| Class::Water))
         .or_else(|| tag(tags, "leisure").filter(|value| *value == "park").map(|_| Class::Park))
+        .or_else(|| {
+            tag(tags, "boundary").filter(|value| *value == "administrative").map(|_| Class::Boundary)
+        })
         .or_else(|| tag(tags, "amenity").map(|_| Class::Poi))
         .or_else(|| tag(tags, "place").map(|_| Class::Label))
 }
@@ -897,7 +913,7 @@ fn count_class(summary: &mut OsmSummary, class: Option<Class>) {
         Some(Class::Water) => summary.water += 1,
         Some(Class::Park) => summary.parks += 1,
         Some(Class::Poi) => summary.pois += 1,
-        Some(Class::Land | Class::Label) | None => {}
+        Some(Class::Land | Class::Label | Class::Boundary) | None => {}
     }
 }
 
@@ -1206,7 +1222,12 @@ fn simplify_road(points: Vec<GridPoint>, class: Class, level: u8) -> Vec<GridPoi
 /// The source is already simplified for exactly this zoom range, so
 /// skipping the extra pass here keeps a shared edge byte-identical
 /// between neighbours instead of guessing badly at fixing it per ring.
-const WATER_TOPOLOGY_SAFE_MAX_LEVEL: u8 = 5;
+///
+/// This has to cover every level the world package is cut at, not just
+/// the shallow ones: raising that package from z5 to z7 immediately put
+/// pale wedges back over the North Sea and the Channel, because z6 and
+/// z7 had fallen back through to the simplifying path.
+const WATER_TOPOLOGY_SAFE_MAX_LEVEL: u8 = 7;
 
 fn simplify_area_ring(
     points: Vec<GridPoint>, class: Class, level: u8, tile: TileId,
@@ -1565,7 +1586,7 @@ mod tests {
 
         let kept = simplify_area_ring(points.clone(), Class::Water, 3, tile);
 
-        assert_eq!(kept, points, "a below-level-6 water ring must not be thinned at all");
+        assert_eq!(kept, points, "a world-package water ring must not be thinned at all");
     }
 
     #[test]
@@ -1580,10 +1601,13 @@ mod tests {
 
     #[test]
     fn a_water_ring_still_simplifies_above_the_topology_safe_level() {
-        let tile = TileId { z: 7, x: 4, y: 4 };
+        // Above the world package's deepest level water comes from the
+        // regional OSM build instead, where rings are whole lakes rather
+        // than grid-split pieces and nothing shares a cut edge.
+        let tile = TileId { z: 9, x: 4, y: 4 };
         let points = ring_with_a_collinear_edge();
 
-        let kept = simplify_area_ring(points.clone(), Class::Water, 7, tile);
+        let kept = simplify_area_ring(points.clone(), Class::Water, 9, tile);
 
         assert!(kept.len() < points.len(), "regional water (lakes) must still simplify above world zoom");
     }

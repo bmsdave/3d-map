@@ -45,7 +45,10 @@ pub const LINESOFAR_STEP: f32 = 16.0;
 pub const ROUND_CAP_SEGMENTS: u32 = 8;
 
 /// Road classes bottom to top: a motorway draws over a service road.
-pub const ROAD_ORDER: [Class; 7] = [
+pub const ROAD_ORDER: [Class; 8] = [
+    // Boundaries go down first: a border is a reference mark under the
+    // map's own furniture, never something a road disappears beneath.
+    Class::Boundary,
     Class::RoadPath,
     Class::RoadService,
     Class::RoadResidential,
