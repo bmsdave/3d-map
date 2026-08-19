@@ -197,7 +197,13 @@ pub fn resolve_major_roads(
         if number(&record, "scalerank").unwrap_or(12.0) > f64::from(level) + 2.0 {
             continue;
         }
-        let name = text(&record, "name").unwrap_or_default();
+        // `name` is the bare route number — "31", "30" — which on a map
+        // is just a number floating over a line. `label` is the same
+        // route written the way it is signed ("E31", "M25"), which is
+        // what a reader is looking for.
+        let name = text(&record, "label")
+            .or_else(|| text(&record, "name"))
+            .unwrap_or_default();
         for part in polylines_of(&shape) {
             id += 1;
             features.extend(prepare_features(

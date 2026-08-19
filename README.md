@@ -153,7 +153,7 @@ NE=cache/global/naturalearth
 ../../libraries/maps-v2/target/release/maps2-ingest build-world \
   sources/world-water-polygons.toml \
   cache/global/simplified-water-polygons-split-3857/simplified_water_polygons.shp \
-  1 7 packages/world-v8 \
+  1 7 packages/world-v9 \
   --places     sources/natural-earth-places.toml     $NE/ne_10m_populated_places/ne_10m_populated_places.shp \
   --boundaries sources/natural-earth-boundaries.toml $NE/ne_10m_admin_0_boundary_lines_land/ne_10m_admin_0_boundary_lines_land.shp \
   --roads      sources/natural-earth-roads.toml      $NE/ne_10m_roads/ne_10m_roads.shp \
@@ -190,7 +190,7 @@ Both packages are also what the opt-in acceptance suite runs against:
 
 ```sh
 cd applications/maps-v2-lab
-MAPS2_WORLD_PACKAGE_ROOT=../../pipelines/maps-v2-ingest/packages/world-v8 \
+MAPS2_WORLD_PACKAGE_ROOT=../../pipelines/maps-v2-ingest/packages/world-v9 \
 MAPS2_REAL_PACKAGE_ROOT=../../pipelines/maps-v2-ingest/packages/london-v5 \
 npx playwright test
 ```
