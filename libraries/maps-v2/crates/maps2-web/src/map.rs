@@ -645,6 +645,7 @@ impl Map {
                 Rejection::Budget => ("budget", None),
                 Rejection::OffScreen => ("offscreen", None),
                 Rejection::Duplicate => ("duplicate", None),
+                Rejection::Repeat => ("repeat", None),
             };
             entry_json(r.id, r.rank, r.bounds, state, by, "")
         });

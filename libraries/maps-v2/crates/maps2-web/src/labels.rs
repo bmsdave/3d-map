@@ -81,6 +81,10 @@ pub fn frame_candidates(
             let (width, height) = measure_line(atlas, &point.name, size_px);
             out.push(Candidate {
                 id: label_identity(point.class, point.id),
+                // A road is a run of separate ways in the source data,
+                // each named the same; a place or a POI is one feature
+                // and shares its name only by coincidence.
+                repeats_by_text: point.class.road_rank().is_some(),
                 rank: point.rank,
                 text: point.name.clone(),
                 anchor: anchor_px(*id, point.coord, camera, viewport),
