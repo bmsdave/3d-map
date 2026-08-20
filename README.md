@@ -136,6 +136,51 @@ is the same manifest-driven demand-loading path the lab's opt-in
 `MAPS2_REAL_PACKAGE_ROOT` Playwright test exercises against real terrain,
 attribution, and the ≤10 ms p95 frame budget.
 
+### One map, built from every source at once
+
+Composing two packages in the browser works, and `addSourceLevels` is a
+real capability — but it is the wrong place to decide which source owns a
+piece of ground. By tile time a feature no longer knows where it came
+from, so Natural Earth's London and OSM's London both arrive, a kilometre
+apart, and the M25 arrives twice: once generalised, once as a run of ways.
+The renderer cannot repair that at sixty frames a second.
+
+`build-map` settles it once, at build time, against a plan that says where
+each source speaks, over which levels, and how strongly:
+
+```sh
+cd pipelines/maps-v2-ingest
+../../libraries/maps-v2/target/release/maps2-ingest \
+  build-map plans/london-world.toml packages/map-v1
+```
+
+Two rules resolve the overlaps ([`conflate.rs`](libraries/maps-v2/crates/maps2-ingest/src/conflate.rs)):
+
+- **Coverage** — inside the bounds of a stronger source that is active at
+  this level, weaker sources are silent. This is what stops a generalised
+  world road network being drawn underneath a city's own.
+- **Identity** — a place a stronger source has already named is not named
+  again by a weaker one, even outside its bounds, matched on name within
+  25 km. This is what gives one city one label.
+
+Identity is matched for places only. Two renderings of a road share no
+vertex and often no midpoint, so matching lines by position would be
+guesswork; coverage settles roads honestly instead.
+
+The plan also decides the pyramid. World layers are global, so every level
+they claim costs the whole planet — z8 alone is 41,000 tiles and z11 is
+millions — so they stop at z7, the city extract owns z8–z16 over its own
+ground, and the renderer falls back to a coarser tile everywhere else. The
+result is one manifest with no level gap:
+
+```sh
+cd applications/maps-v2-lab
+MAPS2_MAP_PACKAGE_ROOT=../../pipelines/maps-v2-ingest/packages/map-v1 \
+npx playwright test e2e/map-real.spec.ts
+```
+
+Serve it with CORS and open `/#/card/map-real`.
+
 ### A real global globe, composed with the city
 
 The city package covers one city. The world package covers everything else:

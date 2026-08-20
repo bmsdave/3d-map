@@ -1,7 +1,8 @@
 use std::{collections::BTreeMap, env, fs, fs::File, path::{Path, PathBuf}, process::{Command, ExitCode}};
 
 use maps2_ingest::{
-    DemGrid, PreparedFeature, SourceDescriptor, SourceKind, build_tiles, build_tiles_with_terrains,
+    DemGrid, LayerClaim, PreparedFeature, SourceDescriptor, SourceKind, SourceLayer, build_tiles,
+    build_tiles_with_terrains, claimed_levels, conflate,
     load_copernicus_dem, load_gebco_quadrant_decimated, load_gebco_window, read_descriptor,
     resolve_boundary_lines, resolve_major_roads, resolve_osm_pbf, resolve_place_labels,
     resolve_water_polygons, scan_osm_pbf, stitch_world_quadrants, validate_source,
@@ -38,6 +39,7 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         [command, args @ ..] if command == "build-terrain-many" => build_terrain_many(args),
         [command, args @ ..] if command == "build-terrain-range" => build_terrain_range(args),
+        [command, plan, output] if command == "build-map" => build_map(plan, output),
         [command, descriptor, shapefile, minimum, maximum, output, terrain @ ..] if command == "build-world" => {
             build_world(descriptor, shapefile, minimum, maximum, output, terrain)
         }
@@ -642,7 +644,7 @@ fn summary_json(summary: OsmSummary) -> String {
 
 fn print_help() {
     println!(
-        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest verify-package <package-dir>\n  maps2-ingest fetch <source.toml> <output>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest build-terrain-range <osm-source.toml> <osm.pbf> <min-level> <max-level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>\n  maps2-ingest gebco-window <source.toml> <grid.tif> <west> <south> <east> <north>\n  maps2-ingest build-world <water-source.toml> <water.shp> <min-level> <max-level> <output-dir> [<gebco-source.toml> <gebco.tif> <stride>]..."
+        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest verify-package <package-dir>\n  maps2-ingest fetch <source.toml> <output>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest build-terrain-range <osm-source.toml> <osm.pbf> <min-level> <max-level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>\n  maps2-ingest gebco-window <source.toml> <grid.tif> <west> <south> <east> <north>\n  maps2-ingest build-world <water-source.toml> <water.shp> <min-level> <max-level> <output-dir> [<gebco-source.toml> <gebco.tif> <stride>]...\n  maps2-ingest build-map <plan.toml> <output-dir>"
     );
 }
 
@@ -736,4 +738,184 @@ adapter_version = "osm-v1""#,
         fs::write(tile, b"changed").expect("change tile");
         assert!(verify_package_contents(root.path(), &digests, &package_hash).is_err());
     }
+}
+
+/// One layer of a build plan: a source, the ground and levels it speaks
+/// for, and how strongly.
+#[derive(Debug, Deserialize)]
+struct PlanLayer {
+    descriptor: String,
+    input: String,
+    precedence: u8,
+    levels: [u8; 2],
+    /// Defaults to the descriptor's own bounds; set it to narrow a
+    /// source to the ground it is actually good for.
+    bounds: Option<[f64; 4]>,
+}
+
+/// A terrain raster: the same inputs the other commands take, named
+/// rather than positional because a plan lists many.
+#[derive(Debug, Deserialize)]
+struct PlanTerrain {
+    descriptor: String,
+    input: String,
+    /// GEBCO quadrants decimate by this; Copernicus tiles do not use it.
+    stride: Option<u32>,
+    west: Option<f64>,
+    south: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BuildPlan {
+    #[serde(default)]
+    layer: Vec<PlanLayer>,
+    #[serde(default)]
+    terrain: Vec<PlanTerrain>,
+}
+
+struct LoadedLayer {
+    descriptor: SourceDescriptor,
+    input: String,
+    claim: LayerClaim,
+}
+
+impl LoadedLayer {
+    fn resolve(&self, level: u8) -> Result<Vec<PreparedFeature>, String> {
+        if !self.claim.covers_level(level) {
+            return Ok(Vec::new());
+        }
+        match self.descriptor.kind {
+            SourceKind::WaterPolygons => {
+                resolve_water_polygons(&self.input, level).map_err(|e| e.to_string())
+            }
+            SourceKind::NaturalEarthPlaces => {
+                resolve_place_labels(&self.input, level).map_err(|e| e.to_string())
+            }
+            SourceKind::NaturalEarthBoundaries => {
+                resolve_boundary_lines(&self.input, level).map_err(|e| e.to_string())
+            }
+            SourceKind::NaturalEarthRoads => {
+                resolve_major_roads(&self.input, level).map_err(|e| e.to_string())
+            }
+            SourceKind::OsmPbf => resolve_osm_pbf(&self.input, level).map_err(|e| format!("{e:?}")),
+            kind => Err(format!("{} is not a vector layer", source_kind_name(kind))),
+        }
+    }
+}
+
+/// Builds one package from many sources, reconciling their overlaps at
+/// build time — see `maps2_ingest::conflate`. This is the command the
+/// two-package composition became once it was clear that merging tiles
+/// in the browser could not settle which source owned a given piece of
+/// ground.
+fn build_map(plan_path: &str, output: &str) -> Result<(), String> {
+    let text = fs::read_to_string(plan_path)
+        .map_err(|error| format!("cannot read {plan_path}: {error}"))?;
+    let plan: BuildPlan =
+        toml::from_str(&text).map_err(|error| format!("cannot parse {plan_path}: {error}"))?;
+    let layers = load_plan_layers(&plan)?;
+    let terrains = load_plan_terrains(&plan)?;
+    let mut grids = terrains.iter().map(|input| input.grid.clone()).collect::<Vec<_>>();
+    if let Ok(world) = stitch_world_quadrants(&grids) {
+        grids.push(world);
+    }
+    let levels = claimed_levels(&layers.iter().map(|l| l.claim).collect::<Vec<_>>());
+    if levels.is_empty() {
+        return Err("a build plan needs at least one layer".to_string());
+    }
+
+    let output = Path::new(output);
+    let mut totals = MapBuildTotals::default();
+    let mut digests = Vec::new();
+    for level in &levels {
+        write_conflated_level(*level, &layers, &grids, output, &mut totals, &mut digests)?;
+    }
+    let (feature_count, height_tile_count) = (totals.features, totals.height_tiles);
+    let (covered, matched) = (totals.covered, totals.matched);
+
+    let mut descriptors: Vec<&SourceDescriptor> = layers.iter().map(|l| &l.descriptor).collect();
+    descriptors.extend(terrains.iter().map(|t| &t.descriptor));
+    write_manifest(output, &descriptors, &levels, feature_count, &digests, height_tile_count)?;
+    println!(
+        "{{\"features\":{feature_count},\"tiles\":{},\"height_tiles\":{height_tile_count},\"dropped_covered\":{covered},\"dropped_matched\":{matched}}}",
+        digests.len()
+    );
+    Ok(())
+}
+
+#[derive(Default)]
+struct MapBuildTotals {
+    features: usize,
+    height_tiles: usize,
+    covered: usize,
+    matched: usize,
+}
+
+/// Resolves every layer at one level, reconciles them, and writes the
+/// tiles that come out.
+fn write_conflated_level(
+    level: u8,
+    layers: &[LoadedLayer],
+    grids: &[DemGrid],
+    output: &Path,
+    totals: &mut MapBuildTotals,
+    digests: &mut Vec<TileDigest>,
+) -> Result<(), String> {
+    let mut sources = Vec::new();
+    for layer in layers {
+        sources.push(SourceLayer { claim: layer.claim, features: layer.resolve(level)? });
+    }
+    let (features, report) = conflate(level, sources);
+    totals.covered += report.covered;
+    totals.matched += report.matched;
+    totals.features += features.len();
+    let tiles = build_tiles_with_terrains(&features, grids)
+        .map_err(|error| format!("cannot encode MT2: {error:?}"))?;
+    totals.height_tiles +=
+        tiles.iter().filter(|(tile, _)| grids.iter().any(|grid| grid.covers_tile(*tile))).count();
+    digests.extend(tile_digests(&tiles));
+    write_tiles(output, &tiles)
+}
+
+fn load_plan_layers(plan: &BuildPlan) -> Result<Vec<LoadedLayer>, String> {
+    plan.layer
+        .iter()
+        .map(|layer| {
+            let descriptor = load_descriptor(&layer.descriptor)?;
+            validate_input(&descriptor, &layer.input)?;
+            let claim = LayerClaim {
+                precedence: layer.precedence,
+                bounds: layer.bounds.unwrap_or(descriptor.bounds),
+                min_level: layer.levels[0],
+                max_level: layer.levels[1],
+            };
+            Ok(LoadedLayer { descriptor, input: layer.input.clone(), claim })
+        })
+        .collect()
+}
+
+fn load_plan_terrains(plan: &BuildPlan) -> Result<Vec<TerrainInput>, String> {
+    plan.terrain
+        .iter()
+        .map(|terrain| {
+            let descriptor = load_descriptor(&terrain.descriptor)?;
+            validate_input(&descriptor, &terrain.input)?;
+            let grid = match (terrain.stride, terrain.west, terrain.south) {
+                (Some(stride), _, _) => {
+                    load_gebco_quadrant_decimated(&terrain.input, descriptor.bounds, stride)
+                        .map_err(|error| error.to_string())?
+                }
+                (None, Some(west), Some(south)) => {
+                    load_copernicus_dem(&terrain.input, west, south).map_err(|e| e.to_string())?
+                }
+                _ => {
+                    return Err(format!(
+                        "terrain {} needs either a stride or a west/south corner",
+                        terrain.input
+                    ))
+                }
+            };
+            Ok(TerrainInput { descriptor, grid })
+        })
+        .collect()
 }

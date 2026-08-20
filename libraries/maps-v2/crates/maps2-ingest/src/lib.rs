@@ -20,11 +20,15 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tiff::decoder::{Decoder, DecodingResult};
 
+mod conflate;
 mod gebco;
 mod natural_earth;
 mod world_terrain;
 mod world_water;
 
+pub use conflate::{
+    ConflationReport, LayerClaim, PLACE_MATCH_METRES, SourceLayer, claimed_levels, conflate,
+};
 pub use gebco::{RasterWindow, WINDOW_CELL_LIMIT, load_gebco_window};
 pub use natural_earth::{
     NaturalEarthError, resolve_boundary_lines, resolve_major_roads, resolve_place_labels,

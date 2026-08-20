@@ -1,0 +1,100 @@
+# One map, built once, from every source that has something to say about
+# it. Sources overlap on purpose: precedence and bounds decide who owns a
+# given piece of ground at a given level, so the package that comes out
+# carries each thing once. See maps2_ingest::conflate.
+
+# --- The world, generalised. Speaks everywhere, and only where nothing
+# --- more detailed does. These layers are global, so every level they
+# --- claim costs the whole planet: z8 is already 41k tiles and z11 is
+# --- millions. They stop at z7, which is as deep as this generalisation
+# --- is worth drawing anyway; below it the city owns its own ground and
+# --- the renderer falls back to a coarser tile everywhere else.
+[[layer]]
+descriptor = "sources/world-water-polygons.toml"
+input = "cache/global/simplified-water-polygons-split-3857/simplified_water_polygons.shp"
+precedence = 10
+levels = [1, 7]
+
+[[layer]]
+descriptor = "sources/natural-earth-boundaries.toml"
+input = "cache/global/naturalearth/ne_10m_admin_0_boundary_lines_land/ne_10m_admin_0_boundary_lines_land.shp"
+precedence = 10
+levels = [1, 7]
+
+[[layer]]
+descriptor = "sources/natural-earth-roads.toml"
+input = "cache/global/naturalearth/ne_10m_roads/ne_10m_roads.shp"
+precedence = 10
+levels = [1, 7]
+
+# Places reach deeper than the other world layers on purpose. They are
+# points, and rank gating admits only cities and towns at these levels,
+# so the whole planet costs a few thousand tiles rather than millions —
+# and this is the band where the city extract and the world source
+# genuinely overlap, which is what conflation is for.
+[[layer]]
+descriptor = "sources/natural-earth-places.toml"
+input = "cache/global/naturalearth/ne_10m_populated_places/ne_10m_populated_places.shp"
+precedence = 10
+levels = [1, 11]
+
+# --- One real city. Outranks the world sources inside the ground it
+# --- covers, and reaches down to z8 so there is no level the pyramid
+# --- has no answer for.
+[[layer]]
+descriptor = "sources/london.toml"
+input = "cache/greater-london-260814.osm.pbf"
+precedence = 90
+levels = [8, 16]
+
+[[terrain]]
+descriptor = "sources/london-dem-n51w001.toml"
+input = "cache/Copernicus_DSM_COG_10_N51_00_W001_00_DEM.tif"
+west = -1.0
+south = 51.0
+
+[[terrain]]
+descriptor = "sources/london-dem-n51e000.toml"
+input = "cache/Copernicus_DSM_COG_10_N51_00_E000_00_DEM.tif"
+west = 0.0
+south = 51.0
+
+[[terrain]]
+descriptor = "sources/gebco-2026-n0-s-90-w-180-e-90.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w-180.0_e-90.0_geotiff.tif"
+stride = 4
+
+[[terrain]]
+descriptor = "sources/gebco-2026-n0-s-90-w-90-e0.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w-90.0_e0.0_geotiff.tif"
+stride = 4
+
+[[terrain]]
+descriptor = "sources/gebco-2026-n0-s-90-w0-e90.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w0.0_e90.0_geotiff.tif"
+stride = 4
+
+[[terrain]]
+descriptor = "sources/gebco-2026-n0-s-90-w90-e180.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w90.0_e180.0_geotiff.tif"
+stride = 4
+
+[[terrain]]
+descriptor = "sources/gebco-2026-n90-s0-w-180-e-90.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w-180.0_e-90.0_geotiff.tif"
+stride = 4
+
+[[terrain]]
+descriptor = "sources/gebco-2026-n90-s0-w-90-e0.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w-90.0_e0.0_geotiff.tif"
+stride = 4
+
+[[terrain]]
+descriptor = "sources/gebco-2026-n90-s0-w0-e90.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w0.0_e90.0_geotiff.tif"
+stride = 4
+
+[[terrain]]
+descriptor = "sources/gebco-2026-n90-s0-w90-e180.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w90.0_e180.0_geotiff.tif"
+stride = 4
