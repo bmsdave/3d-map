@@ -8,16 +8,15 @@
 //! properties are gone.
 
 use maps2_camera::Camera;
-use maps2_render::LabelBucket;
+use maps2_render::{project_normalised, tile_frame, LabelBucket, View};
 use maps2_style::{entry_band, Class, ALL_BANDS};
 use maps2_text::{
     layout_line, measure_line, place, Atlas, Candidate, GlyphQuad, Placement, ASCENDER_EM,
     LINE_HEIGHT_EM,
 };
-use maps2_units::{TileCoord, TileId};
+use maps2_units::{TileCoord, TileId, TILE_EXTENT};
 use num_traits::ToPrimitive;
 
-use crate::transform::place_tile;
 
 /// Breathing room around a line, in screen pixels. Two labels may sit
 /// flush against each other's boxes; this is what keeps their ink apart.
@@ -77,6 +76,12 @@ pub fn frame_candidates(
             if zoom < label_ready_zoom(point.class) {
                 continue;
             }
+            let (anchor, front) = anchor_px(*id, point.coord, camera, viewport);
+            // Behind the globe: the place is real, the screen position
+            // is its shadow through the planet.
+            if front < 0.0 {
+                continue;
+            }
             let size_px = label_size_px(point.class, point.rank);
             let (width, height) = measure_line(atlas, &point.name, size_px);
             out.push(Candidate {
@@ -87,7 +92,7 @@ pub fn frame_candidates(
                 repeats_by_text: point.class.road_rank().is_some(),
                 rank: point.rank,
                 text: point.name.clone(),
-                anchor: anchor_px(*id, point.coord, camera, viewport),
+                anchor,
                 size: (
                     width + 2.0 * LABEL_PADDING_PX,
                     height + 2.0 * LABEL_PADDING_PX,
@@ -121,12 +126,31 @@ fn label_ready_zoom(class: Class) -> f64 {
     }
 }
 
-/// Where a tile-grid point lands on screen, in logical pixels.
-fn anchor_px(id: TileId, coord: TileCoord, camera: &Camera, viewport: (f64, f64)) -> (f32, f32) {
-    let placement = place_tile(id, camera, viewport.0, viewport.1);
+/// Where a tile-grid point lands on screen, in logical pixels, and
+/// which side of the world it is on.
+///
+/// This has to be the same projection the geometry goes through, not a
+/// flat affine placement that happens to agree at the centre of the
+/// screen: on the globe the two answers separate with distance from
+/// that centre, and a label ends up in the void beside the planet it
+/// belongs to. The far side matters too — half the named places on a
+/// globe are behind it, and `front` is what keeps them there.
+fn anchor_px(
+    id: TileId, coord: TileCoord, camera: &Camera, viewport: (f64, f64),
+) -> ((f32, f32), f64) {
+    let frame = tile_frame(id);
+    let extent = f64::from(TILE_EXTENT);
+    let nrm = (
+        frame.span.mul_add(f64::from(coord.0) / extent, frame.origin_x),
+        frame.span.mul_add(f64::from(coord.1) / extent, frame.origin_y),
+    );
+    let projected = project_normalised(nrm, &View::of(camera, viewport), 1.0);
     (
-        screen_scalar(f64::from(coord.0).mul_add(placement.scale, placement.translate_x)),
-        screen_scalar(f64::from(coord.1).mul_add(placement.scale, placement.translate_y)),
+        (
+            screen_scalar(viewport.0 / 2.0 + projected.x),
+            screen_scalar(viewport.1 / 2.0 + projected.y),
+        ),
+        projected.front,
     )
 }
 
@@ -236,11 +260,18 @@ mod tests {
         };
         upright.apply(&CameraPatch::default()).expect("no-op patch");
         let flat = sizes(&upright);
-        assert!(!flat.is_empty(), "no label quads at all");
+        let rotated = sizes(&turned);
+        assert!(!flat.is_empty() && !rotated.is_empty(), "no label quads at all");
         // Every quad is a square of the cell: no rotation can produce
-        // that, and no shear can survive it.
-        assert!(flat.iter().all(|(w, h)| w == h), "quads are not square: {flat:?}");
-        assert_eq!(flat, sizes(&turned), "bearing and tilt changed the type");
+        // that, and no shear can survive it. The *set* of labels does
+        // change with bearing, and must — anchors travel with the map,
+        // so turning it brings different places on screen. This test
+        // used to require the two sets to be identical, which only held
+        // because the anchor path had no bearing term at all and left
+        // every label standing where the unturned map had put it.
+        for quads in [&flat, &rotated] {
+            assert!(quads.iter().all(|(w, h)| w == h), "quads are not square: {quads:?}");
+        }
     }
 
     #[test]

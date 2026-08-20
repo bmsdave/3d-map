@@ -71,6 +71,35 @@ test.describe("map-real", () => {
     expect(londons).toBeLessThanOrEqual(1);
   });
 
+  test("every label on the globe sits on the globe", async ({ page }) => {
+    const stage = await open(page);
+    const canvas = stage.locator("canvas");
+    await page.evaluate(() => { window.maps2?.setCentre(20, 45); window.maps2?.setZoom(2); });
+    await settle(page, canvas);
+    const frame = await page.evaluate(() => {
+      window.maps2?.render();
+      const debug = window.maps2?.debug();
+      const placed = (window.maps2?.labelDebug() ?? []).filter((l) => l.state === "placed");
+      return { shape: debug?.shape, viewport: [720, 480], placed };
+    });
+    expect(frame.shape).toBe("globe");
+    expect(frame.placed.length).toBeGreaterThan(4);
+
+    // The globe is inscribed in the viewport, so every label belongs
+    // inside the disc. Labels and roads used to go through a flat
+    // affine placement while the ground went through the projection:
+    // the two agree only at the screen centre, so names ended up
+    // stranded in the void beside the planet, including names for
+    // cities on the far side of it.
+    const [width, height] = frame.viewport;
+    const radius = Math.min(width, height) / 2;
+    for (const label of frame.placed) {
+      const dx = label.x + label.w / 2 - width / 2;
+      const dy = label.y + label.h / 2 - height / 2;
+      expect(Math.hypot(dx, dy), `${label.text} is off the globe`).toBeLessThan(radius);
+    }
+  });
+
   test("the package declares one continuous pyramid", async ({ page }) => {
     await open(page);
     const levels = await page.evaluate(async () => {

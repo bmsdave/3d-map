@@ -978,6 +978,7 @@ impl Map {
             return;
         }
         self.line_program.bind(&self.gl);
+        self.line_program.view.set_view(&self.gl, &self.view());
         self.gl.uniform2f(
             Some(&self.line_program.u_viewport),
             self.viewport.0 as f32,
@@ -1019,17 +1020,14 @@ impl Map {
         if alpha < 0.004 {
             return;
         }
-        let placement = place_tile(id, &self.camera, self.viewport.0, self.viewport.1);
+        let frame = tile_frame(id);
+        let pixels = self.tile_pixels(id);
+        let half_width = self.pass_half_width(pass);
         bucket.bind(&self.gl, &self.line_program);
         let gl = &self.gl;
         let program = &self.line_program;
-        gl.uniform2f(
-            Some(&program.u_translate),
-            placement.translate_x as f32,
-            placement.translate_y as f32,
-        );
-        gl.uniform1f(Some(&program.u_scale), placement.scale as f32);
-        gl.uniform1f(Some(&program.u_half_width), self.pass_half_width(pass));
+        program.view.set_tile(gl, frame, pixels);
+        gl.uniform1f(Some(&program.u_half_width), half_width);
         set_dash(gl, program, pass);
         set_colour(gl, program, pass, alpha);
         gl.draw_elements_with_i32(

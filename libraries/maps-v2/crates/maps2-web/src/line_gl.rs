@@ -14,6 +14,8 @@ use maps2_render::{
 use maps2_style::Class;
 
 use crate::gl::{as_bytes, link_program};
+use crate::gl_view::{ViewLocations, PROJECTION_GLSL};
+use maps2_units::TILE_EXTENT;
 
 const VERTEX_STRIDE: i32 = 8;
 
@@ -23,25 +25,28 @@ fn vertex_src() -> String {
 in vec2 a_pos;
 in vec2 a_normal;
 in float a_linesofar;
-uniform vec2 u_translate;
-uniform float u_scale;
-uniform vec2 u_viewport;
+{PROJECTION_GLSL}
 uniform float u_half_width;
 out vec2 v_normal;
 out float v_along_px;
+out float v_front;
 void main() {{
     vec2 extrusion = a_normal / {normal_scale:.1};
-    vec2 centre_px = u_translate + (a_pos + {bias}.0) * u_scale;
+    // The centreline goes through the shared projection, so a ribbon
+    // follows whatever shape the world is in; the extrusion stays in
+    // screen pixels, because a road's width is a screen width and not
+    // a distance on the ground.
+    vec3 centre = project_nrm((a_pos + {bias}.0) / {extent:.1}, 1.0);
+    v_front = centre.z;
     float reach = length(extrusion);
     v_normal = reach > 0.001 ? extrusion / reach : vec2(0.0);
-    v_along_px = a_linesofar * {step:.1} * u_scale;
-    vec2 px = centre_px + extrusion * u_half_width;
-    vec2 clip = px / u_viewport * 2.0 - 1.0;
-    gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+    v_along_px = a_linesofar * {step:.1} * u_tile_scale_px / {extent:.1};
+    gl_Position = clip_of(centre.xy + extrusion * u_half_width);
 }}",
         normal_scale = NORMAL_SCALE,
         bias = POS_BIAS,
         step = LINESOFAR_STEP,
+        extent = f64::from(TILE_EXTENT),
     )
 }
 
@@ -56,8 +61,10 @@ uniform float u_feather;
 uniform vec2 u_dash;
 in vec2 v_normal;
 in float v_along_px;
+in float v_front;
 out vec4 outColor;
 void main() {
+    if (v_front < 0.0) { discard; }
     if (u_dash.x > 0.0 && mod(v_along_px, u_dash.x) > u_dash.y) discard;
     float dist = length(v_normal) * u_half_width;
     float inner = max(u_half_width - u_feather, 0.0);
@@ -68,8 +75,10 @@ void main() {
 
 pub struct LineProgram {
     program: WebGlProgram,
-    pub u_translate: WebGlUniformLocation,
-    pub u_scale: WebGlUniformLocation,
+    /// The shared projection's uniforms — the same ones the fills and
+    /// the terrain bind, so a road cannot end up on a different shape
+    /// from the ground it runs over.
+    pub view: ViewLocations,
     pub u_viewport: WebGlUniformLocation,
     pub u_half_width: WebGlUniformLocation,
     pub u_color: WebGlUniformLocation,
@@ -88,8 +97,7 @@ impl LineProgram {
                 .ok_or_else(|| JsValue::from_str(&format!("missing uniform {name}")))
         };
         Ok(Self {
-            u_translate: uniform("u_translate")?,
-            u_scale: uniform("u_scale")?,
+            view: ViewLocations::of(gl, &program)?,
             u_viewport: uniform("u_viewport")?,
             u_half_width: uniform("u_half_width")?,
             u_color: uniform("u_color")?,
