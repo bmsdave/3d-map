@@ -169,9 +169,18 @@ guesswork; coverage settles roads honestly instead.
 
 The plan also decides the pyramid. World layers are global, so every level
 they claim costs the whole planet — z8 alone is 41,000 tiles and z11 is
-millions — so they stop at z7, the city extract owns z8–z16 over its own
-ground, and the renderer falls back to a coarser tile everywhere else. The
-result is one manifest with no level gap:
+millions — so coastline, borders and roads stop at z7. Places reach to z11
+because they are points and rank gating admits only cities and towns
+there, which is a few thousand tiles rather than millions, and because
+that band is where the city extract and the world source genuinely
+overlap. The city extract owns z8–z16 over its own ground; the renderer
+falls back to a coarser tile everywhere else.
+
+The result is one manifest, 41,255 tiles across a continuous z1–z16, from
+fifteen pinned sources. The build reports what it reconciled — on this
+plan, four Natural Earth places dropped where OSM covers the same ground,
+which is why zooming to London at z10 shows OSM's suburb names and exactly
+one "London" instead of two a kilometre apart:
 
 ```sh
 cd applications/maps-v2-lab
