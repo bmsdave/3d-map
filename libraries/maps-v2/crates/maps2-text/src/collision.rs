@@ -265,7 +265,12 @@ impl Frame {
     }
 }
 
-fn within_margin(bounds: ScreenBox, viewport: (f32, f32)) -> bool {
+/// Whether a box is close enough to the viewport to be worth deciding
+/// about. Public so a host can drop a label before building a candidate
+/// for it: a name far off screen is not a decision the frame has to
+/// record, and at world zoom most names are far off screen.
+#[must_use]
+pub fn within_margin(bounds: ScreenBox, viewport: (f32, f32)) -> bool {
     bounds.x1 > -LABEL_MARGIN_PX
         && bounds.y1 > -LABEL_MARGIN_PX
         && bounds.x0 < viewport.0 + LABEL_MARGIN_PX

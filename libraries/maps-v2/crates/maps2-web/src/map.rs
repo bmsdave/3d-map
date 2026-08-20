@@ -25,7 +25,7 @@ use crate::gl_building::{BuildingProgram, GpuBuildingBucket};
 use crate::gl_terrain::{GroundMeshGpu, HeightTexture, TerrainProgram, TerrainSettings};
 use crate::gl_view::TilePixels;
 use crate::input::Input;
-use crate::labels::{class_of, frame_candidates, frame_quads, place_frame};
+use crate::labels::{class_of, frame_candidates, frame_quads, place_candidates};
 use crate::line_gl::{GpuLineBucket, LineProgram};
 use crate::text_gl::{BoxProgram, TextDraw, TextProgram};
 use crate::transform::place_tile;
@@ -106,6 +106,44 @@ pub struct Map {
     /// frame and only rebuilds CPU/GPU buckets on a tier change, not on
     /// every frame — the same one-off-rebuild shape as `rebuild_lines`.
     building_lod: BuildingLod,
+    /// The residency plan for the camera as it now stands, kept until
+    /// something it depends on moves. A plan is a pure function of the
+    /// camera, the viewport, the source levels and which tiles are
+    /// resident, so recomputing it for each caller only burned time.
+    plan: Option<maps2_render::ResidencyPlan>,
+    /// How many plans have actually been computed. A frame that reports
+    /// more than one has a host asking the same question twice.
+    plans_built: u32,
+    /// Where the last frame's milliseconds went. Measured, not guessed:
+    /// the phases are the only way to tell a slow frame caused by too
+    /// many tiles from one caused by too many labels.
+    frame: FrameTimings,
+}
+
+/// Milliseconds spent in each phase of the last frame.
+#[derive(Clone, Copy, Debug, Default)]
+struct FrameTimings {
+    total: f64,
+    residency: f64,
+    ground: f64,
+    buildings: f64,
+    fills: f64,
+    roads: f64,
+    labels: f64,
+}
+
+/// The page clock, in milliseconds. `None` when the host has no
+/// `performance` — timings then read zero rather than costing a frame.
+fn now_ms() -> Option<f64> {
+    web_sys::window()?.performance().map(|clock| clock.now())
+}
+
+/// Milliseconds since `start`, or zero when there is no clock.
+fn since(start: Option<f64>) -> f64 {
+    match (start, now_ms()) {
+        (Some(from), Some(to)) => to - from,
+        _ => 0.0,
+    }
 }
 
 /// Everything the label pass is steered by, and the last answer it gave.
@@ -243,6 +281,9 @@ impl Map {
             passes: road_passes(),
             source_levels: DEFAULT_SOURCE_LEVELS.to_vec(),
             building_lod: building_lod(12.0),
+            plan: None,
+            plans_built: 0,
+            frame: FrameTimings::default(),
         })
     }
 
@@ -374,6 +415,7 @@ impl Map {
         self.names.insert(id, names);
         self.labels.placement_dirty = true;
         self.tiles.insert(id, bytes.to_vec());
+        self.invalidate_plan();
         if let Some(raster) = view.raster(CLASS_HEIGHTS) {
             HeightsRaster::parse(raster).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
             self.heights.insert(id, raster.to_vec());
@@ -390,6 +432,7 @@ impl Map {
         self.buildings.remove(&id);
         self.names.remove(&id);
         self.labels.placement_dirty = true;
+        self.invalidate_plan();
         self.heights.remove(&id);
         if let Some(bucket) = self.gpu.remove(&id) { bucket.delete(&self.gl); }
         if let Some(bucket) = self.gpu_lines.remove(&id) { bucket.delete(&self.gl); }
@@ -410,6 +453,7 @@ impl Map {
     pub fn set_source_levels(&mut self, levels: Vec<u8>) -> Result<(), JsValue> {
         self.source_levels = normalise_source_levels(levels)
             .ok_or_else(|| JsValue::from_str("a package needs at least one source level"))?;
+        self.invalidate_plan();
         Ok(())
     }
 
@@ -420,16 +464,37 @@ impl Map {
         for level in levels {
             register_source_level(&mut self.source_levels, level);
         }
+        self.invalidate_plan();
+    }
+
+    /// Everything the host needs to know about tile demand, from one
+    /// residency plan.
+    ///
+    /// The four lists used to be four methods, and a host that wanted
+    /// all of them — which is every host, once fallback and prefetch
+    /// exist — paid for four identical plans. During a drag that was
+    /// nine plans per pointer event once the two `render` calls are
+    /// counted, each allocating a set of every resident tile and
+    /// walking the span of every source level. The demand is one
+    /// question about one camera; it is answered once.
+    #[must_use]
+    pub fn tile_demand(&mut self) -> String {
+        let plan = self.plan();
+        format!(
+            "{{\"missing\":{},\"prefetch\":{},\"fallback\":{},\"evictable\":{}}}",
+            tile_paths(&plan.missing),
+            tile_paths(&plan.prefetch),
+            tile_paths(&plan.fallback),
+            tile_paths(&plan.evict),
+        )
     }
 
     /// Tile paths that cover the viewport but have not reached the host yet.
     /// Fetch policy belongs to the host, so this only names the deterministic
     /// demand and does not perform network work during a frame.
     #[must_use]
-    pub fn missing_tiles(&self) -> String {
-        let available = self.tiles.keys().copied().collect::<HashSet<_>>();
-        let plan = plan_residency(&self.camera, self.viewport, &self.source_levels, &available);
-        tile_paths(&plan.missing)
+    pub fn missing_tiles(&mut self) -> String {
+        tile_paths(&self.plan().missing)
     }
 
     /// Tile paths not wanted yet, but worth the host fetching ahead of the
@@ -438,10 +503,8 @@ impl Map {
     /// actually reaches that level; it just means no fetch has to happen
     /// at that exact moment.
     #[must_use]
-    pub fn prefetch_tiles(&self) -> String {
-        let available = self.tiles.keys().copied().collect::<HashSet<_>>();
-        let plan = plan_residency(&self.camera, self.viewport, &self.source_levels, &available);
-        tile_paths(&plan.prefetch)
+    pub fn prefetch_tiles(&mut self) -> String {
+        tile_paths(&self.plan().prefetch)
     }
 
     /// Coarser ancestors of the viewport worth fetching so something can
@@ -450,19 +513,15 @@ impl Map {
     /// being absent from the host's package is normal, not a hole: only
     /// the package that reaches this ground carries these levels.
     #[must_use]
-    pub fn fallback_tiles(&self) -> String {
-        let available = self.tiles.keys().copied().collect::<HashSet<_>>();
-        let plan = plan_residency(&self.camera, self.viewport, &self.source_levels, &available);
-        tile_paths(&plan.fallback)
+    pub fn fallback_tiles(&mut self) -> String {
+        tile_paths(&self.plan().fallback)
     }
 
     /// Loaded tile paths outside the viewport and one-tile keep margin.
     /// The host owns fetching and CPU memory, so it releases these bytes.
     #[must_use]
-    pub fn evictable_tiles(&self) -> String {
-        let available = self.tiles.keys().copied().collect::<HashSet<_>>();
-        let plan = plan_residency(&self.camera, self.viewport, &self.source_levels, &available);
-        tile_paths(&plan.evict)
+    pub fn evictable_tiles(&mut self) -> String {
+        tile_paths(&self.plan().evict)
     }
 
     pub fn set_zoom(&mut self, zoom: f64) -> Result<(), JsValue> {
@@ -551,6 +610,9 @@ impl Map {
         gl.clear(Gl::COLOR_BUFFER_BIT);
         self.frame_draw_calls = 0;
         self.frame_tiles = 0;
+        let frame_start = now_ms();
+        self.plans_built = 0;
+        self.frame = FrameTimings::default();
         // A specimen is a page of type, not a map: drawing cartography
         // under it would only mean the frame answers to the camera, and
         // the one thing the card exists to show is that it does not.
@@ -559,18 +621,36 @@ impl Map {
             return;
         }
         self.sync_building_lod();
+        let mark = now_ms();
         let draw = self.apply_residency();
+        self.frame.residency = since(mark);
+
+        let mark = now_ms();
         self.draw_ground(&draw);
+        self.frame.ground = since(mark);
+
+        let mark = now_ms();
         self.draw_buildings(&draw);
+        self.frame.buildings = since(mark);
+
+        let mark = now_ms();
         self.program.bind(&self.gl);
         self.program.view.set_view(&self.gl, &self.view());
         for id in &draw {
             self.draw_tile(*id);
         }
+        self.frame.fills = since(mark);
+
         // Every fill of the frame is down before the first road: a road
         // must not disappear under the neighbouring tile's land.
+        let mark = now_ms();
         self.draw_roads(&draw);
+        self.frame.roads = since(mark);
+
+        let mark = now_ms();
         self.draw_labels(&draw);
+        self.frame.labels = since(mark);
+        self.frame.total = since(frame_start);
     }
 
     /// One pixel of the last frame, `"r,g,b,a"`, with the origin at the
@@ -602,7 +682,7 @@ impl Map {
             .map_or_else(|| format!("{:?}", Band::at(zoom)), |b| format!("{b:?}"));
         let centre = self.camera.centre();
         format!(
-            "{{\"zoom\":{:.4},\"centre_lon\":{:.6},\"centre_lat\":{:.6},\"bearing\":{:.2},\"moving\":{},\"band\":\"{:?}\",\"composition\":\"{}\",\"override\":{},\"settled\":{},\"tile_level\":{},\"resident_classes\":{:?},\"tiles_drawn\":{},\"draw_calls\":{},\"resident_gpu\":{},\"evictions\":{},\"tilt\":{:.1},\"label_candidates\":{},\"labels_placed\":{},\"labels_rejected\":{},\"label_occupancy\":{:.4},\"label_budget\":{:.4},{},{}}}",
+            "{{\"zoom\":{:.4},\"centre_lon\":{:.6},\"centre_lat\":{:.6},\"bearing\":{:.2},\"moving\":{},\"band\":\"{:?}\",\"composition\":\"{}\",\"override\":{},\"settled\":{},\"tile_level\":{},\"resident_classes\":{:?},\"tiles_drawn\":{},\"draw_calls\":{},\"resident_gpu\":{},\"evictions\":{},\"tilt\":{:.1},\"label_candidates\":{},\"labels_placed\":{},\"labels_rejected\":{},\"label_occupancy\":{:.4},\"label_budget\":{:.4},{},{},{}}}",
             zoom.value(),
             centre.lon,
             centre.lat,
@@ -626,6 +706,7 @@ impl Map {
             self.labels.budget,
             self.roads_debug(),
             self.debug_relief(),
+            self.debug_frame(),
         )
     }
 
@@ -706,7 +787,30 @@ impl Map {
     fn steer(&mut self, patch: &CameraPatch) -> Result<(), JsValue> {
         self.camera.apply(patch).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
         self.labels.placement_dirty = true;
+        self.invalidate_plan();
         Ok(())
+    }
+
+    /// The residency plan for the camera as it stands, computed once and
+    /// then handed to every caller until [`Self::invalidate_plan`].
+    fn plan(&mut self) -> &maps2_render::ResidencyPlan {
+        if self.plan.is_none() {
+            let available = self.tiles.keys().copied().collect::<HashSet<_>>();
+            self.plan = Some(plan_residency(
+                &self.camera,
+                self.viewport,
+                &self.source_levels,
+                &available,
+            ));
+            self.plans_built += 1;
+        }
+        self.plan.as_ref().expect("a plan was just built")
+    }
+
+    /// Anything a plan reads has moved: the camera, the viewport, the
+    /// source pyramid, or which tiles are resident.
+    fn invalidate_plan(&mut self) {
+        self.plan = None;
     }
 
     fn active_level(&self) -> u8 {
@@ -821,6 +925,26 @@ impl Map {
         }
     }
 
+    /// Where the last frame's time went, and how much of the map is
+    /// being held to draw it. `plans` is the count of residency plans
+    /// the frame actually computed: more than one means something asked
+    /// the same question twice.
+    fn debug_frame(&self) -> String {
+        format!(
+            "\"frame_ms\":{:.3},\"residency_ms\":{:.3},\"ground_ms\":{:.3},\"buildings_ms\":{:.3},\"fills_ms\":{:.3},\"roads_ms\":{:.3},\"labels_ms\":{:.3},\"plans\":{},\"cpu_tiles\":{},\"cpu_bytes\":{}",
+            self.frame.total,
+            self.frame.residency,
+            self.frame.ground,
+            self.frame.buildings,
+            self.frame.fills,
+            self.frame.roads,
+            self.frame.labels,
+            self.plans_built,
+            self.tiles.len(),
+            self.tiles.values().map(Vec::len).sum::<usize>(),
+        )
+    }
+
     fn debug_relief(&self) -> String {
         let height = self
             .centre_height_m()
@@ -847,17 +971,19 @@ impl Map {
     /// yet — the stand-in would be picked only after something else had
     /// already uploaded it, which is to say never.
     fn apply_residency(&mut self) -> Vec<TileId> {
-        let available: HashSet<TileId> = self.tiles.keys().copied().collect();
-        let plan = plan_residency(&self.camera, self.viewport, &self.source_levels, &available);
-        let drawn: HashSet<TileId> = plan.draw.iter().copied().collect();
+        // The same plan the host's demand queries read, not a second
+        // one: uploading to the GPU does not change anything a plan is
+        // a function of, so the answer cannot have moved since.
+        let draw = self.plan().draw.clone();
+        let drawn: HashSet<TileId> = draw.iter().copied().collect();
         let stale: Vec<TileId> = self.gpu.keys().copied().filter(|id| !drawn.contains(id)).collect();
         for id in stale {
             self.release_gpu(id);
         }
-        for id in &plan.draw {
+        for id in &draw {
             self.upload_gpu(*id);
         }
-        plan.draw
+        draw
     }
 
     /// Drops every GPU copy of one tile. The CPU bytes stay: the host
@@ -1116,15 +1242,14 @@ impl Map {
                 .iter()
                 .filter_map(|id| self.names.get(id).map(|b| (*id, b)))
                 .collect();
-            self.labels.candidates =
-                frame_candidates(&buckets, &self.camera, self.viewport, &self.atlas).len();
-            self.labels.placement = place_frame(
-                &buckets,
-                &self.camera,
-                self.viewport,
-                &self.atlas,
-                self.labels.budget,
-            );
+            // Built once and then both counted and placed: this is the
+            // expensive half of the label pass, and doing it twice a
+            // frame doubled the most expensive thing the frame did.
+            let candidates =
+                frame_candidates(&buckets, &self.camera, self.viewport, &self.atlas);
+            self.labels.candidates = candidates.len();
+            self.labels.placement =
+                place_candidates(&candidates, self.viewport, self.labels.budget);
             self.labels.placement_dirty = false;
         }
         self.draw_collision_boxes(viewport);

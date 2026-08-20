@@ -1,3 +1,4 @@
+import { PerfOverlay } from "../perfOverlay";
 import { createMap, createTilePackageLoader, type MapHandle, type TilePackageLoader } from "../sdk";
 import { controlRow, el, readout, section } from "../ui";
 import type { CardSpec } from "./types";
@@ -74,11 +75,15 @@ export const mapReal: CardSpec = {
       type: "range", min: "0", max: "18", step: "0.1", value: "2",
       "data-testid": "map-real-zoom", "aria-label": "Зум карты",
     });
+    const perfToggle = el("input", {
+      type: "checkbox", "data-testid": "map-real-perf", "aria-label": "Показывать профиль кадра",
+    });
     const source = section("Источник", el("div", {}, [
       controlRow("Пакет", urlInput),
       load,
       controlRow("Наклон", tilt),
       controlRow("Зум", zoomSlider),
+      controlRow("Профиль кадра", perfToggle),
     ]));
 
     let generation = 0;
@@ -117,6 +122,11 @@ export const mapReal: CardSpec = {
       activeMap = null;
       activeRefresh = null;
       const manifestUrl = urlInput.value.trim();
+      const overlay = new PerfOverlay();
+      overlay.root.hidden = !perfToggle.checked;
+      perfToggle.onchange = () => { overlay.root.hidden = !perfToggle.checked; };
+      stage.style.position = "relative";
+      stage.append(overlay.root);
       try {
         const map = await createMap(canvas, null);
         const loader: TilePackageLoader = await createTilePackageLoader(map, manifestUrl);
@@ -137,9 +147,32 @@ export const mapReal: CardSpec = {
           map.setHypsometric(wanted);
           return true;
         };
+        // One refresh at a time. Pointer moves arrive far faster than a
+        // load can finish, and starting a fresh one per event piled up
+        // concurrent passes over the same camera; the last camera is the
+        // only one worth answering, so a request that arrives mid-flight
+        // just marks the answer stale.
+        let refreshing = false;
+        let stale = false;
         const refresh = async () => {
+          if (refreshing) { stale = true; return; }
+          refreshing = true;
+          try {
+            do {
+              stale = false;
+              await runRefresh();
+              if (request !== generation) return;
+            } while (stale);
+          } finally {
+            refreshing = false;
+          }
+        };
+        const runRefresh = async () => {
+          overlay.beginHostWork();
           if (applyTerrainForZoom()) map.render();
+          const startedLoad = performance.now();
           const result = await loader.loadVisible();
+          overlay.recordLoad(result.blockedMs, performance.now() - startedLoad);
           if (request !== generation) return;
           loaded += result.loaded;
           out.set("tiles", String(loaded));
@@ -150,6 +183,7 @@ export const mapReal: CardSpec = {
           out.set("tile-level", String(state.tile_level));
           stage.setAttribute("data-shape", state.shape);
           stage.setAttribute("data-tile-level", String(state.tile_level));
+          overlay.endHostWork(map);
         };
         await refresh();
         if (request !== generation) return;

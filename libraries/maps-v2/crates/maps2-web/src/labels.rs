@@ -11,8 +11,8 @@ use maps2_camera::Camera;
 use maps2_render::{project_normalised, tile_frame, LabelBucket, View};
 use maps2_style::{entry_band, Class, ALL_BANDS};
 use maps2_text::{
-    layout_line, measure_line, place, Atlas, Candidate, GlyphQuad, Placement, ASCENDER_EM,
-    LINE_HEIGHT_EM,
+    layout_line, measure_line, place, within_margin, Atlas, Candidate, GlyphQuad, Placement,
+    ScreenBox, ASCENDER_EM, LABEL_MARGIN_PX, LINE_HEIGHT_EM,
 };
 use maps2_units::{TileCoord, TileId, TILE_EXTENT};
 use num_traits::ToPrimitive;
@@ -70,6 +70,7 @@ pub fn frame_candidates(
     atlas: &Atlas,
 ) -> Vec<Candidate> {
     let zoom = camera.zoom().value();
+    let screen = (screen_scalar(viewport.0), screen_scalar(viewport.1));
     let mut out = Vec::new();
     for (id, bucket) in buckets {
         for point in &bucket.points {
@@ -82,8 +83,25 @@ pub fn frame_candidates(
             if front < 0.0 {
                 continue;
             }
-            let size_px = label_size_px(point.class, point.rank);
-            let (width, height) = measure_line(atlas, &point.name, size_px);
+            // Cull on the anchor before shaping. Shaping is the
+            // expensive half of a candidate, and one z11 tile of a real
+            // city offers tens of thousands of names for the twenty a
+            // frame can show; almost all of them are off screen. The
+            // margin is generous enough to cover any label's half-width,
+            // so nothing that could have reached the viewport is cut.
+            if !near_viewport(anchor, screen) {
+                continue;
+            }
+            let (width, height) = point.measured_px.get().unwrap_or_else(|| {
+                let measured =
+                    measure_line(atlas, &point.name, label_size_px(point.class, point.rank));
+                point.measured_px.set(Some(measured));
+                measured
+            });
+            let size = (width + 2.0 * LABEL_PADDING_PX, height + 2.0 * LABEL_PADDING_PX);
+            if !within_margin(bounds_of(anchor, size), screen) {
+                continue;
+            }
             out.push(Candidate {
                 id: label_identity(point.class, point.id),
                 // A road is a run of separate ways in the source data,
@@ -93,10 +111,7 @@ pub fn frame_candidates(
                 rank: point.rank,
                 text: point.name.clone(),
                 anchor,
-                size: (
-                    width + 2.0 * LABEL_PADDING_PX,
-                    height + 2.0 * LABEL_PADDING_PX,
-                ),
+                size,
             });
         }
     }
@@ -123,6 +138,31 @@ fn label_ready_zoom(class: Class) -> f64 {
                 .and_then(|index| ALL_BANDS.get(index + 1))
                 .map_or(f64::INFINITY, |band| band.entry_zoom())
         }
+    }
+}
+
+/// The widest a label can be before its own box test decides, in screen
+/// pixels. Only used to cull anchors that cannot possibly reach the
+/// viewport, so it errs long.
+const WIDEST_LABEL_PX: f32 = 400.0;
+
+/// Whether an anchor is close enough that a label centred on it could
+/// touch the viewport.
+fn near_viewport(anchor: (f32, f32), screen: (f32, f32)) -> bool {
+    let reach = WIDEST_LABEL_PX + LABEL_MARGIN_PX;
+    anchor.0 > -reach && anchor.1 > -reach && anchor.0 < screen.0 + reach && anchor.1 < screen.1 + reach
+}
+
+/// A candidate's box, centred on its anchor — the same box `place`
+/// will build, computed early so an off-screen one can be dropped
+/// before it costs anything.
+fn bounds_of(anchor: (f32, f32), size: (f32, f32)) -> ScreenBox {
+    let (half_w, half_h) = (size.0 / 2.0, size.1 / 2.0);
+    ScreenBox {
+        x0: anchor.0 - half_w,
+        y0: anchor.1 - half_h,
+        x1: anchor.0 + half_w,
+        y1: anchor.1 + half_h,
     }
 }
 
@@ -164,7 +204,19 @@ pub fn place_frame(
     budget: f32,
 ) -> Placement {
     let candidates = frame_candidates(buckets, camera, viewport, atlas);
-    place(&candidates, (screen_scalar(viewport.0), screen_scalar(viewport.1)), budget)
+    place_candidates(&candidates, viewport, budget)
+}
+
+/// Places an already-built candidate set.
+///
+/// Building the set is the expensive half — a real city at z11 offers
+/// tens of thousands of names — and a caller that also wants to report
+/// how many there were should not pay for it twice.
+#[must_use]
+pub fn place_candidates(
+    candidates: &[Candidate], viewport: (f64, f64), budget: f32,
+) -> Placement {
+    place(candidates, (screen_scalar(viewport.0), screen_scalar(viewport.1)), budget)
 }
 
 fn screen_scalar(value: f64) -> f32 {
@@ -201,6 +253,7 @@ fn size_from_box(height: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     use maps2_camera::CameraPatch;
     use maps2_fixtures::{coverage, tile_bytes, BOUNDARY_ID, EALING};
     use maps2_render::{build_label_bucket, LabelPoint};
@@ -315,6 +368,7 @@ mod tests {
                 class: Class::RoadResidential,
                 name: "Any Street".to_string(),
                 coord: TileCoord(32768, 32768),
+                measured_px: Cell::new(None),
             }],
         };
         let owned = vec![(tile, bucket)];

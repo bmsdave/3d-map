@@ -24,8 +24,8 @@ pub use atlas::{
     Atlas, GlyphMetrics, ATLAS_CELL_PX, ATLAS_COLUMNS, CELL_ORIGIN_PX, EM_PX, SDF_RANGE_PX,
 };
 pub use collision::{
-    place, Candidate, PlacedLabel, Placement, RejectedLabel, Rejection, ScreenBox, GRID_CELL_PX,
-    LABEL_MARGIN_PX,
+    place, within_margin, Candidate, PlacedLabel, Placement, RejectedLabel, Rejection, ScreenBox,
+    GRID_CELL_PX, LABEL_MARGIN_PX,
 };
 pub use font::{ASCENDER_EM, CAP_HEIGHT_EM, CHARSET, DESCENDER_EM, X_HEIGHT_EM};
 pub use layout::{layout_line, measure_line, GlyphQuad, LINE_HEIGHT_EM};

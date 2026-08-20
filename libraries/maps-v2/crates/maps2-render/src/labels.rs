@@ -5,6 +5,8 @@
 //! visibility is a property of the frame, not of the feature, and it is
 //! settled in `maps2-text` against the whole viewport.
 
+use std::cell::Cell;
+
 use maps2_style::Class;
 use maps2_tile::{TileError, TileView};
 use maps2_units::TileCoord;
@@ -24,7 +26,7 @@ pub const LABEL_CLASSES: [Class; 9] = [
     Class::RoadPath,
 ];
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LabelPoint {
     pub id: u64,
     pub rank: u8,
@@ -32,9 +34,19 @@ pub struct LabelPoint {
     pub name: String,
     /// The anchor, on the tile's own integer grid.
     pub coord: TileCoord,
+    /// This label's shaped size in screen pixels, once something has
+    /// asked for it.
+    ///
+    /// Shaping is the expensive half of building a candidate and the
+    /// answer never changes — text size follows class and rank, both
+    /// fixed when the tile is read. Shaping every label of a tile up
+    /// front put 300 ms into a single load; shaping every frame put it
+    /// into every frame. Remembering the answer the first time it is
+    /// actually needed does neither.
+    pub measured_px: Cell<Option<(f32, f32)>>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct LabelBucket {
     pub points: Vec<LabelPoint>,
 }
@@ -65,6 +77,7 @@ pub fn build_label_bucket(tile: &TileView) -> Result<LabelBucket, TileError> {
                 class,
                 name: feature.name.to_string(),
                 coord,
+                measured_px: Cell::new(None),
             });
         }
     }
@@ -162,6 +175,7 @@ mod tests {
                     class: Class::Label,
                     name: "Ealing".into(),
                     coord: TileCoord(300, 400),
+                    measured_px: Cell::new(None),
                 },
                 LabelPoint {
                     id: 20,
@@ -169,6 +183,7 @@ mod tests {
                     class: Class::Poi,
                     name: "Bakery".into(),
                     coord: TileCoord(1000, 2000),
+                    measured_px: Cell::new(None),
                 },
                 LabelPoint {
                     id: 30,
@@ -176,6 +191,7 @@ mod tests {
                     class: Class::RoadPrimary,
                     name: "Uxbridge Road".into(),
                     coord: TileCoord(300, 400),
+                    measured_px: Cell::new(None),
                 },
             ],
         );
