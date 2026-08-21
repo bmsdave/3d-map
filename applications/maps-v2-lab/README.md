@@ -11,12 +11,19 @@ npm ci
 npm run dev
 ```
 
-Visit `http://localhost:5178`. Build and test with `npm run build` and
-`npm run test:e2e`. The first command compiles the Rust/Wasm SDK and regenerates
-the deterministic local fixture output, so no proprietary data or pipeline
-cache is required.
+Visit `http://localhost:5178`. The board mounts every study live on that one
+page — a hero canvas, the SDK snippet, and twenty interactive studies, none of
+them behind a click. A study is filtered by text or by group, and the toolbar
+counts how many are currently holding a WebGL2 context: the board keeps the six
+nearest the viewport running and releases the rest, because a tab caps how many
+contexts it will hold at once.
 
-Each card has a direct route at `/#/card/<id>`:
+Build and test with `npm run build` and `npm run test:e2e`. The first command
+compiles the Rust/Wasm SDK and regenerates the deterministic local fixture
+output, so no proprietary data or pipeline cache is required.
+
+Each study also has a direct route at `/#/card/<id>`, which mounts it alone —
+the entry point every e2e test uses:
 
 - `zoom-bands`, six `toggle-*` cards, and `globe-transition` exercise scale and
   globe transitions.

@@ -73,19 +73,43 @@ test("индекс открывает карточку по прямой ссы�
   await expect(page.locator("main")).toHaveAttribute("data-card", "toggle-district-street");
 });
 
-test("индекс показывает copy-pasteable quick start и ссылку на каждую карточку", async ({ page }) => {
+test("главная показывает живые студии сразу, без перехода по ссылке", async ({ page }) => {
   await page.goto("/#/");
   const quickStart = page.getByTestId("quick-start");
   await expect(quickStart).toBeVisible();
   await expect(quickStart.locator("code")).toContainText("createMap");
   await expect(quickStart.locator("code")).toContainText("loadPackCentre");
 
-  const cardLinks = page.locator('[data-testid="index"] .card-grid a[href^="#/card/"]');
-  const count = await cardLinks.count();
-  expect(count).toBeGreaterThan(10);
+  // Герой рисует до любого клика — страница открывается уже картой.
+  await expect(page.getByTestId("hero-stage")).toHaveAttribute("data-state", "ready");
 
-  const firstHref = await cardLinks.first().getAttribute("href");
-  await cardLinks.first().click();
-  await expect(page).toHaveURL(new RegExp(`${firstHref}$`));
+  const studies = page.getByTestId("study");
+  await expect(studies).toHaveCount(20);
+  // Первые студии смонтированы сами; остальные ждут своей очереди за
+  // бюджетом контекстов, а не клика.
+  const first = studies.first();
+  await expect(first.getByTestId("stage")).toHaveAttribute("data-state", "ready");
+  await expect(first).toHaveAttribute("data-live", "true");
+  const live = Number(await page.getByTestId("live-count").textContent());
+  expect(live).toBeGreaterThan(0);
+  expect(live).toBeLessThanOrEqual(Number(await page.getByTestId("home").getAttribute("data-live-budget")));
+
+  // Фильтр — единственный способ спрятать студию с доски.
+  const shown = page.locator('[data-testid="study"]:not([hidden])');
+  await page.getByTestId("study-filter").fill("roads-micro");
+  await expect(shown).toHaveCount(1);
+  await expect(shown).toHaveAttribute("data-card", "roads-micro");
+});
+
+test("студия открывается отдельной страницей по своей ссылке", async ({ page }) => {
+  await page.goto("/#/");
+  const first = page.getByTestId("study").first();
+  // Дождаться, пока доска отдаст свои контексты, а не пересекаться с ней
+  // за GPU в момент перехода.
+  await expect(first).toHaveAttribute("data-live", "true");
+  const open = first.locator("a.study-open");
+  const href = await open.getAttribute("href");
+  await open.click();
+  await expect(page).toHaveURL(new RegExp(`${href}$`));
   await expect(page.getByTestId("stage")).toHaveAttribute("data-state", "ready");
 });
