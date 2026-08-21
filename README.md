@@ -394,6 +394,10 @@ working Wasm integration example.
 | `maps2-web` | WebGL2/Wasm browser boundary |
 | `maps-v2-lab` | Interactive demo, visual goldens, and browser contracts |
 
+The full picture — what each crate owns, how a tile travels from an OSM extract
+to a pixel, where the frame's time goes, and what is deliberately not built yet
+— is in [architecture.md](libraries/maps-v2/docs/architecture.md).
+
 ## MT2 tile format
 
 MT2 uses a fixed header, an O(1) section table, integer tile coordinates,
