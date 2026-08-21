@@ -73,9 +73,10 @@ npx playwright install chromium
 npm run dev
 ```
 
-Open `http://localhost:5178`. Direct routes make each renderer concern easy to
-inspect, for example `/#/showcase`, `/#/card/roads-micro`, and
-`/#/card/globe-relief`. The showcase contains twenty animated, live SDK studies.
+Open `http://localhost:5178`. The page **is** the lab: all twenty studies are
+mounted live on it, no card to click through first. Direct routes still isolate
+one concern at a time — `/#/card/roads-micro`, `/#/card/globe-relief` — and
+`/#/showcase` runs the animated gallery.
 
 To inspect a locally hosted London or regional package, open
 `/#/card/package-loader`, replace **Manifest URL** with its `manifest.json`
@@ -85,9 +86,11 @@ SHA-256 digest before rendering it.
 
 ## Demos
 
-The lab's index page (`npm run dev`, then `http://localhost:5178`) opens with
-a **Quick start** panel showing the exact SDK call shape every card below it
-runs — copy it directly, it is not pseudocode:
+The lab's board (`npm run dev`, then `http://localhost:5178`) opens rendering:
+a live hero canvas, a **Quick start** panel with the exact SDK call shape every
+study below it runs, and all twenty studies already mounted and interactive on
+the same page. Filter them by text or by group; nothing is behind a click. The
+snippet is real, not pseudocode:
 
 ```ts
 import { createMap, loadPackCentre } from "./sdk";
@@ -100,10 +103,15 @@ map.setZoom(centre.zoom);
 map.render();
 ```
 
-A few cards worth opening directly:
+Because a browser tab caps how many WebGL2 contexts it will keep, the board
+runs the six studies nearest the viewport and hands a context back when a study
+scrolls away — the counter in the toolbar reports how many are live.
+
+A few studies worth opening on their own page:
 
 | Route | What it shows |
 | --- | --- |
+| `/#/` | All twenty studies, live and interactive on one board. |
 | `/#/showcase` | Twenty animated, live SDK studies in one gallery. |
 | `/#/card/buildings3d` | Terrain-clamped 3D buildings, roof shapes, and tilt. |
 | `/#/card/roads-micro` | Road classes, joins, casing, and screen-pixel widths at z17. |

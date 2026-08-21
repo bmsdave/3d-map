@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The lab's front page is now the lab. Twenty studies mount live on it —
+  hero canvas, SDK snippet, and every study interactive without a click —
+  filtered by text or group instead of navigated to. A WebGL2 context budget
+  keeps the six studies nearest the viewport running and hands the rest back,
+  so one page can hold twenty renderers without the browser dropping the ones
+  at the top. `/#/card/<id>` still mounts a study alone, and the showcase reel
+  now fits a whole reel above the fold.
 - MT2 bumped to v5: building features carry a facade `material` byte
   (`Unknown`/`Brick`/`Concrete`/`Stone`/`Glass`/`Metal`/`Wood`). Versions 1–4
   remain readable; a v2–v4 tile decodes as `MaterialClass::Unknown`. Fixture

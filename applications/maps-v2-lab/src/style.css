@@ -1,9 +1,12 @@
 :root {
-  --ink: #1a1a1a;
-  --muted: #767676;
-  --line: #e4e4e4;
+  --ink: #14161c;
+  --muted: #6d7280;
+  --line: #e5e7ec;
+  --line-soft: #f0f1f5;
   --accent: #0a5cff;
-  --stage-bg: #fafafa;
+  --stage-bg: #f7f8fa;
+  --card-bg: #fff;
+  --shadow: 0 1px 2px rgb(20 22 28 / 5%), 0 8px 24px rgb(20 22 28 / 5%);
 }
 
 * {
@@ -39,13 +42,51 @@ a:hover {
   padding: 0 24px 64px;
 }
 
+/* Доска и галерея живут шире: чем больше студий помещается в экран за
+   раз, тем меньше поводов куда-то уходить со страницы. */
+.shell[data-route="#/"] {
+  max-width: 1640px;
+}
+
+.shell[data-route="#/showcase"] {
+  max-width: 1440px;
+}
+
 .shell > header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   display: flex;
   align-items: baseline;
   gap: 12px;
-  padding: 20px 0;
+  padding: 12px 0;
   border-bottom: 1px solid var(--line);
-  margin-bottom: 28px;
+  margin-bottom: 18px;
+  background: rgb(255 255 255 / 88%);
+  backdrop-filter: blur(10px);
+}
+
+.top-nav {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.top-nav a {
+  padding: 4px 10px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.top-nav a:hover {
+  background: var(--line-soft);
+  text-decoration: none;
+}
+
+.top-nav a[aria-current="page"] {
+  background: var(--ink);
+  color: #fff;
 }
 
 .shell > header h1 {
@@ -59,74 +100,317 @@ a:hover {
   font-size: 13px;
 }
 
-/* ---- index ---- */
+/* ---- home board ---- */
 
-.quick-start {
-  margin-bottom: 28px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--line);
-}
-
-.quick-start-code {
-  overflow-x: auto;
-  background: var(--stage-bg);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 12px 16px;
-  white-space: pre;
-}
-
-.card-grid {
+.home-hero {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 14px;
-  padding: 0;
-  margin: 0;
-  list-style: none;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: 28px;
+  align-items: center;
+  padding-bottom: 22px;
 }
 
-.card-grid a {
-  display: block;
-  height: 100%;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  color: inherit;
-  transition: border-color 0.15s;
+.hero-copy h1 {
+  margin: 10px 0 8px;
+  font: 600 clamp(30px, 3.4vw, 46px)/1.02 Georgia, serif;
+  letter-spacing: -0.035em;
 }
 
-.card-grid a:hover {
-  border-color: var(--ink);
-  text-decoration: none;
-}
-
-.card-grid h2 {
+.hero-lead {
+  max-width: 52ch;
+  margin: 0 0 14px;
+  color: var(--muted);
   font-size: 15px;
-  font-weight: 600;
-  margin: 0 0 6px;
 }
 
-.card-grid p {
-  margin: 0 0 10px;
+.hero-note {
+  margin: 12px 0 0;
   color: var(--muted);
   font-size: 13px;
 }
 
-.card-grid .card-id {
-  color: var(--muted);
+.quick-start-code {
+  overflow-x: auto;
+  margin: 0;
+  background: var(--stage-bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  white-space: pre;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
-.section-label {
-  margin: 32px 0 12px;
+.hero-stage {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--stage-bg);
+  box-shadow: var(--shadow);
+}
+
+.hero-stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.hero-overlay {
+  position: absolute;
+  inset: auto 0 0;
+  padding: 40px 18px 14px;
+  color: #fff;
+  background: linear-gradient(transparent, rgb(10 14 26 / 82%));
+  pointer-events: none;
+}
+
+.hero-label {
+  font: 600 11px/1 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgb(255 255 255 / 72%);
+}
+
+.hero-caption {
+  margin: 6px 0 0;
+  font: 500 15px/1.3 Georgia, serif;
+}
+
+/* toolbar */
+
+.home-toolbar {
+  position: sticky;
+  top: 47px;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 9px 0;
+  margin-bottom: 6px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: rgb(255 255 255 / 92%);
+  backdrop-filter: blur(10px);
+}
+
+.toolbar-groups {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.chip .group-count {
+  margin-left: 6px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.chip[aria-pressed="true"] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+
+.chip[aria-pressed="true"] .group-count {
+  color: rgb(255 255 255 / 62%);
+}
+
+.chip,
+.toolbar-button {
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.chip:hover,
+.toolbar-button:hover {
+  border-color: var(--ink);
+}
+
+.toolbar-button {
+  background: var(--ink);
+  color: #fff;
+  border-color: var(--ink);
+}
+
+.study-filter {
+  width: 210px;
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.live-count {
+  color: var(--muted);
   font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.live-count strong {
+  color: var(--ink);
+}
+
+/* studies */
+
+.study-grid {
+
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(370px, 1fr));
+  gap: 14px;
+}
+
+.study {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card-bg);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+/* `display: flex` перебивает UA-правило для [hidden] — без этого
+   отфильтрованные студии остаются на экране. */
+.study[hidden] {
+  display: none;
+}
+
+.study[data-live="true"] {
+  box-shadow: var(--shadow);
+}
+
+.study:hover {
+  border-color: #d3d6de;
+}
+
+.study-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.study-group {
+  order: -1;
+  flex-basis: 100%;
+  font: 600 10px/1 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--muted);
 }
 
-.section-label:first-of-type {
-  margin-top: 0;
+.study-head h2 {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.study-open {
+  margin-left: auto;
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.study-purpose {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.study .stage {
+  aspect-ratio: 16 / 9;
+  font-size: 12px;
+  text-align: center;
+  padding: 0 16px;
+}
+
+/* Панель студии складывается вдвое плотнее страницы карточки и не даёт
+   длинному логу растянуть плитку выше соседей. */
+.study .panel {
+  flex: 1;
+  gap: 10px;
+  max-height: 190px;
+  overflow-y: auto;
+  font-size: 12.5px;
+}
+
+.study .panel section > h2 {
+  margin-bottom: 4px;
+  font-size: 10.5px;
+}
+
+.study .panel .control-row {
+  padding: 4px 0;
+  font-size: 12.5px;
+}
+
+.study .panel .readout {
+  font-size: 12.5px;
+}
+
+.study .panel .readout > div {
+  padding: 3px 0;
+}
+
+.study .panel .event-log {
+  max-height: 120px;
+}
+
+.study .panel button {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.study .panel input[type="url"] {
+  min-width: 0;
+  flex: 1;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .home-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .home-toolbar {
+    position: static;
+  }
 }
 
 /* ---- card page ---- */
@@ -143,6 +427,9 @@ a:hover {
   margin: 0 0 4px;
 }
 
+/* Геометрия страницы карточки — часть контракта эталонных кадров:
+   отступы над сценой двигают её на доли пикселя, и снимок округляется
+   в другую сторону. Уплотнять здесь нечего без пересъёмки эталонов. */
 .card-page .purpose {
   color: var(--muted);
   margin: 0 0 24px;
@@ -152,6 +439,8 @@ a:hover {
 .card-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
+  /* 24px — часть геометрии сцены: ширина .stage считается от него, а
+     от неё зависит каждый эталонный кадр. */
   gap: 24px;
   align-items: start;
 }
@@ -345,8 +634,8 @@ a:hover {
 /* ---- public showcase ---- */
 
 .showcase-hero {
-  max-width: 760px;
-  padding: 48px 0 42px;
+  max-width: 900px;
+  padding: 22px 0 24px;
 }
 
 .eyebrow, .showcase-index {
@@ -357,13 +646,13 @@ a:hover {
 }
 
 .showcase-hero h1 {
-  max-width: 13ch;
-  margin: 14px 0;
-  font: 600 clamp(42px, 7vw, 76px)/.98 Georgia, serif;
+  max-width: 22ch;
+  margin: 10px 0;
+  font: 600 clamp(34px, 5vw, 58px)/1 Georgia, serif;
   letter-spacing: -.055em;
 }
 
-.showcase-copy { max-width: 53ch; color: var(--muted); font-size: 17px; }
+.showcase-copy { max-width: 60ch; color: var(--muted); font-size: 15px; }
 
 .showcase-toggle {
   margin-top: 12px;
@@ -381,11 +670,12 @@ a:hover {
 .reel-button { padding: 8px 11px; border: 1px solid #d7dbe8; border-radius: 999px; background: white; color: #18213a; cursor: pointer; font: inherit; font-size: 13px; }
 .reel-label { min-width: 72px; color: var(--muted); font-size: 12px; text-align: center; }
 
-.showcase-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.showcase-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 
 .showcase-card {
   position: relative;
-  min-height: 290px;
+  min-height: 0;
+  aspect-ratio: 3 / 2;
   overflow: hidden;
   border: 1px solid #e2e5ee;
   border-radius: 18px;
@@ -401,7 +691,10 @@ a:hover {
 .showcase-card-copy h2 { margin: 7px 0 3px; font: 600 25px/1.05 Georgia, serif; letter-spacing: -.03em; }
 .showcase-card-copy p { margin: 0; color: rgb(255 255 255 / 76%); font-size: 13px; }
 
-@media (max-width: 700px) {
+@media (max-width: 1100px) {
+  .showcase-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
   .showcase-grid { grid-template-columns: 1fr; }
-  .showcase-hero { padding-top: 26px; }
 }
