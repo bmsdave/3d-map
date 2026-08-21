@@ -1,4 +1,5 @@
 # Формат тайла MT2, версия 5 — заморожен
+> For agents: start with `tile-format.en.tldr.md` (40 lines, ~425 tok). Read this full doc only on demand via `grep` → `read offset/limit`.
 
 Замораживание сделано на шаге 3.4 [`implementation-plan.md`](implementation-plan.md)
 11 августа 2026; версия 2 добавлена для реальных зданий. 18 августа 2026
