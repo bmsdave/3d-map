@@ -1,4 +1,4 @@
-// Рельеф: показания из debug() и golden-скриншот горной сцены.
+// Рельеф: показания из debug() и golden-скриншот сцены рельефа.
 // Утверждения — про состав кадра и параметры стиля, не про «видно гору»:
 // саму гору принимает эталон, а «северо-западный склон светлее» проверено
 // нативным тестом в maps2-render поверх той же фикстуры.
@@ -15,10 +15,15 @@ test("terrain-shade: высоты доехали, стиль — ручка, а 
   const stage = page.getByTestId("stage");
 
   // Растровая секция прочитана: тайлы сцены несут высоты, и под центром
-  // камеры стоит гора, а не ноль.
+  // камеры стоит измеренная земля, а не «нет данных». Раньше здесь
+  // ждали больше километра — там стоял синтетический конус; под
+  // Трафальгарской площадью Copernicus меряет единицы метров.
   await expect(page.getByTestId("readout-height-tiles")).not.toHaveText("0");
   const height = await page.getByTestId("readout-height").textContent();
-  expect(Number(height?.replace(/[^\d-]/g, ""))).toBeGreaterThan(1000);
+  expect(height).not.toContain("нет данных");
+  const metres = Number(height?.replace(/[^\d-]/g, ""));
+  expect(metres).toBeGreaterThan(-12000);
+  expect(metres).toBeLessThan(9000);
   await expect(page.getByTestId("readout-shape")).toHaveText("flat");
 
   // Выразительность — параметр стиля: ползунок доезжает до SDK.
@@ -35,7 +40,7 @@ test("terrain-shade: высоты доехали, стиль — ручка, а 
   await expect(stage).toHaveAttribute("data-relief", "true");
 });
 
-test("terrain-shade: горная сцена совпадает с эталоном", async ({ page }) => {
+test("terrain-shade: сцена рельефа совпадает с эталоном", async ({ page }) => {
   await openCard(page, "terrain-shade");
   await expect(page.getByTestId("readout-height-tiles")).not.toHaveText("0");
   await expect(page.locator("canvas")).toHaveScreenshot("terrain-shade.png", {

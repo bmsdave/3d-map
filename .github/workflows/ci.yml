@@ -42,6 +42,11 @@ jobs:
           cache-dependency-path: applications/maps-v2-lab/package-lock.json
       - working-directory: applications/maps-v2-lab
         run: npm ci
+      # Пакеты лаборатории лежат в репозитории: студии рисуют настоящий
+      # Лондон, а не фикстуру. Битый тайл в коммите молча превратился бы
+      # в дыру на карте, поэтому дайджесты проверяются до сборки.
+      - run: cargo run --manifest-path libraries/maps-v2/Cargo.toml --bin maps2-ingest -- verify-package applications/maps-v2-lab/public/packages/trafalgar
+      - run: cargo run --manifest-path libraries/maps-v2/Cargo.toml --bin maps2-ingest -- verify-package applications/maps-v2-lab/public/packages/trafalgar-city
       - working-directory: applications/maps-v2-lab
         run: npm run build
       - working-directory: applications/maps-v2-lab

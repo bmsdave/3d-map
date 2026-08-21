@@ -321,6 +321,29 @@ mod tests {
     }
 
     #[test]
+    fn a_tile_lists_the_classes_it_carries() {
+        let mut builder = TileBuilder::new(TileId { z: 14, x: 8190, y: 5448 });
+        builder.push(2, water_feature());
+        for feature in poi_features() {
+            builder.push(9, feature);
+        }
+        builder.push_raster(CLASS_HEIGHTS, vec![0; HEIGHTS_BYTES]);
+        let bytes = builder.build().expect("tile fits MT2");
+
+        let tile = TileView::parse(&bytes).expect("parses");
+
+        // Both vector sections and the raster one: a reader that does
+        // not already know what it wants — a carve counting what it
+        // copied — has the table and nothing else to go on.
+        let classes = tile.classes().collect::<Vec<_>>();
+        assert!(classes.contains(&2), "water");
+        assert!(classes.contains(&9), "poi");
+        assert!(classes.contains(&CLASS_HEIGHTS), "heights");
+        assert_eq!(classes.len(), 3);
+        assert!(tile.classes().all(|class| tile.section(class).is_some() || class >= RASTER_CLASS_BASE));
+    }
+
+    #[test]
     fn extreme_deltas_survive_the_round_trip() {
         // 0 → 65535 → 0 exercises the widest zigzag deltas both ways.
         let feature = FeatureDraft::geometry(

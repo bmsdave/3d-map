@@ -1,4 +1,4 @@
-import { createMap } from "../sdk";
+import { createPackageMap, TRAFALGAR } from "../sdk";
 import { controlRow, el, readout, section, switchControl } from "../ui";
 import type { CardSpec } from "./types";
 
@@ -8,7 +8,7 @@ import type { CardSpec } from "./types";
 // с тем же преувеличением, с каким подняты вершины: свет должен описывать
 // ту планету, на которую человек смотрит.
 
-const SCENE = { lon: -0.3049, lat: 51.5149, zoom: 2.5 };
+const SCENE = { ...TRAFALGAR, zoom: 2.5 };
 
 export const globeRelief: CardSpec = {
   id: "globe-relief",
@@ -37,8 +37,8 @@ export const globeRelief: CardSpec = {
     const canvas = el("canvas", { width: "720", height: "480" });
     stage.replaceChildren(canvas);
 
-    createMap(canvas, "ridge")
-      .then((map) => {
+    createPackageMap(canvas, { zoom: SCENE.zoom, centre: SCENE })
+      .then(({ map, onSettled }) => {
         map.setCentre(SCENE.lon, SCENE.lat);
         map.setZoom(SCENE.zoom);
         map.setRelief(true);
@@ -73,6 +73,9 @@ export const globeRelief: CardSpec = {
           ),
           section("Показания", out.root),
         );
+        // Показания снимаются с кадра, а тайлы под этой камерой
+        // доезжают позже её движения.
+        onSettled(apply);
         stage.setAttribute("data-state", "ready");
         apply();
       })

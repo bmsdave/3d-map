@@ -102,6 +102,19 @@ impl<'a> TileView<'a> {
         })
     }
 
+    /// The classes this tile carries, in table order.
+    ///
+    /// Every other reader here already knows the class it wants. A
+    /// reader that does not — a carve counting what it copied, a
+    /// diagnostic listing what a tile holds — has no way to ask
+    /// without the table itself.
+    pub fn classes(&self) -> impl Iterator<Item = ClassCode> + '_ {
+        (0..self.section_count).map(|entry| {
+            let at = HEADER_BYTES + entry * SECTION_ENTRY_BYTES;
+            u16::from_le_bytes([self.bytes[at], self.bytes[at + 1]])
+        })
+    }
+
     /// The opaque payload of a raster section (class ≥ 0xFF00).
     #[must_use]
     pub fn raster(&self, class: ClassCode) -> Option<&'a [u8]> {

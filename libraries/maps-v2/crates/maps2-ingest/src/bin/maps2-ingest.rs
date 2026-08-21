@@ -8,7 +8,7 @@ use maps2_ingest::{
     resolve_water_polygons, scan_osm_pbf, stitch_world_quadrants, validate_source,
     validate_source_reader, OsmSummary,
 };
-use maps2_units::{TileCoord, TileId, TilePoint, to_lonlat};
+use maps2_units::{locate, to_lonlat, Lonlat, TileCoord, TileId, TilePoint};
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -40,6 +40,9 @@ fn run(args: &[String]) -> Result<(), String> {
         [command, args @ ..] if command == "build-terrain-many" => build_terrain_many(args),
         [command, args @ ..] if command == "build-terrain-range" => build_terrain_range(args),
         [command, plan, output] if command == "build-map" => build_map(plan, output),
+        [command, package, lon, lat, output, options @ ..] if command == "carve" => {
+            carve(package, lon, lat, output, options)
+        }
         [command, descriptor, shapefile, minimum, maximum, output, terrain @ ..] if command == "build-world" => {
             build_world(descriptor, shapefile, minimum, maximum, output, terrain)
         }
@@ -644,13 +647,338 @@ fn summary_json(summary: OsmSummary) -> String {
 
 fn print_help() {
     println!(
-        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest verify-package <package-dir>\n  maps2-ingest fetch <source.toml> <output>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest build-terrain-range <osm-source.toml> <osm.pbf> <min-level> <max-level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>\n  maps2-ingest gebco-window <source.toml> <grid.tif> <west> <south> <east> <north>\n  maps2-ingest build-world <water-source.toml> <water.shp> <min-level> <max-level> <output-dir> [<gebco-source.toml> <gebco.tif> <stride>]...\n  maps2-ingest build-map <plan.toml> <output-dir>"
+        "maps2-ingest\n\nusage:\n  maps2-ingest scan <osm.pbf>\n  maps2-ingest verify <source.toml> <input>\n  maps2-ingest verify-package <package-dir>\n  maps2-ingest fetch <source.toml> <output>\n  maps2-ingest build <source.toml> <osm.pbf> <level> <output-dir>\n  maps2-ingest build-terrain <osm-source.toml> <osm.pbf> <dem-source.toml> <dem.tif> <west> <south> <level> <output-dir>\n  maps2-ingest build-terrain-many <osm-source.toml> <osm.pbf> <level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest build-terrain-range <osm-source.toml> <osm.pbf> <min-level> <max-level> <output-dir> <dem-source.toml> <dem.tif> <west> <south>...\n  maps2-ingest dem-info <dem.tif> <west> <south>\n  maps2-ingest gebco-window <source.toml> <grid.tif> <west> <south> <east> <north>\n  maps2-ingest build-world <water-source.toml> <water.shp> <min-level> <max-level> <output-dir> [<gebco-source.toml> <gebco.tif> <stride>]...\n  maps2-ingest build-map <plan.toml> <output-dir>\n  maps2-ingest carve <package-dir> <lon> <lat> <output-dir> [--world <level>] [--keep <min>:<max>:<radius>]..."
     );
+}
+
+/// A carve of an existing package: the same tiles, fewer of them.
+///
+/// A built world package is gigabytes because it answers everywhere. A
+/// lab study asks about one place, so it needs the whole planet only at
+/// the levels where the whole planet is on screen, and a square around
+/// its subject below that. Carving copies tiles verbatim — nothing is
+/// re-encoded, so the digests are still the digests of the bytes the
+/// build produced — and rewrites the manifest around the subset.
+struct CarveRule {
+    levels: (u8, u8),
+    radius: u32,
+}
+
+fn carve(package: &str, lon: &str, lat: &str, output: &str, options: &[String]) -> Result<(), String> {
+    let centre = Lonlat {
+        lon: lon.parse::<f64>().map_err(|error| format!("invalid lon {lon}: {error}"))?,
+        lat: lat.parse::<f64>().map_err(|error| format!("invalid lat {lat}: {error}"))?,
+    };
+    let (world, rules) = parse_carve_options(options)?;
+    let root = Path::new(package);
+    let manifest = fs::read_to_string(root.join("manifest.json"))
+        .map_err(|error| format!("cannot read package manifest: {error}"))?;
+    let manifest = serde_json::from_str::<serde_json::Value>(&manifest)
+        .map_err(|error| format!("invalid package manifest: {error}"))?;
+    let available = manifest
+        .get("tile_digests")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "package manifest has no tile_digests".to_string())?;
+
+    let wanted = carve_selection(centre, world, &rules, available);
+    if wanted.is_empty() {
+        return Err("carve selected no tiles: check the centre and the level rules".to_string());
+    }
+
+    let carved = copy_carved_tiles(root, Path::new(output), &wanted)?;
+    write_carved_manifest(Path::new(output), &manifest, centre, &carved)?;
+    println!(
+        "{{\"features\":{},\"tiles\":{},\"height_tiles\":{},\"levels\":[{},{}]}}",
+        carved.features,
+        carved.digests.len(),
+        carved.height_tiles,
+        carved.levels.first().copied().unwrap_or_default(),
+        carved.levels.last().copied().unwrap_or_default(),
+    );
+    Ok(())
+}
+
+/// What a carve copied: the bytes are the source package's, so the
+/// digests are too — only the counts have to be recomputed, because a
+/// subset holds a different number of features than the whole.
+struct CarvedTiles {
+    digests: Vec<TileDigest>,
+    levels: Vec<u8>,
+    features: usize,
+    height_tiles: usize,
+}
+
+fn copy_carved_tiles(root: &Path, output: &Path, wanted: &[TileId]) -> Result<CarvedTiles, String> {
+    let mut digests = Vec::new();
+    let mut features = 0_usize;
+    let mut height_tiles = 0_usize;
+    for id in wanted {
+        let relative = tile_path(*id);
+        let source = package_tile_path(root, &relative)?;
+        let bytes = fs::read(&source)
+            .map_err(|error| format!("cannot read {}: {error}", source.display()))?;
+        let tile = maps2_tile::TileView::parse(&bytes)
+            .map_err(|error| format!("cannot parse {relative}: {error:?}"))?;
+        features += tile
+            .classes()
+            .filter(|class| *class < maps2_tile::RASTER_CLASS_BASE)
+            .filter_map(|class| tile.section(class))
+            .map(|section| section.features().count())
+            .sum::<usize>();
+        if tile.raster(maps2_tile::CLASS_HEIGHTS).is_some() {
+            height_tiles += 1;
+        }
+        digests.push(TileDigest { id: *id, sha256: sha256(&bytes) });
+        write_tiles(output, &[(*id, bytes)])?;
+    }
+    let levels = carved_levels(&digests);
+    Ok(CarvedTiles { digests, levels, features, height_tiles })
+}
+
+fn parse_carve_options(options: &[String]) -> Result<(Option<u8>, Vec<CarveRule>), String> {
+    let mut world = None;
+    let mut rules = Vec::new();
+    let mut rest = options.iter();
+    while let Some(flag) = rest.next() {
+        let value = rest.next().ok_or_else(|| format!("{flag} needs a value"))?;
+        match flag.as_str() {
+            "--world" => world = Some(parse_level(value)?),
+            "--keep" => rules.push(parse_carve_rule(value)?),
+            other => return Err(format!("unknown carve option {other}")),
+        }
+    }
+    if world.is_none() && rules.is_empty() {
+        return Err("carve needs at least one --world or --keep".to_string());
+    }
+    Ok((world, rules))
+}
+
+/// `<min>:<max>:<radius>` — the levels this rule speaks for, and how
+/// many tiles either side of the subject it keeps at each of them.
+fn parse_carve_rule(value: &str) -> Result<CarveRule, String> {
+    let parts = value.split(':').collect::<Vec<_>>();
+    let [minimum, maximum, radius] = parts.as_slice() else {
+        return Err(format!("invalid --keep {value}: want <min>:<max>:<radius>"));
+    };
+    let levels = (parse_level(minimum)?, parse_level(maximum)?);
+    if levels.0 > levels.1 {
+        return Err(format!("invalid --keep {value}: minimum level exceeds maximum"));
+    }
+    Ok(CarveRule {
+        levels,
+        radius: radius.parse::<u32>().map_err(|error| format!("invalid radius {radius}: {error}"))?,
+    })
+}
+
+/// Every tile the rules ask for that the package actually has. A rule
+/// asking beyond a package's coverage is not an error: the point of a
+/// radius is that it may run off the edge of what was built.
+fn carve_selection(
+    centre: Lonlat,
+    world: Option<u8>,
+    rules: &[CarveRule],
+    available: &serde_json::Map<String, serde_json::Value>,
+) -> Vec<TileId> {
+    let mut selected = available
+        .keys()
+        .filter_map(|path| parse_tile_path(path))
+        .filter(|id| {
+            world.is_some_and(|level| id.z <= level) || rules.iter().any(|rule| keeps(rule, centre, *id))
+        })
+        .collect::<Vec<_>>();
+    selected.sort_by_key(|id| (id.z, id.x, id.y));
+    selected
+}
+
+fn keeps(rule: &CarveRule, centre: Lonlat, id: TileId) -> bool {
+    if id.z < rule.levels.0 || id.z > rule.levels.1 {
+        return false;
+    }
+    let subject = locate(centre, id.z).tile;
+    id.x.abs_diff(subject.x) <= rule.radius && id.y.abs_diff(subject.y) <= rule.radius
+}
+
+fn parse_tile_path(path: &str) -> Option<TileId> {
+    let (z, rest) = path.split_once('/')?;
+    let (x, y) = rest.split_once('/')?;
+    Some(TileId {
+        z: z.parse().ok()?,
+        x: x.parse().ok()?,
+        y: y.strip_suffix(".mt2")?.parse().ok()?,
+    })
+}
+
+fn carved_levels(digests: &[TileDigest]) -> Vec<u8> {
+    let mut levels = digests.iter().map(|digest| digest.id.z).collect::<Vec<_>>();
+    levels.sort_unstable();
+    levels.dedup();
+    levels
+}
+
+/// The carved manifest keeps the source package's provenance verbatim —
+/// a subset of tiles is still made of the same sources, and dropping
+/// their licence and attribution is the one edit a carve must not make.
+fn write_carved_manifest(
+    output: &Path,
+    source: &serde_json::Value,
+    centre: Lonlat,
+    carved: &CarvedTiles,
+) -> Result<(), String> {
+    let deepest = carved.levels.last().copied().unwrap_or_default();
+    let value = json!({
+        "format": "MT2",
+        "format_version": source.get("format_version").cloned().unwrap_or_else(|| json!(maps2_tile::FORMAT_VERSION)),
+        "levels": carved.levels,
+        "feature_count": carved.features,
+        "tile_count": carved.digests.len(),
+        "tiles": tile_paths(&carved.digests),
+        "tile_digests": digest_map(&carved.digests),
+        "package_sha256": package_sha256(&carved.digests),
+        // The subject the carve was centred on, not the middle of the
+        // coarsest level: a city carve opens on its city.
+        "view": { "lon": centre.lon, "lat": centre.lat, "zoom": deepest },
+        // What the carve actually covers, per level, so a host can keep
+        // a camera on ground the package can answer for. Computed here
+        // because Mercator lives in maps2-units and nowhere else.
+        "bounds": carved_bounds(&carved.digests),
+        "height_tile_count": carved.height_tiles,
+        "carved_from": source.get("package_sha256").cloned().unwrap_or(serde_json::Value::Null),
+        "sources": source.get("sources").cloned().unwrap_or_else(|| json!([])),
+    });
+    let bytes = serde_json::to_string_pretty(&value)
+        .map_err(|error| format!("cannot serialize manifest: {error}"))?;
+    let path = output.join("manifest.json");
+    fs::write(&path, bytes).map_err(|error| format!("cannot write {}: {error}", path.display()))
+}
+
+fn carved_bounds(digests: &[TileDigest]) -> BTreeMap<String, serde_json::Value> {
+    let mut bounds = BTreeMap::new();
+    for level in carved_levels(digests) {
+        let ids = digests.iter().map(|digest| digest.id).filter(|id| id.z == level);
+        let Some(first) = ids.clone().next() else { continue };
+        let (min_x, max_x, min_y, max_y) = ids.fold(
+            (first.x, first.x, first.y, first.y),
+            |(min_x, max_x, min_y, max_y), id| {
+                (min_x.min(id.x), max_x.max(id.x), min_y.min(id.y), max_y.max(id.y))
+            },
+        );
+        // y grows southwards in tile space, so the north-west corner is
+        // (min_x, min_y) and the south-east one is past (max_x, max_y).
+        let north_west = to_lonlat(TilePoint {
+            tile: TileId { z: level, x: min_x, y: min_y },
+            coord: TileCoord(0, 0),
+        });
+        let south_east = to_lonlat(TilePoint {
+            tile: TileId { z: level, x: max_x, y: max_y },
+            coord: TileCoord(u16::MAX, u16::MAX),
+        });
+        bounds.insert(
+            level.to_string(),
+            json!({
+                "west": north_west.lon,
+                "north": north_west.lat,
+                "east": south_east.lon,
+                "south": south_east.lat,
+            }),
+        );
+    }
+    bounds
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_carve_keeps_whole_world_levels_and_a_square_below_them() {
+        let available = ["1/0/0.mt2", "2/1/1.mt2", "2/0/0.mt2", "8/127/85.mt2", "8/120/85.mt2"]
+            .into_iter()
+            .map(|path| (path.to_string(), json!("")))
+            .collect::<serde_json::Map<_, _>>();
+        let trafalgar = Lonlat { lon: -0.1281, lat: 51.508 };
+        let rules = vec![CarveRule { levels: (8, 16), radius: 1 }];
+
+        let selected = carve_selection(trafalgar, Some(2), &rules, &available);
+
+        let paths = selected.iter().copied().map(tile_path).collect::<Vec<_>>();
+        // Both z2 tiles: a world level is kept whole, wherever it is.
+        assert!(paths.contains(&"2/0/0.mt2".to_string()));
+        assert!(paths.contains(&"2/1/1.mt2".to_string()));
+        // The z8 tile under the subject, but not the one seven tiles west.
+        assert!(paths.contains(&"8/127/85.mt2".to_string()));
+        assert!(!paths.contains(&"8/120/85.mt2".to_string()));
+    }
+
+    #[test]
+    fn a_rule_reaching_past_the_package_is_not_an_error() {
+        let available = [("8/127/85.mt2".to_string(), json!(""))].into_iter().collect();
+        let rules = vec![CarveRule { levels: (8, 16), radius: 3 }];
+
+        let selected =
+            carve_selection(Lonlat { lon: -0.1281, lat: 51.508 }, None, &rules, &available);
+
+        // Forty-nine tiles asked for, one of them built: the radius is a
+        // request, not a claim about what exists.
+        assert_eq!(selected.len(), 1);
+    }
+
+    #[test]
+    fn carved_bounds_enclose_every_tile_of_their_level() {
+        let digests = ["12/2045/1361.mt2", "12/2047/1363.mt2"]
+            .into_iter()
+            .map(|path| TileDigest { id: parse_tile_path(path).expect("path"), sha256: String::new() })
+            .collect::<Vec<_>>();
+
+        let bounds = carved_bounds(&digests);
+        let box_ = bounds.get("12").expect("z12 bounds");
+        let west = box_["west"].as_f64().expect("west");
+        let east = box_["east"].as_f64().expect("east");
+        let south = box_["south"].as_f64().expect("south");
+        let north = box_["north"].as_f64().expect("north");
+
+        assert!(west < east && south < north, "a box runs west to east and south to north");
+        for digest in &digests {
+            let centre = to_lonlat(TilePoint {
+                tile: digest.id,
+                coord: TileCoord(u16::MAX / 2, u16::MAX / 2),
+            });
+            assert!(centre.lon > west && centre.lon < east, "{} inside", tile_path(digest.id));
+            assert!(centre.lat > south && centre.lat < north, "{} inside", tile_path(digest.id));
+        }
+    }
+
+    #[test]
+    fn a_carved_manifest_keeps_the_source_provenance() {
+        let source = json!({
+            "package_sha256": "abc",
+            "format_version": 5,
+            "sources": [{ "name": "greater-london.osm.pbf", "licence": "ODbL-1.0" }],
+        });
+        let carved = CarvedTiles {
+            digests: vec![TileDigest {
+                id: parse_tile_path("16/32744/21792.mt2").expect("path"),
+                sha256: "f".repeat(64),
+            }],
+            levels: vec![16],
+            features: 7,
+            height_tiles: 1,
+        };
+        let output = std::env::temp_dir().join("maps2-carve-manifest-test");
+        fs::create_dir_all(&output).expect("temp dir");
+
+        write_carved_manifest(&output, &source, Lonlat { lon: -0.1281, lat: 51.508 }, &carved)
+            .expect("manifest");
+
+        let written: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(output.join("manifest.json")).expect("read"))
+                .expect("json");
+        assert_eq!(written["sources"], source["sources"], "licence and attribution survive");
+        assert_eq!(written["carved_from"], json!("abc"));
+        assert_eq!(written["view"]["zoom"], json!(16), "a carve opens on its subject");
+        assert_eq!(written["feature_count"], json!(7));
+        assert!(written["bounds"]["16"].is_object());
+        fs::remove_dir_all(&output).ok();
+    }
 
     #[test]
     fn manifest_carries_source_hash_and_attribution() {

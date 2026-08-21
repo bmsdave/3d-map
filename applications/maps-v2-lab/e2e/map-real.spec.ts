@@ -18,16 +18,21 @@ async function serveMap(route: Route): Promise<void> {
 }
 
 test.describe("map-real", () => {
+  // По умолчанию карточка открывается на вырезке, лежащей рядом с лабой,
+  // — поэтому проверка идёт без переменных окружения. MAPS2_MAP_PACKAGE_ROOT
+  // остаётся для приёмки на полном пакете: тогда те же утверждения
+  // выполняются против него.
   test.beforeEach(async ({ page }) => {
-    test.skip(!mapPackageRoot, "set MAPS2_MAP_PACKAGE_ROOT to run this real-data acceptance test");
-    await page.route("https://maps2.local/map/**", serveMap);
+    if (mapPackageRoot) await page.route("https://maps2.local/map/**", serveMap);
   });
 
   async function open(page: import("@playwright/test").Page) {
     await page.goto("/#/card/map-real");
     const stage = page.getByTestId("stage");
-    await expect(stage).toHaveAttribute("data-state", "idle");
-    await page.getByTestId("map-real-load").click();
+    if (mapPackageRoot) {
+      await page.getByTestId("map-real-url").fill("https://maps2.local/map/manifest.json");
+      await page.getByTestId("map-real-load").click();
+    }
     await expect(stage).toHaveAttribute("data-state", "ready", { timeout: 20_000 });
     return stage;
   }
@@ -102,11 +107,12 @@ test.describe("map-real", () => {
 
   test("the package declares one continuous pyramid", async ({ page }) => {
     await open(page);
-    const levels = await page.evaluate(async () => {
-      const manifest = await (await fetch("https://maps2.local/map/manifest.json")).json();
+    const url = await page.getByTestId("map-real-url").inputValue();
+    const levels = await page.evaluate(async (manifestUrl) => {
+      const manifest = await (await fetch(manifestUrl)).json();
       return [...new Set(manifest.tiles.map((path: string) => Number(path.split("/")[0])))]
         .sort((a, b) => (a as number) - (b as number));
-    });
+    }, url);
     const expected = Array.from({ length: (levels.at(-1) as number) - (levels[0] as number) + 1 },
       (_, index) => (levels[0] as number) + index);
     expect(levels).toEqual(expected);

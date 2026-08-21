@@ -1,0 +1,38 @@
+3D Maps SDK v2
+Copyright (c) the 3D Maps SDK v2 contributors
+Licensed under the MIT Licence; see LICENSE.
+
+The source code's MIT licence does not cover the map data committed with it.
+`applications/maps-v2-lab/public/packages/trafalgar` and
+`applications/maps-v2-lab/public/packages/trafalgar-city` are derived works of
+the open datasets below, and carry their terms. Each package's manifest.json
+repeats this per source, with the exact pinned file and its SHA-256.
+
+--------------------------------------------------------------------------------
+OpenStreetMap — roads, buildings, water, parks, places, amenities
+  © OpenStreetMap contributors
+  Licensed under the Open Database Licence (ODbL) v1.0.
+  https://www.openstreetmap.org/copyright · https://opendatacommons.org/licenses/odbl/
+  Source: Geofabrik "greater-london" extract, pinned in
+  pipelines/maps-v2-ingest/sources/london.toml.
+
+  ODbL is a share-alike licence: a Produced Work made from these tiles must
+  attribute OpenStreetMap, and a redistributed *derivative database* must be
+  offered under ODbL.
+
+Copernicus DEM GLO-30 — land elevation
+  © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided
+  under COPERNICUS by the European Union and ESA; all rights reserved.
+  https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model
+
+GEBCO 2026 Grid — bathymetry and sub-ice topography
+  GEBCO Compilation Group (2026) GEBCO 2026 Grid.
+  https://www.gebco.net
+
+Natural Earth — country boundaries, populated places, major roads
+  Made with Natural Earth. Free vector and raster map data at naturalearthdata.com;
+  public domain.
+--------------------------------------------------------------------------------
+
+The lab shows this attribution in its own chrome on every route, because ODbL
+asks for it where the map is displayed and not only where it is packaged.

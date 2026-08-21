@@ -1,5 +1,5 @@
 import { FIXED_CENTRE, type Transition } from "../bands";
-import { createMap, renderUntilSettled } from "../sdk";
+import { createPackageMap, renderUntilSettled } from "../sdk";
 import { controlRow, el, PENDING, readout, section } from "../ui";
 import type { CardSpec } from "./types";
 
@@ -50,8 +50,8 @@ export function bandToggleCard(transition: Transition): CardSpec {
 
       const canvas = el("canvas", { width: "720", height: "480" });
       stage.replaceChildren(canvas);
-      createMap(canvas, "ealing")
-        .then((map) => {
+      createPackageMap(canvas, { zoom: cameraZoom })
+        .then(({ map, onSettled }) => {
           map.setCentre(FIXED_CENTRE.lon, FIXED_CENTRE.lat);
           map.setZoom(cameraZoom);
           const sync = () => {
@@ -74,6 +74,9 @@ export function bandToggleCard(transition: Transition): CardSpec {
             stage.setAttribute("data-transition-mode", mode.value);
             map.setTransitionAnimated(mode.value === "animated");
           });
+          // Показания снимаются с кадра, а тайлы под этой камерой
+          // доезжают позже её движения.
+          onSettled(apply);
           stage.setAttribute("data-state", "ready");
           apply();
         })

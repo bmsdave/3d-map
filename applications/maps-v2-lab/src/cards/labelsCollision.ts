@@ -1,6 +1,6 @@
 import { FIXED_CENTRE } from "../bands";
 import { overlapCount, placed, rankInversions } from "../labels";
-import { createMap } from "../sdk";
+import { createPackageMap } from "../sdk";
 import { controlRow, el, readout, section, switchControl } from "../ui";
 import type { CardSpec } from "./types";
 
@@ -42,8 +42,8 @@ export const labelsCollision: CardSpec = {
     stage.replaceChildren(canvas);
     stage.setAttribute("data-centre", `${FIXED_CENTRE.lon},${FIXED_CENTRE.lat}`);
 
-    createMap(canvas, "ealing")
-      .then((map) => {
+    createPackageMap(canvas, { zoom: Number(zoom.value) })
+      .then(({ map, onSettled }) => {
         map.setCentre(FIXED_CENTRE.lon, FIXED_CENTRE.lat);
         // Без бюджета: он останавливает кадр раньше, чем начинаются
         // коллизии, и тогда все отказы одинаковы. Бюджет — предмет
@@ -69,6 +69,9 @@ export const labelsCollision: CardSpec = {
           stage.setAttribute("data-zoom", Number(zoom.value).toFixed(2));
           stage.setAttribute("data-placed", String(placed(entries).length));
         };
+        // Показания снимаются с кадра, а тайлы под этой камерой
+        // доезжают позже её движения.
+        onSettled(apply);
         stage.setAttribute("data-state", "ready");
         apply();
       })

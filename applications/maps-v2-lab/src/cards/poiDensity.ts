@@ -1,6 +1,6 @@
 import { FIXED_CENTRE } from "../bands";
 import { overlapCount } from "../labels";
-import { createMap } from "../sdk";
+import { createPackageMap } from "../sdk";
 import { controlRow, el, readout, section } from "../ui";
 import type { CardSpec } from "./types";
 
@@ -39,8 +39,8 @@ export const poiDensity: CardSpec = {
     stage.replaceChildren(canvas);
     stage.setAttribute("data-centre", `${FIXED_CENTRE.lon},${FIXED_CENTRE.lat}`);
 
-    createMap(canvas, "ealing")
-      .then((map) => {
+    createPackageMap(canvas, { zoom: 16 })
+      .then(({ map, onSettled }) => {
         map.setCentre(FIXED_CENTRE.lon, FIXED_CENTRE.lat);
         map.setZoom(16);
         apply = () => {
@@ -59,6 +59,9 @@ export const poiDensity: CardSpec = {
           stage.setAttribute("data-budget", share.toFixed(3));
           stage.setAttribute("data-placed", String(state.labels_placed));
         };
+        // Показания снимаются с кадра, а тайлы под этой камерой
+        // доезжают позже её движения.
+        onSettled(apply);
         stage.setAttribute("data-state", "ready");
         apply();
       })

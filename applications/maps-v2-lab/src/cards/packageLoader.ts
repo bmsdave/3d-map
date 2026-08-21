@@ -1,8 +1,8 @@
-import { createMap, createTilePackageLoader, type MapHandle } from "../sdk";
+import { createMap, createTilePackageLoader, TRAFALGAR_MANIFEST, type MapHandle } from "../sdk";
 import { controlRow, el, readout, section } from "../ui";
 import type { CardSpec } from "./types";
 
-const MANIFEST = "/fixtures/ealing/package-manifest.json";
+const MANIFEST = TRAFALGAR_MANIFEST;
 
 function canvasPoint(canvas: HTMLCanvasElement, event: PointerEvent | WheelEvent): [number, number] {
   const rect = canvas.getBoundingClientRect();

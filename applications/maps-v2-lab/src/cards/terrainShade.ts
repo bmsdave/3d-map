@@ -1,21 +1,26 @@
-import { createMap } from "../sdk";
+import { createPackageMap, TRAFALGAR } from "../sdk";
 import { controlRow, el, readout, section, switchControl } from "../ui";
 import type { CardSpec } from "./types";
 
-// Рельеф на плоскости: горная сцена из пакета ridge, свет с северо-запада.
+// Рельеф на плоскости: настоящий рельеф — Copernicus над сушей, GEBCO
+// под водой, — свет с северо-запада.
 // Тоглы разделяют две независимые вещи — затенение (форма) и гипсометрию
 // (высота цветом); ползунок выразительности задаёт вертикальное
 // преувеличение, с которым считается нормаль: на честном масштабе склон
 // в 200 м на 30 км — пятая часть градуса, и тихий холст его не показывает.
 
-/** Центр сцены — та же фиксированная точка, что у всех карточек. */
-const SCENE = { lon: -0.3049, lat: 51.5149, zoom: 8 };
+/** Та же точка, что у всех карточек, но с высоты, с которой рельеф
+ *  вообще есть: Лондон плоский, а z6 вокруг него — это Британские
+ *  острова, Ла-Манш и шельф, то есть настоящий разброс высот. Глубже
+ *  пятого зума карточка ещё и заведомо плоская: выше начинается
+ *  переход в глобус, а это предмет соседней студии. */
+const SCENE = { ...TRAFALGAR, zoom: 6 };
 
 export const terrainShade: CardSpec = {
   id: "terrain-shade",
   title: "Рельеф: затенение",
   purpose:
-    "Горная сцена на плоскости. Проверяет: нормаль из градиента высоты, свет с северо-запада, гипсометрия из стиля, выразительность — параметр, а не константа.",
+    "Настоящий рельеф на плоскости. Проверяет: нормаль из градиента высоты, свет с северо-запада, гипсометрия из стиля, выразительность — параметр, а не константа.",
   group: "Рельеф",
   mount(stage, panel) {
     const out = readout([
@@ -39,8 +44,8 @@ export const terrainShade: CardSpec = {
     const canvas = el("canvas", { width: "720", height: "480" });
     stage.replaceChildren(canvas);
 
-    createMap(canvas, "ridge")
-      .then((map) => {
+    createPackageMap(canvas, { zoom: SCENE.zoom, centre: SCENE })
+      .then(({ map, onSettled }) => {
         map.setCentre(SCENE.lon, SCENE.lat);
         map.setZoom(SCENE.zoom);
         map.setRelief(true);
@@ -86,6 +91,9 @@ export const terrainShade: CardSpec = {
           ),
           section("Показания", out.root),
         );
+        // Показания снимаются с кадра, а тайлы под этой камерой
+        // доезжают позже её движения.
+        onSettled(apply);
         stage.setAttribute("data-state", "ready");
         apply();
       })

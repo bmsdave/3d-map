@@ -1,5 +1,5 @@
 import { BANDS, expectedBand, FIXED_CENTRE } from "../bands";
-import { createMap } from "../sdk";
+import { createPackageMap } from "../sdk";
 import { controlRow, el, PENDING, readout, section } from "../ui";
 import type { CardSpec } from "./types";
 
@@ -48,8 +48,8 @@ export const zoomBands: CardSpec = {
 
     const canvas = el("canvas", { width: "720", height: "480" });
     stage.replaceChildren(canvas);
-    createMap(canvas, "ealing")
-      .then((map) => {
+    createPackageMap(canvas, { zoom: Number(slider.value) })
+      .then(({ map, onSettled }) => {
         map.setCentre(FIXED_CENTRE.lon, FIXED_CENTRE.lat);
         syncSdk = (zoom) => {
           map.setZoom(zoom);
@@ -62,6 +62,9 @@ export const zoomBands: CardSpec = {
             state.resident_classes.length > 0 ? state.resident_classes.join(", ") : PENDING,
           );
         };
+        // Показания снимаются с кадра, а тайлы под этой камерой
+        // доезжают позже её движения.
+        onSettled(apply);
         stage.setAttribute("data-state", "ready");
         apply();
       })

@@ -1,6 +1,6 @@
 import { FIXED_CENTRE } from "../bands";
 import { churn, lonPerPixel } from "../labels";
-import { createMap } from "../sdk";
+import { createPackageMap } from "../sdk";
 import { controlRow, el, readout, section } from "../ui";
 import type { CardSpec } from "./types";
 
@@ -41,8 +41,8 @@ export const viewportStability: CardSpec = {
     stage.replaceChildren(canvas);
     stage.setAttribute("data-centre", `${FIXED_CENTRE.lon},${FIXED_CENTRE.lat}`);
 
-    createMap(canvas, "ealing")
-      .then((map) => {
+    createPackageMap(canvas, { zoom: 16 })
+      .then(({ map, onSettled }) => {
         const zoom = 16;
         map.setZoom(zoom);
         map.setLabelBudget(0.12);
@@ -68,6 +68,9 @@ export const viewportStability: CardSpec = {
           stage.setAttribute("data-churn", moved.toFixed(4));
           stage.setAttribute("data-deterministic", String(same));
         };
+        // Показания снимаются с кадра, а тайлы под этой камерой
+        // доезжают позже её движения.
+        onSettled(apply);
         stage.setAttribute("data-state", "ready");
         apply();
       })

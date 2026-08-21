@@ -1,7 +1,7 @@
 import { FIXED_CENTRE } from "./bands";
 import { CARDS } from "./cards";
 import type { CardSpec } from "./cards/types";
-import { createMap } from "./sdk";
+import { createPackageMap } from "./sdk";
 import { el, stageEl } from "./ui";
 
 // Живая доска: главная страница — это и есть лаборатория. Каждая студия
@@ -32,20 +32,20 @@ interface Moment {
 // Один пакет, одна карта, один контекст: моменты двигают камеру, а не
 // пересоздают карту, иначе герой стоил бы трёх студий.
 const HERO_MOMENTS: readonly Moment[] = [
-  { label: "Micro · z16.4", caption: "Buildings, roofs, and road joins at street scale", zoom: 16.4, tilt: 42 },
-  { label: "Street · z13.8", caption: "The road network and its named places", zoom: 13.8, tilt: 26 },
-  { label: "City · z10.2", caption: "Bands hand composition over at their entries", zoom: 10.2, tilt: 12 },
+  { label: "Micro · z16.4", caption: "Trafalgar Square: buildings, roofs, and the joins of the Strand", zoom: 16.4, tilt: 42 },
+  { label: "Street · z13.8", caption: "Westminster and the river, with their named places", zoom: 13.8, tilt: 26 },
+  { label: "City · z10.2", caption: "Greater London, where the bands hand composition over", zoom: 10.2, tilt: 12 },
 ];
 
 // Реальный, копируемый пример — та же последовательность вызовов SDK,
-// что выполняет каждая студия ниже (см. src/sdk.ts createMap/loadPackCentre).
-const QUICK_START_SNIPPET = `import { createMap, loadPackCentre } from "./sdk";
+// что выполняет каждая студия ниже (см. src/sdk.ts createPackageMap).
+const QUICK_START_SNIPPET = `import { createPackageMap } from "./sdk";
 
 const canvas = document.querySelector("canvas")!;
-const centre = await loadPackCentre("ealing");
-const map = await createMap(canvas, "ealing");
-map.setCentre(centre.lon, centre.lat);
-map.setZoom(centre.zoom);
+// Real OSM, Copernicus and GEBCO tiles, demand-loaded around
+// Trafalgar Square; camera moves pull the tiles they need.
+const { map } = await createPackageMap(canvas, { zoom: 16 });
+map.setTilt(42);
 map.render();`;
 
 interface Slot {
@@ -172,7 +172,7 @@ function heroSection(board: Board): HTMLElement {
       el("h1", {}, ["The lab, running."]),
       el("p", { class: "hero-lead" }, [
         `Every study below renders live on this page — ${CARDS.length} of them, no click-through. `,
-        "Deterministic fixtures, WebGL2, one Rust core.",
+        "Real OpenStreetMap, Copernicus and GEBCO tiles around Trafalgar Square, WebGL2, one Rust core.",
       ]),
       el("pre", { class: "mono quick-start-code", "data-testid": "quick-start" }, [
         el("code", {}, [QUICK_START_SNIPPET]),
@@ -197,12 +197,11 @@ async function mountHero(
   board: Board,
 ): Promise<void> {
   try {
-    const map = await createMap(canvas, "ealing");
+    const { map } = await createPackageMap(canvas, { zoom: HERO_MOMENTS[0]!.zoom, centre: FIXED_CENTRE });
     if (board.destroyed) {
       loseContexts(stage);
       return;
     }
-    map.setCentre(FIXED_CENTRE.lon, FIXED_CENTRE.lat);
     stage.setAttribute("data-state", "ready");
     const started = performance.now();
     let shown = -1;

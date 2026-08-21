@@ -1,5 +1,5 @@
 import { FIXED_CENTRE } from "../bands";
-import { createMap } from "../sdk";
+import { createPackageMap } from "../sdk";
 import { controlRow, el, PENDING, readout, section } from "../ui";
 import type { CardSpec } from "./types";
 
@@ -34,8 +34,8 @@ export const globeTransition: CardSpec = {
 
     const canvas = el("canvas", { width: "720", height: "480" });
     stage.replaceChildren(canvas);
-    createMap(canvas, "ealing")
-      .then((map) => {
+    createPackageMap(canvas, { zoom: Number(slider.value) })
+      .then(({ map, onSettled }) => {
         map.setCentre(FIXED_CENTRE.lon, FIXED_CENTRE.lat);
         const apply = () => {
           const zoom = Number(slider.value);
@@ -48,6 +48,9 @@ export const globeTransition: CardSpec = {
           out.set("globeness", g.toFixed(3));
         };
         slider.addEventListener("input", apply);
+        // Показания снимаются с кадра, а тайлы под этой камерой
+        // доезжают позже её движения.
+        onSettled(apply);
         stage.setAttribute("data-state", "ready");
         apply();
       })
