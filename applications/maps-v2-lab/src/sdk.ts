@@ -2,6 +2,7 @@
 // фикстуры тянет хост (карточка), тайлы отдаются в Map один раз.
 
 import init, { Map as SdkMap } from "./generated/maps2-web/maps2_web.js";
+import { recordSpan, traced, tracedAsync } from "./perfTrace";
 
 export interface DebugState {
   zoom: number;
@@ -256,13 +257,15 @@ async function fetchTile(url: string, digest: string): Promise<Uint8Array> {
 }
 
 async function fetchTileOnce(url: string, digest: string): Promise<Uint8Array> {
-  const response = await fetch(url);
+  const response = await tracedAsync("fetch", () => fetch(url));
   if (!response.ok) throw new TileResponseError(response.status);
   const length = Number(response.headers.get("content-length"));
   if (Number.isFinite(length) && length > MAX_TILE_BYTES) throw new Error("package tile exceeds 4 MiB");
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.byteLength > MAX_TILE_BYTES) throw new Error("package tile exceeds 4 MiB");
-  if (await sha256(bytes) !== digest) throw new Error("package tile checksum mismatch");
+  if (await tracedAsync("digest", () => sha256(bytes)) !== digest) {
+    throw new Error("package tile checksum mismatch");
+  }
   return bytes;
 }
 
@@ -315,6 +318,7 @@ export async function createTilePackageLoader(
       // студии, которую человек только что открыл.
       const wanted = options.active ?? (() => true);
       if (!wanted()) return { loaded: 0, unloaded: 0, unavailable: 0, blockedMs: 0 };
+      const passStarted = performance.now();
       // One residency plan answers all four questions. Asking them
       // separately cost a plan each, and this runs on every pointer
       // move: a single drag was computing nine plans per event.
@@ -325,7 +329,7 @@ export async function createTilePackageLoader(
         blockedMs += performance.now() - started;
         return value;
       };
-      const demand = blocking(() => map.tileDemand());
+      const demand = blocking(() => traced("demand", () => map.tileDemand()));
       // Only ever unload this package's own tiles. The evictable list
       // speaks for the whole map, and several packages compose onto one
       // map — a world package dropping the city package's tiles would
@@ -361,7 +365,7 @@ export async function createTilePackageLoader(
       } finally {
         available.forEach((path) => inFlight.delete(path));
       }
-      const after = blocking(() => map.tileDemand());
+      const after = blocking(() => traced("demand", () => map.tileDemand()));
       const stillWanted = new Set([...after.missing, ...after.fallback, ...after.prefetch]);
       let loadedNow = 0;
       // Decode in slices, yielding between them. The work is the same;
@@ -372,7 +376,7 @@ export async function createTilePackageLoader(
         if (!wanted()) break;
         if (!stillWanted.has(path)) continue;
         blocking(() => {
-          map.loadTile(tile);
+          traced("decode", () => map.loadTile(tile));
           loaded.add(path);
           loadedNow += 1;
         });
@@ -384,6 +388,10 @@ export async function createTilePackageLoader(
       // A repaint is only owed when the frame would differ. The caller
       // has already drawn this camera; loading nothing changes nothing.
       if (loadedNow > 0 || evicted.length > 0) blocking(() => map.render());
+      // Проход уже посчитал своё заблокированное время — второй
+      // секундомер поверх первого мерил бы обёртку, а не работу.
+      recordSpan("pass", performance.now() - passStarted);
+      recordSpan("blocked", blockedMs);
       return { loaded: loadedNow, unloaded: evicted.length, unavailable, blockedMs };
     },
   };
@@ -470,10 +478,10 @@ export async function createMap(canvas: HTMLCanvasElement, pack: string | null):
     setReliefExpressiveness: (value) => map.set_relief_expressiveness(value),
     setReliefExaggeration: (value) => map.set_relief_exaggeration(value),
     globeness: () => map.globeness(),
-    render: () => map.render(),
+    render: () => traced("render", () => map.render()),
     measureFrames: (samples) => p95RenderMs(map, samples),
-    debug: () => JSON.parse(map.debug()) as DebugState,
-    labelDebug: () => JSON.parse(map.label_debug()) as LabelEntry[],
+    debug: () => traced("debug", () => JSON.parse(map.debug()) as DebugState),
+    labelDebug: () => traced("labels", () => JSON.parse(map.label_debug()) as LabelEntry[]),
     pointerDown: (x, y, nowMs) => map.pointer_down(x, y, nowMs),
     pointerMove: (x, y, nowMs) => map.pointer_move(x, y, nowMs),
     pointerUp: () => map.pointer_up(),
@@ -581,14 +589,14 @@ export async function createPackageMap(
   // Вырезка конечна, и у неё есть край. Камеру, уехавшую за него,
   // возвращает не рендерер — он честно покажет дыру, — а хост: это
   // его пакет и его решение, куда можно смотреть.
-  const clamp = (): void => {
+  const clamp = (): void => traced("clamp", () => {
     const state = raw.debug();
     const box = levelBox(loader.manifest, state.tile_level);
     if (!box) return;
     const lon = Math.min(Math.max(state.centre_lon, box.west), box.east);
     const lat = Math.min(Math.max(state.centre_lat, box.south), box.north);
     if (lon !== state.centre_lon || lat !== state.centre_lat) raw.setCentre(lon, lat);
-  };
+  });
 
   // Камера успевает измениться несколько раз за кадр (шоукейс двигает
   // зум, курс и наклон подряд), а спросить у карты, где она стоит, —
