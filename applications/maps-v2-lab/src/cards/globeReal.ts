@@ -1,9 +1,13 @@
-import { createMap, createTilePackageLoader, type MapHandle, type TilePackageLoader } from "../sdk";
+import { createMap, createTilePackageLoader, TRAFALGAR_CITY_MANIFEST, TRAFALGAR_MANIFEST, type MapHandle, type TilePackageLoader } from "../sdk";
 import { controlRow, el, readout, section } from "../ui";
 import type { CardSpec } from "./types";
 
-const WORLD_MANIFEST = "https://maps2.local/world/manifest.json";
-const CITY_MANIFEST = "https://maps2.local/city/manifest.json";
+// Два разных пакета вокруг одной площади: полная вырезка, чьи низкие
+// уровни — весь мир, и отдельная городская, только z12–16. Один и тот
+// же пакет в оба поля превратил бы композицию в загрузку одного и того
+// же дважды. Поля URL по-прежнему принимают чужие пакеты.
+const WORLD_MANIFEST = TRAFALGAR_MANIFEST;
+const CITY_MANIFEST = TRAFALGAR_CITY_MANIFEST;
 
 /// The zoom a street-level city package conventionally starts at, and so
 /// the zoom this demo hands the ground over from world terrain to real
@@ -97,7 +101,7 @@ export const globeReal: CardSpec = {
       const retry = el("button", { type: "button" }, ["Повторить"]);
       retry.addEventListener("click", () => void loadBoth());
       const detail = manifestUrl
-        ? `Не удалось загрузить ${manifestUrl}: ${String(error)}. Проверьте URL — по умолчанию это заглушка, а не рабочий сервер.`
+        ? `Не удалось загрузить ${manifestUrl}: ${String(error)}. Проверьте URL — по умолчанию это вырезка, лежащая рядом с лабораторией.`
         : String(error);
       stage.setAttribute("data-state", "error");
       stage.replaceChildren(detail, retry);
@@ -106,7 +110,7 @@ export const globeReal: CardSpec = {
       stage.setAttribute("data-state", "idle");
       stage.replaceChildren(
         "Введите URL двух реальных manifest-пакетов (мир и город) и нажмите «Загрузить оба пакета». " +
-          "По умолчанию поля указывают на заглушку — она никогда не отвечает.",
+          "По умолчанию оба поля указывают на вырезку вокруг Трафальгарской площади.",
       );
     };
 
@@ -194,12 +198,10 @@ export const globeReal: CardSpec = {
       applyControls();
     });
     panel.append(source);
-    // The default field values are documentation, not a working
-    // manifest — unlike packageLoader's bundled fixture, real world +
-    // city packages are too large to ship in the lab itself (see the
-    // README's Demos section for how to build and serve them locally).
-    // Fetching them unconditionally on mount previously failed instantly
-    // with an opaque "TypeError: Failed to fetch" and no indication why.
-    showIdle();
+    // The default fields now point at a package that is actually
+    // there — the carve committed beside the lab — so the card opens
+    // running like every other study. The idle state stays for a URL
+    // the operator points somewhere else and clears.
+    void loadBoth();
   },
 };

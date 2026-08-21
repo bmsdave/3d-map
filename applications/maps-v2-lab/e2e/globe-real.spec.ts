@@ -18,18 +18,33 @@ async function fulfillPrefixed(route: Route, prefix: string, root: string): Prom
   });
 }
 
-test("globe-real: a real world package and a real city package compose on one map", async ({ page }) => {
-  test.skip(
-    !worldPackageRoot || !cityPackageRoot,
-    "set MAPS2_WORLD_PACKAGE_ROOT and MAPS2_REAL_PACKAGE_ROOT to run this real-data acceptance test",
-  );
+
+// По умолчанию оба поля карточки указывают на вырезку, лежащую рядом с
+// лабой, — поэтому проверка идёт без переменных окружения. Пара
+// MAPS2_WORLD_PACKAGE_ROOT / MAPS2_REAL_PACKAGE_ROOT остаётся для
+// приёмки на настоящих раздельных пакетах: тогда те же утверждения
+// выполняются против них.
+const separatePackages = Boolean(worldPackageRoot && cityPackageRoot);
+
+async function routePackages(page: import("@playwright/test").Page): Promise<void> {
+  if (!separatePackages) return;
   await page.route("https://maps2.local/world/**", (route) => fulfillPrefixed(route, "world", worldPackageRoot!));
   await page.route("https://maps2.local/city/**", (route) => fulfillPrefixed(route, "city", cityPackageRoot!));
+}
+
+async function loadIfPointedElsewhere(page: import("@playwright/test").Page): Promise<void> {
+  if (!separatePackages) return;
+  await page.getByTestId("globe-real-world-url").fill("https://maps2.local/world/manifest.json");
+  await page.getByTestId("globe-real-city-url").fill("https://maps2.local/city/manifest.json");
+  await page.getByTestId("globe-real-load").click();
+}
+
+test("globe-real: a real world package and a real city package compose on one map", async ({ page }) => {
+  await routePackages(page);
   await page.goto("/#/card/globe-real");
 
   const stage = page.getByTestId("stage");
-  await expect(stage).toHaveAttribute("data-state", "idle");
-  await page.getByTestId("globe-real-load").click();
+  await loadIfPointedElsewhere(page);
   // The world package alone carries 1,048 tiles (real global coastline
   // coverage) - more than the synthetic fixtures other specs load - so
   // the initial fetch can outrun the default timeout under a loaded
@@ -45,7 +60,7 @@ test("globe-real: a real world package and a real city package compose on one ma
   // Zoom from the globe into the real city package on the same map
   // instance: addSourceLevels must union, not replace, the pyramid.
   await page.evaluate(() => {
-    window.maps2?.setCentre(-0.0877, 51.5133);
+    window.maps2?.setCentre(-0.1281, 51.508);
     window.maps2?.setZoom(15);
     window.maps2?.render();
   });
@@ -65,15 +80,10 @@ test("globe-real: a real world package and a real city package compose on one ma
 });
 
 test("globe-real: the world package carries labels and roads, not only relief", async ({ page }) => {
-  test.skip(
-    !worldPackageRoot || !cityPackageRoot,
-    "set MAPS2_WORLD_PACKAGE_ROOT and MAPS2_REAL_PACKAGE_ROOT to run this real-data acceptance test",
-  );
-  await page.route("https://maps2.local/world/**", (route) => fulfillPrefixed(route, "world", worldPackageRoot!));
-  await page.route("https://maps2.local/city/**", (route) => fulfillPrefixed(route, "city", cityPackageRoot!));
+  await routePackages(page);
   await page.goto("/#/card/globe-real");
   const stage = page.getByTestId("stage");
-  await page.getByTestId("globe-real-load").click();
+  await loadIfPointedElsewhere(page);
   await expect(stage).toHaveAttribute("data-state", "ready", { timeout: 15_000 });
   const canvas = stage.locator("canvas");
 
@@ -81,8 +91,12 @@ test("globe-real: the world package carries labels and roads, not only relief", 
   // relief model: before Natural Earth was ingested these levels drew
   // hill shading and a coastline and nothing else at all — no place
   // name, no border, no road anywhere on Earth outside one city.
-  for (const zoom of [3, 6, 9]) {
-    await page.evaluate((z) => { window.maps2?.setCentre(2.0, 49.5); window.maps2?.setZoom(z); }, zoom);
+  // Точки выбраны так, чтобы каждая лежала вне лондонской выборки OSM
+  // (её границы кончаются на 0.334 в.д.) и внутри того, что вырезка
+  // держит на этом уровне: z1–3 — весь мир, глубже — квадрат вокруг
+  // Лондона, и на z9 он уже уже Парижа.
+  for (const [zoom, lon, lat] of [[3, 2.0, 49.5], [6, 2.0, 49.5], [9, 0.5, 51.3]]) {
+    await page.evaluate(([z, x, y]) => { window.maps2?.setCentre(x!, y!); window.maps2?.setZoom(z!); }, [zoom, lon, lat]);
     for (let attempt = 0; attempt < 14; attempt += 1) {
       await canvas.dispatchEvent("pointerdown", { clientX: 1, clientY: 1 });
       await canvas.dispatchEvent("pointermove", { clientX: 2, clientY: 2 });
@@ -98,15 +112,10 @@ test("globe-real: the world package carries labels and roads, not only relief", 
 });
 
 test("globe-real: approaching the city through the prefetch band still renders it", async ({ page }) => {
-  test.skip(
-    !worldPackageRoot || !cityPackageRoot,
-    "set MAPS2_WORLD_PACKAGE_ROOT and MAPS2_REAL_PACKAGE_ROOT to run this real-data acceptance test",
-  );
-  await page.route("https://maps2.local/world/**", (route) => fulfillPrefixed(route, "world", worldPackageRoot!));
-  await page.route("https://maps2.local/city/**", (route) => fulfillPrefixed(route, "city", cityPackageRoot!));
+  await routePackages(page);
   await page.goto("/#/card/globe-real");
   const stage = page.getByTestId("stage");
-  await page.getByTestId("globe-real-load").click();
+  await loadIfPointedElsewhere(page);
   await expect(stage).toHaveAttribute("data-state", "ready", { timeout: 15_000 });
   const canvas = stage.locator("canvas");
   const settle = async () => {
@@ -136,15 +145,10 @@ test("globe-real: approaching the city through the prefetch band still renders i
 });
 
 test("globe-real: street zoom outside the city package still draws the world underneath", async ({ page }) => {
-  test.skip(
-    !worldPackageRoot || !cityPackageRoot,
-    "set MAPS2_WORLD_PACKAGE_ROOT and MAPS2_REAL_PACKAGE_ROOT to run this real-data acceptance test",
-  );
-  await page.route("https://maps2.local/world/**", (route) => fulfillPrefixed(route, "world", worldPackageRoot!));
-  await page.route("https://maps2.local/city/**", (route) => fulfillPrefixed(route, "city", cityPackageRoot!));
+  await routePackages(page);
   await page.goto("/#/card/globe-real");
   const stage = page.getByTestId("stage");
-  await page.getByTestId("globe-real-load").click();
+  await loadIfPointedElsewhere(page);
   await expect(stage).toHaveAttribute("data-state", "ready", { timeout: 15_000 });
 
   // Paris: the city package covers London and nothing else, so the

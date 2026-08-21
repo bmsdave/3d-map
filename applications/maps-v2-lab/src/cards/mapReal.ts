@@ -1,9 +1,9 @@
 import { PerfOverlay } from "../perfOverlay";
-import { createMap, createTilePackageLoader, type MapHandle, type TilePackageLoader } from "../sdk";
+import { createMap, createTilePackageLoader, TRAFALGAR_MANIFEST, type MapHandle, type TilePackageLoader } from "../sdk";
 import { controlRow, el, readout, section } from "../ui";
 import type { CardSpec } from "./types";
 
-const MAP_MANIFEST = "https://maps2.local/map/manifest.json";
+const MAP_MANIFEST = TRAFALGAR_MANIFEST;
 
 /// Below this the ground is a generalised world and relief is the only
 /// thing that makes it visible; at and above it a real city extract owns
@@ -101,7 +101,7 @@ export const mapReal: CardSpec = {
       retry.addEventListener("click", () => void loadPackage());
       stage.setAttribute("data-state", "error");
       stage.replaceChildren(
-        `Не удалось загрузить ${manifestUrl}: ${String(error)}. Проверьте URL — по умолчанию это заглушка, а не рабочий сервер.`,
+        `Не удалось загрузить ${manifestUrl}: ${String(error)}. Проверьте URL — по умолчанию это вырезка, лежащая рядом с лабораторией.`,
         retry,
       );
     };
@@ -109,7 +109,7 @@ export const mapReal: CardSpec = {
       stage.setAttribute("data-state", "idle");
       stage.replaceChildren(
         "Укажите URL manifest пакета, собранного `maps2-ingest build-map`, и нажмите «Загрузить пакет». " +
-          "По умолчанию поле указывает на заглушку — она никогда не отвечает.",
+          "По умолчанию поле указывает на вырезку вокруг Трафальгарской площади.",
       );
     };
 
@@ -206,6 +206,6 @@ export const mapReal: CardSpec = {
     tilt.addEventListener("input", applyControls);
     zoomSlider.addEventListener("input", applyControls);
     panel.append(source);
-    showIdle();
+    void loadPackage();
   },
 };

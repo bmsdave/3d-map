@@ -6,15 +6,21 @@
   generation, rendering, text placement, and the WebGL2/Wasm boundary.
 - MT2 v4 preserves 64-bit OSM feature IDs; label diagnostics expose their
   128-bit class-plus-feature identities as strings so browsers never lose precision.
-- A deterministic synthetic fixture set and browser lab cards for zoom bands,
-  roads, point-label collision, density, input, globe transition, terrain, and
-  globe relief.
+- A deterministic synthetic fixture set, still generated and still used by the
+  Rust tests, and browser lab cards for zoom bands, roads, point-label
+  collision, density, input, globe transition, terrain, and globe relief.
+- A committed MT2 carve around Trafalgar Square that every lab study draws, so
+  the lab opens on real ground without a build step, plus `maps2-ingest carve`,
+  which cuts such a package out of a built one.
 - Rust tests, Playwright visual/interaction checks, and an on-demand p95
   rendering-card frame-budget check of 10 ms or less.
 
 ## Excluded
 
-This is not a map of London or the world. The local Stage-8 foundation can
+This is still not a map of London or the world: the committed carve is a lab
+fixture by another name — a few hundred tiles around one square, bounded so a
+study cannot be driven off its edge — and not a distribution anyone should build
+on. The local Stage-8 foundation can
 fetch HTTPS OSM/DEM inputs with checksum validation and build untracked Greater
 London MT2 packages at one level or an inclusive level range, carrying source
 provenance and attribution in the manifest. MT2 v3 supports simple
@@ -42,7 +48,16 @@ remain unchanged by that license choice.
 
 The initial open-source milestone is a local-development SDK. It may fetch and
 build only openly licensed, pinned source inputs described by the ingest
-pipeline (currently OSM and Copernicus DEM); the source licence and attribution
-remain in each generated manifest. Generated data stays untracked. Hosting,
-signing, package distribution, operational support, and production release
-ownership are intentionally outside this milestone.
+pipeline (OSM, Copernicus DEM, GEBCO, Natural Earth); the source licence and
+attribution remain in each generated manifest.
+
+Generated data stays untracked, with one deliberate exception: the lab's
+Trafalgar Square carve is committed, because a lab that renders test lines until
+someone downloads a hundred gigabytes of source is not a lab anyone can look at.
+The exception carries obligations rather than removing them — the packages keep
+their manifests' provenance, the repository carries NOTICE, the lab shows
+attribution on every route, and CI verifies both packages' digests. It is not a
+licence to commit further derived data.
+
+Hosting, signing, package distribution, operational support, and production
+release ownership are intentionally outside this milestone.

@@ -1,6 +1,10 @@
-// roads-micro: сцена патологий на живом SDK. Утверждения — про стыки,
-// казинг и ширины из debug(), а не про пиксели; пиксели проверяет
-// единственный golden-скриншот в конце.
+// roads-micro: реальный перекрёсток на живом SDK. Утверждения — про
+// стыки, казинг и ширины из debug(), а не про пиксели; пиксели
+// проверяет единственный golden-скриншот в конце.
+//
+// Точных чисел здесь больше нет: синтетическая сцена держала ровно по
+// одному стыку каждого вида, город даёт их тысячами. Проверяется то,
+// что и проверялось, — правило, а не его старый счёт.
 
 import { expect, test, type Page } from "@playwright/test";
 
@@ -17,10 +21,12 @@ function joins(page: Page) {
 
 test("сцена собирается со стыками обоих видов", async ({ page }) => {
   const stage = await openRoads(page);
-  // Круг митрится весь, острый угол и шикана — бевелятся.
+  // Плавные повороты митрятся, острые углы бевелятся: на настоящей
+  // сети есть и те, и другие.
   await expect(joins(page)).toContainText(/митра [1-9]\d*/);
   await expect(joins(page)).toContainText(/бевел [1-9]\d*/);
-  await expect(stage).toHaveAttribute("data-label-candidates", "1");
+  const candidates = await stage.getAttribute("data-label-candidates");
+  expect(Number(candidates)).toBeGreaterThan(0);
 });
 
 test("предел митры превращает бевелы в митры", async ({ page }) => {
@@ -30,19 +36,23 @@ test("предел митры превращает бевелы в митры", 
     return Number(/бевел (\d+)/.exec(text)?.[1] ?? -1);
   };
 
-  // Сцена держит по углу на каждое положение ручки: 40° (митра 2.9) и
-  // 75° (митра 1.6) плюс острый угол, который не спрямляется никаким
-  // пределом. Поэтому счёт бевелов строго падает с ростом предела.
+  // Предел решает, какой угол ещё можно смитрить. Поднимая его, мы
+  // забираем углы у бевела и отдаём митре — счёт бевелов обязан падать,
+  // и ни один угол не может стать бевелом от роста предела.
   await page.getByTestId("miter-limit").selectOption("1.5");
   await expect(stage).toHaveAttribute("data-miter-limit", "1.5");
-  expect(await bevels()).toBe(3);
+  const tight = await bevels();
+  expect(tight).toBeGreaterThan(0);
 
   await page.getByTestId("miter-limit").selectOption("2");
-  expect(await bevels()).toBe(2);
+  const middle = await bevels();
+  expect(middle).toBeLessThanOrEqual(tight);
 
   await page.getByTestId("miter-limit").selectOption("4");
   await expect(stage).toHaveAttribute("data-miter-limit", "4.0");
-  expect(await bevels()).toBe(1);
+  const loose = await bevels();
+  expect(loose).toBeLessThanOrEqual(middle);
+  expect(loose).toBeLessThan(tight);
 });
 
 test("тогл казинга снимает нижний проход", async ({ page }) => {
@@ -67,9 +77,11 @@ test("ширина дороги задаётся в экранных пиксе�
   await expect(widths).toContainText("магистраль 20.0");
 });
 
-// Столбец пикселей поперёк магистрали: земля → казинг → заливка →
-// казинг → земля. Проба — хук вне горячего пути, кадр за неё не платит.
-async function columnAcrossMotorway(page: Page, x = 360): Promise<number[]> {
+// Столбец пикселей поперёк дороги: земля → казинг → заливка → казинг →
+// земля. Проба — хук вне горячего пути, кадр за неё не платит.
+// x=480 попадает на проезжую часть у Northumberland Avenue, к востоку
+// от центра сцены; строка y=230..270 пересекает её поперёк.
+async function columnAcrossMotorway(page: Page, x = 480): Promise<number[]> {
   return page.evaluate((sampleX) => {
     const map = (
       window as unknown as {
@@ -108,7 +120,7 @@ test("казинг темнее заливки, центр ленты — цве
 test("снятый казинг убирает тёмную кромку с ленты", async ({ page }) => {
   await openRoads(page);
   await page.getByTestId("casing-toggle").uncheck();
-  const column = await columnAcrossMotorway(page, 160);
+  const column = await columnAcrossMotorway(page);
   const land = column[0] ?? 0;
   expect(column[CENTRE_INDEX]).toBeGreaterThan(land);
   expect(Math.min(...column)).toBeGreaterThanOrEqual(land);

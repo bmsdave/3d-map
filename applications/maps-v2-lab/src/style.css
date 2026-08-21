@@ -698,3 +698,18 @@ a:hover {
 @media (max-width: 560px) {
   .showcase-grid { grid-template-columns: 1fr; }
 }
+
+/* Атрибуция источников. Читаемая, но не спорящая со студиями за
+   внимание: она обязана быть на экране, а не быть на нём главной. */
+.attribution {
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.attribution a {
+  color: inherit;
+}

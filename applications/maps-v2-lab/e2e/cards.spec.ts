@@ -24,7 +24,9 @@ test("zoom-bands: полосы приходят и уходят с зумом", 
   // Регрессия v1: после отъезда дома обязаны уйти с экрана.
   await slider.fill("6");
   await expect(classes(page)).not.toContainText("Building");
-  await expect(page.getByTestId("readout-tile-level")).toHaveText("5");
+  // Уровень тайлов — это зум камеры, а не то, что нашлось в пакете:
+  // у фикстуры на z6 покрытия не было и рендерер откатывался на пятый.
+  await expect(page.getByTestId("readout-tile-level")).toHaveText("6");
 });
 
 test("тогл Address↔Micro меняет состав при неподвижной камере", async ({ page }) => {
@@ -77,8 +79,8 @@ test("главная показывает живые студии сразу, б
   await page.goto("/#/");
   const quickStart = page.getByTestId("quick-start");
   await expect(quickStart).toBeVisible();
-  await expect(quickStart.locator("code")).toContainText("createMap");
-  await expect(quickStart.locator("code")).toContainText("loadPackCentre");
+  await expect(quickStart.locator("code")).toContainText("createPackageMap");
+  await expect(quickStart.locator("code")).toContainText("Trafalgar Square");
 
   // Герой рисует до любого клика — страница открывается уже картой.
   await expect(page.getByTestId("hero-stage")).toHaveAttribute("data-state", "ready");

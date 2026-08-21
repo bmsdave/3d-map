@@ -1,5 +1,5 @@
 import { FIXED_CENTRE } from "../bands";
-import { createMap, type MapHandle } from "../sdk";
+import { createPackageMap, type MapHandle } from "../sdk";
 import { el, readout, type Readout, section } from "../ui";
 import type { CardSpec } from "./types";
 
@@ -167,11 +167,14 @@ export const inputFlat: CardSpec = {
     attachPointer(stage, canvas, drive, log.push);
     attachWheelAndKeys(stage, canvas, drive, log.push);
 
-    createMap(canvas, "ealing")
-      .then((map) => {
+    createPackageMap(canvas, { zoom: START_ZOOM })
+      .then(({ map, onSettled }) => {
         map.setCentre(FIXED_CENTRE.lon, FIXED_CENTRE.lat);
         map.setZoom(START_ZOOM);
         drive.map = map;
+        // Показания снимаются с кадра, а тайлы под этой камерой
+        // доезжают позже её движения.
+        onSettled(() => drive.sync());
         drive.sync();
         stage.setAttribute("data-state", "ready");
       })

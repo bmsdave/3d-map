@@ -1,5 +1,5 @@
 import { FIXED_CENTRE } from "../bands";
-import { createMap } from "../sdk";
+import { createPackageMap } from "../sdk";
 import { controlRow, el, readout, section } from "../ui";
 import type { CardSpec } from "./types";
 
@@ -8,7 +8,7 @@ import type { CardSpec } from "./types";
 // любом кегле и halo; проверяемое числами — что поворот и наклон
 // камеры не трогают текст: он не в меше мира, а отдельным проходом.
 
-const DEFAULT_TEXT = "Ealing Broadway 1863";
+const DEFAULT_TEXT = "Trafalgar Square 1844";
 
 export const typeSpecimen: CardSpec = {
   id: "type-specimen",
@@ -39,8 +39,8 @@ export const typeSpecimen: CardSpec = {
     stage.replaceChildren(canvas);
     stage.setAttribute("data-centre", `${FIXED_CENTRE.lon},${FIXED_CENTRE.lat}`);
 
-    createMap(canvas, "ealing")
-      .then((map) => {
+    createPackageMap(canvas, { zoom: 14 })
+      .then(({ map, onSettled }) => {
         map.setCentre(FIXED_CENTRE.lon, FIXED_CENTRE.lat);
         map.setZoom(14);
         apply = () => {
@@ -58,6 +58,9 @@ export const typeSpecimen: CardSpec = {
           stage.setAttribute("data-bearing", state.bearing.toFixed(1));
           stage.setAttribute("data-tilt", state.tilt.toFixed(1));
         };
+        // Показания снимаются с кадра, а тайлы под этой камерой
+        // доезжают позже её движения.
+        onSettled(apply);
         stage.setAttribute("data-state", "ready");
         apply();
       })

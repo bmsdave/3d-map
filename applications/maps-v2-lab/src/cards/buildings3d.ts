@@ -1,5 +1,5 @@
 import { FIXED_CENTRE } from "../bands";
-import { createMap } from "../sdk";
+import { createPackageMap } from "../sdk";
 import { controlRow, el, readout, section } from "../ui";
 import type { CardSpec } from "./types";
 
@@ -28,8 +28,8 @@ export const buildings3d: CardSpec = {
     const canvas = el("canvas", { width: "720", height: "480" });
     stage.replaceChildren(canvas);
 
-    createMap(canvas, "ealing")
-      .then((map) => {
+    createPackageMap(canvas, { zoom: ZOOM })
+      .then(({ map, onSettled }) => {
         map.setCentre(FIXED_CENTRE.lon, FIXED_CENTRE.lat);
         map.setZoom(ZOOM);
         const apply = () => {
@@ -43,6 +43,9 @@ export const buildings3d: CardSpec = {
         };
         tilt.addEventListener("input", apply);
         panel.append(section("Камера", controlRow("tilt, °", tilt)), section("Показания", out.root));
+        // Показания снимаются с кадра, а тайлы под этой камерой
+        // доезжают позже её движения.
+        onSettled(apply);
         stage.setAttribute("data-state", "ready");
         apply();
       })

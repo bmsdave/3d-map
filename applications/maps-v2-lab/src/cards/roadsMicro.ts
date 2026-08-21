@@ -1,11 +1,18 @@
-import { createMap, loadPackCentre, type MapHandle } from "../sdk";
+import { FIXED_CENTRE } from "../bands";
+import { createPackageMap, type MapHandle } from "../sdk";
 import { controlRow, el, readout, section } from "../ui";
 import type { CardSpec } from "./types";
 
-// Дороги на самом детальном зуме: фиксированная сцена патологий —
-// острый угол, Y-развязка, круг, дублёр, мост и тоннель. Ручки — ровно
-// то, что описано в плане §4.2–4.4: казинг, предел митры, ширина в
-// экранных пикселях. Все показания читаются из debug() SDK.
+// Дороги на самом детальном зуме. Раньше здесь стояла синтетическая
+// сцена патологий: острый угол, Y-развязка, круг, дублёр, мост и
+// тоннель — по одной штуке, специально выложенные. Теперь это перекрёсток
+// Strand, Whitehall и Charing Cross: те же патологии, но такие, какими
+// их кладёт город, а не генератор фикстур. Ручки прежние (план §4.2–4.4):
+// казинг, предел митры, ширина в экранных пикселях; все показания
+// читаются из debug() SDK.
+
+// Глубже пакета: z17 растягивает тайлы z16, как и всякий overzoom.
+const ZOOM = 17;
 
 const MOTORWAY = "RoadMotorway";
 const STREET = "RoadResidential";
@@ -14,7 +21,7 @@ export const roadsMicro: CardSpec = {
   id: "roads-micro",
   title: "Дороги на z17",
   purpose:
-    "Фиксированная сцена z17: все классы дорог, развязка, острый угол. Проверяет: ширину в экранных пикселях, митру с пределом, казинг, порядок по классу.",
+    "Реальный перекрёсток на z17 — Трафальгарская площадь, Strand и Whitehall: все классы дорог, развязка, острый угол. Проверяет: ширину в экранных пикселях, митру с пределом, казинг, порядок по классу.",
   group: "Отрисовка",
   mount(stage, panel) {
     const out = readout([
@@ -48,13 +55,10 @@ export const roadsMicro: CardSpec = {
     stage.replaceChildren(canvas);
 
     const start = async (): Promise<void> => {
-      const centre = await loadPackCentre("roads");
-      const map = await createMap(canvas, "roads");
-      map.setCentre(centre.lon, centre.lat);
-      map.setZoom(centre.zoom);
-      stage.setAttribute("data-zoom", centre.zoom.toFixed(2));
-      stage.setAttribute("data-centre", `${centre.lon},${centre.lat}`);
-      wire(map, { casing, miter, motorway, street }, stage, out);
+      const { map, onSettled } = await createPackageMap(canvas, { zoom: ZOOM });
+      stage.setAttribute("data-zoom", ZOOM.toFixed(2));
+      stage.setAttribute("data-centre", `${FIXED_CENTRE.lon},${FIXED_CENTRE.lat}`);
+      wire(map, { casing, miter, motorway, street }, stage, out, onSettled);
       stage.setAttribute("data-state", "ready");
     };
 
@@ -96,6 +100,7 @@ function wire(
   controls: Controls,
   stage: HTMLElement,
   out: ReturnType<typeof readout>,
+  onSettled: (listener: () => void) => void,
 ): void {
   const sync = () => {
     map.render();
@@ -132,5 +137,8 @@ function wire(
   };
   bindWidth(controls.motorway, MOTORWAY);
   bindWidth(controls.street, STREET);
+  // Показания снимаются с кадра, а тайлы под этой камерой доезжают
+  // позже её движения.
+  onSettled(sync);
   sync();
 }

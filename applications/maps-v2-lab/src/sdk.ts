@@ -126,7 +126,7 @@ export interface MapHandle {
   tick(dtMs: number): boolean;
 }
 
-// Где стоит камера, чтобы увидеть пакет. Пишется генератором фикстур —
+// Где стоит камера, чтобы увидеть пакет. Пишется тем, кто пакет собрал, —
 // проекцию Меркатора не повторяем в TypeScript.
 export interface PackCentre {
   lon: number;
@@ -147,6 +147,18 @@ export interface TilePackageManifest {
   tile_digests: Record<string, string>;
   view: PackCentre;
   sources: PackageSource[];
+  /** Земля, за которую пакет отвечает, по уровням. Пишет
+   *  `maps2-ingest carve`; у пакета на весь мир её нет — там некуда
+   *  выехать. */
+  bounds?: Record<string, LevelBox>;
+}
+
+/** Прямоугольник в градусах, как его записала вырезка. */
+export interface LevelBox {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
 }
 
 /** What the renderer wants, answered by a single residency plan. */
@@ -277,7 +289,7 @@ async function sha256(bytes: Uint8Array): Promise<string> {
 export async function createTilePackageLoader(
   map: MapHandle,
   manifestUrl: string,
-  options: { additive?: boolean } = {},
+  options: { additive?: boolean; active?: () => boolean } = {},
 ): Promise<TilePackageLoader> {
   const manifest = await fetchPackageManifest(manifestUrl);
   const base = new URL(manifestUrl, window.location.href);
@@ -296,6 +308,13 @@ export async function createTilePackageLoader(
   return {
     manifest,
     async loadVisible(): Promise<PackageLoadResult> {
+      // Загрузка карты, которую уже никто не смотрит, — не бесплатная
+      // фоновая работа: декодирование тайла строит все его меши и
+      // раскладывает все подписи. Шесть студий доски, доигрывающих
+      // свой проход после перехода, отнимали процессор ровно у той
+      // студии, которую человек только что открыл.
+      const wanted = options.active ?? (() => true);
+      if (!wanted()) return { loaded: 0, unloaded: 0, unavailable: 0, blockedMs: 0 };
       // One residency plan answers all four questions. Asking them
       // separately cost a plan each, and this runs on every pointer
       // move: a single drag was computing nine plans per event.
@@ -350,6 +369,7 @@ export async function createTilePackageLoader(
       // freezes the page while they are all turned into meshes.
       let sliceStart = performance.now();
       for (const [path, tile] of bytes) {
+        if (!wanted()) break;
         if (!stillWanted.has(path)) continue;
         blocking(() => {
           map.loadTile(tile);
@@ -477,4 +497,144 @@ export function renderUntilSettled(map: MapHandle, onFrame?: () => void): void {
     }
   };
   requestAnimationFrame(tick);
+}
+
+// Трафальгарская площадь: одно место на всю лабораторию. Пакет вырезан
+// вокруг неё (`maps2-ingest carve`), и каждая студия смотрит на него.
+export const TRAFALGAR = { lon: -0.1281, lat: 51.508 };
+export const TRAFALGAR_MANIFEST = "/packages/trafalgar/manifest.json";
+/** Только городские уровни той же площади, отдельным пакетом. Нужен
+ *  ровно одной студии — той, что складывает два пакета на одной карте;
+ *  композиция из одного пакета ничего не показывает. */
+export const TRAFALGAR_CITY_MANIFEST = "/packages/trafalgar-city/manifest.json";
+
+export interface PackageMap {
+  /** Ручка карты, которая сама досылает тайлы под новую камеру. */
+  map: MapHandle;
+  loader: TilePackageLoader;
+  /** Ждать, когда нужен детерминированный кадр: загрузка под текущую
+   *  камеру уже прошла, а не запланирована. */
+  refresh(): Promise<void>;
+  /** Позвать, когда догрузка что-то принесла. Показания карточки
+   *  снимаются с кадра, а кадр под новой камерой доезжает позже
+   *  движения камеры — без этого в readout остаётся прочерк. */
+  onSettled(listener: () => void): void;
+}
+
+/**
+ * Карта на вырезанном пакете: демонд-загрузка вместо «скачать пакет
+ * целиком».
+ *
+ * Фикстурный путь (`createMap(canvas, "ealing")`) тянет все тайлы пака
+ * сразу — это нормально для двадцати килобайт синтетики и невозможно
+ * для реальных ста мегабайт, тем более на шести живых контекстах доски.
+ * Здесь работает тот же загрузчик, что и в карточках реальных данных.
+ *
+ * Карточке не приходится знать про загрузку: движение камеры само
+ * тянет за собой догрузку и возврат камеры на землю, которую пакет
+ * умеет ответить. Кто хочет дождаться — ждёт `refresh`.
+ */
+export async function createPackageMap(
+  canvas: HTMLCanvasElement,
+  options: { zoom: number; centre?: { lon: number; lat: number }; manifestUrl?: string },
+): Promise<PackageMap> {
+  const raw = await createMap(canvas, null);
+  const loader = await createTilePackageLoader(raw, options.manifestUrl ?? TRAFALGAR_MANIFEST, {
+    active: () => canvas.isConnected,
+  });
+  const centre = options.centre ?? TRAFALGAR;
+  raw.setCentre(centre.lon, centre.lat);
+  raw.setZoom(options.zoom);
+
+  // Один проход за раз. События камеры приходят много быстрее, чем
+  // успевает загрузка, и запуск нового прохода на каждое событие
+  // складывал параллельные проходы по одной и той же камере. Отвечать
+  // стоит только последней — запрос, пришедший на лету, просто метит
+  // ответ устаревшим (тот же приём, что в карточке map-real).
+  const listeners: (() => void)[] = [];
+  let refreshing = false;
+  let stale = false;
+  const refresh = async (): Promise<void> => {
+    // Карта, чей холст уже не в документе, ничего не покажет — а
+    // качать продолжает. Доска держит шесть живых студий и роняет их
+    // контексты при переходе на страницу одной: без этого шесть
+    // загрузок продолжали отбирать канал у той, которую человек
+    // только что открыл.
+    if (!canvas.isConnected) return;
+    if (refreshing) {
+      stale = true;
+      return;
+    }
+    refreshing = true;
+    let arrived = 0;
+    try {
+      do {
+        stale = false;
+        arrived += (await loader.loadVisible()).loaded;
+      } while (stale && canvas.isConnected);
+    } finally {
+      refreshing = false;
+    }
+    if (arrived > 0) for (const listener of listeners) listener();
+  };
+
+  // Вырезка конечна, и у неё есть край. Камеру, уехавшую за него,
+  // возвращает не рендерер — он честно покажет дыру, — а хост: это
+  // его пакет и его решение, куда можно смотреть.
+  const clamp = (): void => {
+    const state = raw.debug();
+    const box = levelBox(loader.manifest, state.tile_level);
+    if (!box) return;
+    const lon = Math.min(Math.max(state.centre_lon, box.west), box.east);
+    const lat = Math.min(Math.max(state.centre_lat, box.south), box.north);
+    if (lon !== state.centre_lon || lat !== state.centre_lat) raw.setCentre(lon, lat);
+  };
+
+  // Камера успевает измениться несколько раз за кадр (шоукейс двигает
+  // зум, курс и наклон подряд), а спросить у карты, где она стоит, —
+  // это разбор JSON отладочного состояния. Поэтому проверка границ и
+  // догрузка откладываются на конец такта и схлопываются в одну.
+  let settling = false;
+  const settle = (): void => {
+    if (settling) return;
+    settling = true;
+    queueMicrotask(() => {
+      settling = false;
+      clamp();
+      void refresh();
+    });
+  };
+  const after = <A extends unknown[], R>(call: (...args: A) => R) => (...args: A): R => {
+    const value = call(...args);
+    settle();
+    return value;
+  };
+  const map: MapHandle = {
+    ...raw,
+    setZoom: after(raw.setZoom),
+    setCentre: after(raw.setCentre),
+    setTilt: after(raw.setTilt),
+    setBearing: after(raw.setBearing),
+    setBandOverride: after(raw.setBandOverride),
+    pointerMove: after(raw.pointerMove),
+    wheel: after(raw.wheel),
+    doubleClick: after(raw.doubleClick),
+    tick: after(raw.tick),
+  };
+  window.maps2 = map;
+
+  await refresh();
+  return { map, loader, refresh, onSettled: (listener) => listeners.push(listener) };
+}
+
+/** Границы уровня, а если этого уровня в пакете нет — ближайшего
+ *  вышестоящего: именно его тайлы рендерер и подставит. */
+export function levelBox(manifest: TilePackageManifest, level: number): LevelBox | null {
+  const bounds = manifest.bounds;
+  if (!bounds) return null;
+  for (let candidate = level; candidate >= 0; candidate -= 1) {
+    const box = bounds[String(candidate)];
+    if (box) return box;
+  }
+  return null;
 }

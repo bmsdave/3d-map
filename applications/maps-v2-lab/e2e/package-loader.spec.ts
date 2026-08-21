@@ -23,13 +23,15 @@ test("package loader: a manifest drives demand-loaded MT2 tiles", async ({ page 
   await expect(stage).toHaveAttribute("data-state", "ready");
   await expect(stage).toHaveAttribute("data-loaded", /[1-9]\d*/);
   await expect(page.getByTestId("readout-package-tiles")).toContainText(/[1-9]\d*/);
-  await expect(page.getByTestId("readout-package-level")).toHaveText("12");
-  await expect(page.getByTestId("readout-package-attribution")).toContainText("Synthetic fixture");
+  await expect(page.getByTestId("readout-package-level")).toHaveText("16");
+  await expect(page.getByTestId("readout-package-attribution")).toContainText("OpenStreetMap");
 });
 
 test("package loader: rejects a tile whose bytes do not match the manifest", async ({ page }) => {
-  const validOtherTile = new URL("../public/fixtures/ealing/0/0/0.mt2", import.meta.url).pathname;
-  await page.route("**/fixtures/ealing/**/*.mt2", (route) => route.fulfill({ path: validOtherTile }));
+  // Настоящий тайл пакета, отданный по чужому пути: байты валидны,
+  // дайджест — чужой.
+  const validOtherTile = new URL("../public/packages/trafalgar/1/0/0.mt2", import.meta.url).pathname;
+  await page.route("**/packages/trafalgar/**/*.mt2", (route) => route.fulfill({ path: validOtherTile }));
   await page.goto("/#/card/package-loader");
 
   await expect(page.getByTestId("stage")).toHaveAttribute("data-state", "error");
@@ -37,7 +39,7 @@ test("package loader: rejects a tile whose bytes do not match the manifest", asy
 
 test("package loader: retries a transient manifest failure", async ({ page }) => {
   let attempts = 0;
-  await page.route("**/fixtures/ealing/package-manifest.json", async (route) => {
+  await page.route("**/packages/trafalgar/manifest.json", async (route) => {
     attempts += 1;
     if (attempts === 1) {
       await route.fulfill({ status: 503, body: "temporarily unavailable" });
@@ -56,7 +58,7 @@ test("package loader: retries a transient manifest failure", async ({ page }) =>
 
 test("package loader: retries one transient tile failure", async ({ page }) => {
   let failed = false;
-  await page.route("**/fixtures/ealing/**/*.mt2", async (route) => {
+  await page.route("**/packages/trafalgar/**/*.mt2", async (route) => {
     if (!failed) {
       failed = true;
       await route.fulfill({ status: 503, body: "temporarily unavailable" });
@@ -76,11 +78,11 @@ test("package loader: accepts a host-selected package manifest", async ({ page }
   const stage = page.getByTestId("stage");
 
   await expect(stage).toHaveAttribute("data-state", "ready");
-  await page.getByTestId("package-manifest-url").fill("/fixtures/ealing/package-manifest.json?host=local");
+  await page.getByTestId("package-manifest-url").fill("/packages/trafalgar/manifest.json?host=local");
   await page.getByRole("button", { name: "Загрузить пакет" }).click();
 
   await expect(stage).toHaveAttribute("data-state", "ready");
-  await expect(stage).toHaveAttribute("data-manifest", "/fixtures/ealing/package-manifest.json?host=local");
+  await expect(stage).toHaveAttribute("data-manifest", "/packages/trafalgar/manifest.json?host=local");
 });
 
 test("package loader: rejects an oversized manifest before requesting tiles", async ({ page }) => {
@@ -104,7 +106,7 @@ test("package loader: rejects an oversized manifest before requesting tiles", as
 });
 
 test("package loader: rejects an oversized tile before hashing it", async ({ page }) => {
-  await page.route("**/fixtures/ealing/**/*.mt2", (route) => route.fulfill({
+  await page.route("**/packages/trafalgar/**/*.mt2", (route) => route.fulfill({
     contentType: "application/octet-stream",
     body: "x".repeat(4 * 1024 * 1024 + 1),
   }));
@@ -114,7 +116,7 @@ test("package loader: rejects an oversized tile before hashing it", async ({ pag
 });
 
 test("package loader: a newer manifest wins over a delayed prior load", async ({ page }) => {
-  await page.route("**/fixtures/ealing/package-manifest.json", async (route) => {
+  await page.route("**/packages/trafalgar/manifest.json", async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 200));
     await route.continue();
   });
@@ -165,10 +167,15 @@ test("package loader: panning refreshes visible package coverage", async ({ page
   const box = await stage.locator("canvas").boundingBox();
   expect(box).not.toBeNull();
 
-  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(box!.x + box!.width / 2 - 400, box!.y + box!.height / 2);
-  await page.mouse.up();
+  // Вырезка конечна, и уехать за её край — то, что здесь проверяется.
+  // Одного броска мало: вокруг центра лежит по три тайла в каждую
+  // сторону, и четыреста пикселей на z16 — это полтора тайла.
+  for (let pan = 0; pan < 6; pan += 1) {
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box!.x + box!.width / 2 - 600, box!.y + box!.height / 2);
+    await page.mouse.up();
+  }
 
   await expect.poll(async () => Number(await stage.getAttribute("data-unavailable"))).toBeGreaterThan(0);
 });
@@ -221,26 +228,32 @@ test("package loader: rapid pans share in-flight tile requests", async ({ page }
 test("package loader: unloading a tile makes it demand-loadable", async ({ page }) => {
   await page.goto("/#/card/package-loader");
   await expect(page.getByTestId("stage")).toHaveAttribute("data-state", "ready");
+  // Тайл z16 под Трафальгарской площадью — тот самый, на который
+  // смотрит камера, поэтому выгрузка обязана вернуть его в missing.
   const missing = await page.evaluate(() => {
     const map = window.maps2 as typeof window.maps2 & { unloadTile(z: number, x: number, y: number): void };
-    map!.unloadTile(12, 2044, 1361);
+    map!.unloadTile(16, 32744, 21792);
     return map!.missingTiles();
   });
 
-  expect(missing).toContain("12/2044/1361.mt2");
+  expect(missing).toContain("16/32744/21792.mt2");
 });
 
+// Приёмка на реальных данных: по умолчанию — на вырезке, лежащей рядом
+// с лабой, а с MAPS2_REAL_PACKAGE_ROOT — на полном локальном пакете.
 test("real London package: terrain, attribution, and tilt survive demand loading", async ({ page }) => {
-  test.skip(!realPackageRoot, "set MAPS2_REAL_PACKAGE_ROOT to run local real-data acceptance");
-  await page.route("https://maps2.local/**", (route) => fulfillLocalPackage(route, realPackageRoot!));
+  const manifestUrl = realPackageRoot ? "https://maps2.local/manifest.json" : "/packages/trafalgar/manifest.json";
+  if (realPackageRoot) {
+    await page.route("https://maps2.local/**", (route) => fulfillLocalPackage(route, realPackageRoot));
+  }
   await page.goto("/#/card/package-loader");
 
   const stage = page.getByTestId("stage");
   await expect(stage).toHaveAttribute("data-state", "ready");
-  await page.getByTestId("package-manifest-url").fill("https://maps2.local/manifest.json");
+  await page.getByTestId("package-manifest-url").fill(manifestUrl);
   await page.getByRole("button", { name: "Загрузить пакет" }).click();
   await expect(stage).toHaveAttribute("data-state", "ready");
-  await expect(stage).toHaveAttribute("data-manifest", "https://maps2.local/manifest.json");
+  await expect(stage).toHaveAttribute("data-manifest", manifestUrl);
   await expect(stage).toHaveAttribute("data-loaded", /[1-9]\d*/);
   await expect(page.getByTestId("readout-package-attribution")).toContainText("OpenStreetMap");
   await expect(page.getByTestId("readout-package-attribution")).toContainText(/COPERNICUS/i);

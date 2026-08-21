@@ -45,11 +45,27 @@ function view(): { route: string; body: HTMLElement } {
   return { route: "#/", body: home() };
 }
 
+// Каждая студия рисует настоящую землю, а у настоящей земли есть
+// правообладатели: ODbL требует называть источник там, где показана
+// карта, а не только в манифесте пакета. Одна строка на всю лабу —
+// каждая студия смотрит на одну и ту же вырезку.
+function attribution(): HTMLElement {
+  return el("footer", { class: "attribution", "data-testid": "attribution" }, [
+    "Данные: © участники ",
+    el("a", { href: "https://www.openstreetmap.org/copyright" }, ["OpenStreetMap"]),
+    " (ODbL) · рельеф суши Copernicus DEM (© DLR e.V. 2010–2014, © Airbus DS 2014–2018, ESA/EU) · батиметрия ",
+    el("a", { href: "https://www.gebco.net" }, ["GEBCO 2026"]),
+    " · границы и города Natural Earth.",
+  ]);
+}
+
 function route(): void {
   destroyShowcase();
   destroyHome();
   const { route: current, body } = view();
-  app.replaceChildren(el("div", { class: "shell", "data-route": current }, [header(current), body]));
+  app.replaceChildren(
+    el("div", { class: "shell", "data-route": current }, [header(current), body, attribution()]),
+  );
 }
 
 window.addEventListener("hashchange", route);

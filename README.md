@@ -2,14 +2,18 @@
 
 > A deterministic Rust/Wasm 3D map renderer with a browser laboratory.
 
-**Status:** `v0.1.0-alpha` · deterministic fixtures and local open-data pipeline · MIT
+**Status:** `v0.1.0-alpha` · a real Trafalgar Square carve in the lab, plus the local open-data pipeline · MIT
 
 This repository is an SDK/demo alpha, not a production map of London or the
 world. It focuses on a small, inspectable rendering core: versioned binary
-tiles, deterministic fixture generation, WebGL2 rendering, interaction, labels,
-terrain, and globe relief.
+tiles, WebGL2 rendering, interaction, labels, terrain, and globe relief.
 
-![Synthetic globe-relief fixture](applications/maps-v2-lab/e2e/terrain.spec.ts-snapshots/globe-relief-darwin.png)
+Every study in the lab draws real ground. A small MT2 package carved around
+**Trafalgar Square** ships in the repository, so `npm run dev` opens on real
+OpenStreetMap geometry, real Copernicus and GEBCO relief, and real place names —
+no build step, no data to download. See [the lab package](#the-lab-package).
+
+![The globe over real GEBCO and Copernicus relief](applications/maps-v2-lab/e2e/terrain.spec.ts-snapshots/globe-relief-darwin.png)
 
 ![Animated Maps SDK showcase](applications/maps-v2-lab/assets/showcase.gif)
 
@@ -18,7 +22,11 @@ terrain, and globe relief.
 - Rust crates for units, camera math, MT2 tile parsing, style, rendering, text,
   fixtures, and a WebGL2/Wasm binding.
 - A browser lab with isolated visual cards for zoom bands, road joins and
-  casing, input, point-label collision, density, terrain, and globe relief.
+  casing, input, point-label collision, density, terrain, and globe relief —
+  all of them on the committed Trafalgar Square carve.
+- `maps2-ingest carve`, which cuts a small package out of a built one: whole
+  levels where the whole planet is on screen, a tile-radius square around a
+  subject below that.
 - An **MT2 v5** tile format with v1–v4 readers, deterministic synthetic fixtures, Rust unit
   tests, Playwright visual tests, and an executable p95 frame budget of ≤10 ms. Buildings
   carry base/top height, roof shape, and facade material, with documented fallbacks for
@@ -28,7 +36,8 @@ terrain, and globe relief.
 
 ## What is not included
 
-No published real-world London/world package, `roads-real`, routing, geocoding,
+No published real-world London/world package (the committed carve is a lab
+fixture-by-another-name, not a distribution), `roads-real`, routing, geocoding,
 search, production data hosting, mobile host, road-following line labels, POI
 icon labels, or full Unicode shaping is included. Named roads render as
 upright midpoint labels; curved, repeated, and language-shaped road text remain
@@ -74,9 +83,41 @@ npm run dev
 ```
 
 Open `http://localhost:5178`. The page **is** the lab: all twenty studies are
-mounted live on it, no card to click through first. Direct routes still isolate
-one concern at a time — `/#/card/roads-micro`, `/#/card/globe-relief` — and
-`/#/showcase` runs the animated gallery.
+mounted live on it, no card to click through first, every one of them looking at
+Trafalgar Square. Direct routes still isolate one concern at a time —
+`/#/card/roads-micro`, `/#/card/globe-relief` — and `/#/showcase` runs the
+animated gallery.
+
+### The lab package
+
+`applications/maps-v2-lab/public/packages/trafalgar` is committed: 559 MT2 tiles,
+about 119 MB. Its levels z1–z3 cover the whole planet, so the globe studies show
+real coastlines and real GEBCO relief; z4–z16 cover a seven-by-seven square of
+tiles around Trafalgar Square, which is what a 720×480 stage needs at 60° of tilt
+and any bearing. `packages/trafalgar-city` (125 tiles, 30 MB) carries z12–z16 of
+the same ground as a second package, because `globe-real`'s subject is composing
+two packages on one map and one package cannot demonstrate that.
+
+The camera is clamped to the ground the package covers: studies with free pan and
+a continuous zoom cannot be driven off its edge into an empty frame.
+
+Rebuild either package from a full one with the carve tool:
+
+```sh
+cargo run --manifest-path libraries/maps-v2/Cargo.toml --bin maps2-ingest -- \
+  carve pipelines/maps-v2-ingest/packages/map-v1 -0.1281 51.5080 \
+  applications/maps-v2-lab/public/packages/trafalgar --world 3 --keep 4:16:3
+```
+
+Or build one from the pinned sources with
+[`plans/trafalgar.toml`](pipelines/maps-v2-ingest/plans/trafalgar.toml), which
+needs no prior package. Either way, `maps2-ingest verify-package <dir>` re-checks
+every digest, and CI runs it on both committed packages.
+
+The data is © OpenStreetMap contributors (ODbL), Copernicus DEM (© DLR e.V.
+2010–2014, © Airbus DS 2014–2018, provided under COPERNICUS by the EU and ESA),
+GEBCO 2026, and Natural Earth. Attribution travels in each package manifest and
+is shown in the lab's own chrome; see [`NOTICE`](NOTICE).
 
 To inspect a locally hosted London or regional package, open
 `/#/card/package-loader`, replace **Manifest URL** with its `manifest.json`
