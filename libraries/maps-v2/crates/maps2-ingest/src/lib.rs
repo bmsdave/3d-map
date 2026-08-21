@@ -20,9 +20,21 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tiff::decoder::{Decoder, DecodingResult};
 
+mod conflate;
 mod gebco;
+mod natural_earth;
+mod world_terrain;
+mod world_water;
 
+pub use conflate::{
+    ConflationReport, LayerClaim, PLACE_MATCH_METRES, SourceLayer, claimed_levels, conflate,
+};
 pub use gebco::{RasterWindow, WINDOW_CELL_LIMIT, load_gebco_window};
+pub use natural_earth::{
+    NaturalEarthError, resolve_boundary_lines, resolve_major_roads, resolve_place_labels,
+};
+pub use world_terrain::{load_gebco_quadrant_decimated, stitch_world_quadrants};
+pub use world_water::{WaterPolygonsError, resolve_water_polygons};
 
 /// A named pipeline input pinned to its SHA-256 digest.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,6 +105,18 @@ pub enum SourceKind {
     /// GEBCO global bathymetry raster.
     #[serde(rename = "gebco-grid")]
     GebcoGrid,
+    /// The OSM community's pre-simplified world water-polygon shapefile.
+    #[serde(rename = "water-polygons")]
+    WaterPolygons,
+    /// Natural Earth populated places: the world-zoom label layer.
+    #[serde(rename = "natural-earth-places")]
+    NaturalEarthPlaces,
+    /// Natural Earth country boundary lines.
+    #[serde(rename = "natural-earth-boundaries")]
+    NaturalEarthBoundaries,
+    /// Natural Earth generalised road network.
+    #[serde(rename = "natural-earth-roads")]
+    NaturalEarthRoads,
 }
 
 /// A reproducibly pinned source and its public legal metadata.
@@ -359,6 +383,9 @@ pub fn classify_osm_tags(tags: &[(&str, &str)]) -> Option<Class> {
         .or_else(|| tag(tags, "building").filter(|value| *value != "no").map(|_| Class::Building))
         .or_else(|| tag(tags, "natural").filter(|value| *value == "water").map(|_| Class::Water))
         .or_else(|| tag(tags, "leisure").filter(|value| *value == "park").map(|_| Class::Park))
+        .or_else(|| {
+            tag(tags, "boundary").filter(|value| *value == "administrative").map(|_| Class::Boundary)
+        })
         .or_else(|| tag(tags, "amenity").map(|_| Class::Poi))
         .or_else(|| tag(tags, "place").map(|_| Class::Label))
 }
@@ -810,6 +837,22 @@ impl DemGrid {
         Ok(Self { west, south, east, north, width, height, samples })
     }
 
+    /// This grid's own west, south, east, north bounds.
+    #[must_use]
+    pub(crate) const fn bounds(&self) -> [f64; 4] {
+        [self.west, self.south, self.east, self.north]
+    }
+
+    #[must_use]
+    pub(crate) const fn dimensions(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    #[must_use]
+    pub(crate) fn samples(&self) -> &[f32] {
+        &self.samples
+    }
+
     /// Samples the containing north-up raster cell, clamped to this tile.
     #[must_use]
     pub fn sample(&self, lon: f64, lat: f64) -> f32 {
@@ -874,7 +917,7 @@ fn count_class(summary: &mut OsmSummary, class: Option<Class>) {
         Some(Class::Water) => summary.water += 1,
         Some(Class::Park) => summary.parks += 1,
         Some(Class::Poi) => summary.pois += 1,
-        Some(Class::Land | Class::Label) | None => {}
+        Some(Class::Land | Class::Label | Class::Boundary) | None => {}
     }
 }
 
@@ -1143,7 +1186,7 @@ fn normalise_longitudes(mut points: Vec<Lonlat>, reference: f64) -> Vec<Lonlat> 
     points
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct GridPoint {
     x: f64,
     y: f64,
@@ -1173,10 +1216,29 @@ fn simplify_road(points: Vec<GridPoint>, class: Class, level: u8) -> Vec<GridPoi
         .collect()
 }
 
+/// Below this level, world-package water tiles routinely carry several
+/// adjacent, boundary-sharing polygons in one tile (the real water
+/// dataset ships pre-split into a grid — see `world_water`). Per-feature
+/// Douglas-Peucker simplification decides which points survive using
+/// only that one ring's own neighbours, so two rings that shared an
+/// edge in the source data can each keep a different subset of it and
+/// pull apart — a visible sliver gap between "adjacent" ocean pieces.
+/// The source is already simplified for exactly this zoom range, so
+/// skipping the extra pass here keeps a shared edge byte-identical
+/// between neighbours instead of guessing badly at fixing it per ring.
+///
+/// This has to cover every level the world package is cut at, not just
+/// the shallow ones: raising that package from z5 to z7 immediately put
+/// pale wedges back over the North Sea and the Channel, because z6 and
+/// z7 had fallen back through to the simplifying path.
+const WATER_TOPOLOGY_SAFE_MAX_LEVEL: u8 = 7;
+
 fn simplify_area_ring(
     points: Vec<GridPoint>, class: Class, level: u8, tile: TileId,
 ) -> Vec<GridPoint> {
-    if class == Class::Building || level >= 16 || points.len() < 4 {
+    let water_would_split_at_a_shared_edge =
+        class == Class::Water && level <= WATER_TOPOLOGY_SAFE_MAX_LEVEL;
+    if class == Class::Building || water_would_split_at_a_shared_edge || level >= 16 || points.len() < 4 {
         return points;
     }
     let tolerance = generalisation_tolerance(level);
@@ -1497,6 +1559,62 @@ mod tests {
     use maps2_tile::{CLASS_HEIGHTS, HeightsRaster, TileView};
 
     const HELLO_WORLD_SHA256: &str = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
+
+    /// A real bug, found live: the real water-polygon dataset ships
+    /// pre-split into a grid, so a world tile routinely holds several
+    /// adjacent polygons that share an edge in the source data. Below
+    /// `WATER_TOPOLOGY_SAFE_MAX_LEVEL`, simplification must not thin a
+    /// water ring at all, or two neighbours simplified independently
+    /// can keep different points along what was the same edge and pull
+    /// apart into a visible sliver gap.
+    /// A square with one redundant, exactly collinear midpoint on its
+    /// bottom edge — as a real clipped ocean piece's shared edge would
+    /// carry, from a source vertex that has no reason to exist once the
+    /// edge's own two corners are known. The other three corners are
+    /// plain, so there is something real for simplification to anchor
+    /// on while it drops the redundant one.
+    fn ring_with_a_collinear_edge() -> Vec<GridPoint> {
+        vec![
+            GridPoint { x: 4.1, y: 4.1 },
+            GridPoint { x: 4.5, y: 4.1 }, // redundant: exactly on the line from the previous point to the next
+            GridPoint { x: 4.9, y: 4.1 },
+            GridPoint { x: 4.9, y: 4.9 },
+            GridPoint { x: 4.1, y: 4.9 },
+        ]
+    }
+
+    #[test]
+    fn a_world_zoom_water_ring_keeps_every_point_even_a_collinear_run() {
+        let tile = TileId { z: 3, x: 4, y: 4 };
+        let points = ring_with_a_collinear_edge();
+
+        let kept = simplify_area_ring(points.clone(), Class::Water, 3, tile);
+
+        assert_eq!(kept, points, "a world-package water ring must not be thinned at all");
+    }
+
+    #[test]
+    fn a_non_water_class_still_simplifies_a_collinear_run_at_the_same_level() {
+        let tile = TileId { z: 3, x: 4, y: 4 };
+        let points = ring_with_a_collinear_edge();
+
+        let kept = simplify_area_ring(points.clone(), Class::Park, 3, tile);
+
+        assert!(kept.len() < points.len(), "a collinear run should still simplify for non-water classes");
+    }
+
+    #[test]
+    fn a_water_ring_still_simplifies_above_the_topology_safe_level() {
+        // Above the world package's deepest level water comes from the
+        // regional OSM build instead, where rings are whole lakes rather
+        // than grid-split pieces and nothing shares a cut edge.
+        let tile = TileId { z: 9, x: 4, y: 4 };
+        let points = ring_with_a_collinear_edge();
+
+        let kept = simplify_area_ring(points.clone(), Class::Water, 9, tile);
+
+        assert!(kept.len() < points.len(), "regional water (lakes) must still simplify above world zoom");
+    }
 
     #[test]
     fn source_validation_accepts_the_expected_sha256() {

@@ -35,9 +35,13 @@ pub enum Class {
     RoadPath = 10,
     Poi = 11,
     Label = 12,
+    /// An administrative boundary line. Drawn like a road ribbon (it is
+    /// a line, and the line pipeline is where lines live) but styled as
+    /// a dashed rule with no casing — see `set_dash`/`set_colour`.
+    Boundary = 13,
 }
 
-pub const ALL_CLASSES: [Class; 13] = [
+pub const ALL_CLASSES: [Class; 14] = [
     Class::Land,
     Class::Water,
     Class::Park,
@@ -51,6 +55,7 @@ pub const ALL_CLASSES: [Class; 13] = [
     Class::RoadPath,
     Class::Poi,
     Class::Label,
+    Class::Boundary,
 ];
 
 impl Class {
@@ -140,7 +145,7 @@ impl Band {
 #[must_use]
 pub fn entry_band(class: Class) -> Band {
     match class {
-        Class::Land | Class::Water | Class::Label => Band::World,
+        Class::Land | Class::Water | Class::Label | Class::Boundary => Band::World,
         Class::RoadMotorway | Class::RoadTrunk => Band::Region,
         Class::Park | Class::RoadPrimary => Band::City,
         Class::RoadSecondary => Band::District,
@@ -170,6 +175,10 @@ pub fn fill_color(class: Class) -> [u8; 4] {
         | Class::RoadPath => [0xFF, 0xFF, 0xFF, 0xFF],
         Class::Poi => [0x8A, 0x8A, 0x86, 0xFF],
         Class::Label => [0x3A, 0x3A, 0x37, 0xFF],
+        // A muted violet, dark enough to hold its own over hill shading
+        // — a hairline in a lighter tint disappears into relief — and
+        // clearly not a road, which shares this pipeline.
+        Class::Boundary => [0x70, 0x64, 0x84, 0xFF],
     }
 }
 
@@ -252,6 +261,9 @@ pub fn road_width_px(class: Class, zoom: Zoom) -> f32 {
         Class::RoadResidential => Ramp::new([(12.0, 1.0), (16.0, 3.0), (18.0, 6.0)]).sample(zoom),
         Class::RoadService => Ramp::new([(14.0, 0.8), (18.0, 4.0)]).sample(zoom),
         Class::RoadPath => Ramp::new([(14.0, 0.6), (18.0, 2.0)]).sample(zoom),
+        // Borders hold a near-constant hairline: they are a reference
+        // mark, not a thing whose real width grows as you approach.
+        Class::Boundary => Ramp::new([(0.0, 1.2), (8.0, 1.6), (18.0, 2.2)]).sample(zoom),
         _ => 0.0,
     }
 }

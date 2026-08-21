@@ -136,6 +136,119 @@ is the same manifest-driven demand-loading path the lab's opt-in
 `MAPS2_REAL_PACKAGE_ROOT` Playwright test exercises against real terrain,
 attribution, and the ≤10 ms p95 frame budget.
 
+### One map, built from every source at once
+
+Composing two packages in the browser works, and `addSourceLevels` is a
+real capability — but it is the wrong place to decide which source owns a
+piece of ground. By tile time a feature no longer knows where it came
+from, so Natural Earth's London and OSM's London both arrive, a kilometre
+apart, and the M25 arrives twice: once generalised, once as a run of ways.
+The renderer cannot repair that at sixty frames a second.
+
+`build-map` settles it once, at build time, against a plan that says where
+each source speaks, over which levels, and how strongly:
+
+```sh
+cd pipelines/maps-v2-ingest
+../../libraries/maps-v2/target/release/maps2-ingest \
+  build-map plans/london-world.toml packages/map-v1
+```
+
+Two rules resolve the overlaps ([`conflate.rs`](libraries/maps-v2/crates/maps2-ingest/src/conflate.rs)):
+
+- **Coverage** — inside the bounds of a stronger source that is active at
+  this level, weaker sources are silent. This is what stops a generalised
+  world road network being drawn underneath a city's own.
+- **Identity** — a place a stronger source has already named is not named
+  again by a weaker one, even outside its bounds, matched on name within
+  25 km. This is what gives one city one label.
+
+Identity is matched for places only. Two renderings of a road share no
+vertex and often no midpoint, so matching lines by position would be
+guesswork; coverage settles roads honestly instead.
+
+The plan also decides the pyramid. World layers are global, so every level
+they claim costs the whole planet — z8 alone is 41,000 tiles and z11 is
+millions — so coastline, borders and roads stop at z7. Places reach to z11
+because they are points and rank gating admits only cities and towns
+there, which is a few thousand tiles rather than millions, and because
+that band is where the city extract and the world source genuinely
+overlap. The city extract owns z8–z16 over its own ground; the renderer
+falls back to a coarser tile everywhere else.
+
+The result is one manifest, 41,255 tiles across a continuous z1–z16, from
+fifteen pinned sources. The build reports what it reconciled — on this
+plan, four Natural Earth places dropped where OSM covers the same ground,
+which is why zooming to London at z10 shows OSM's suburb names and exactly
+one "London" instead of two a kilometre apart:
+
+```sh
+cd applications/maps-v2-lab
+MAPS2_MAP_PACKAGE_ROOT=../../pipelines/maps-v2-ingest/packages/map-v1 \
+npx playwright test e2e/map-real.spec.ts
+```
+
+Serve it with CORS and open `/#/card/map-real`.
+
+### A real global globe, composed with the city
+
+The city package covers one city. The world package covers everything else:
+real coastlines from the OSM community's split water polygons, and real
+GEBCO relief from the eight 90°×90° quadrants. Built together they give a
+globe you can spin and then zoom all the way into the city without the map
+going blank in between.
+
+```sh
+cd pipelines/maps-v2-ingest
+# One <source.toml> <quadrant.tif> <stride> triple per GEBCO quadrant.
+# Stride 4 keeps the whole build under a few GB of RAM and still carries
+# more samples than a z7 tile's 256x256 height raster can hold.
+NE=cache/global/naturalearth
+../../libraries/maps-v2/target/release/maps2-ingest build-world \
+  sources/world-water-polygons.toml \
+  cache/global/simplified-water-polygons-split-3857/simplified_water_polygons.shp \
+  1 7 packages/world-v9 \
+  --places     sources/natural-earth-places.toml     $NE/ne_10m_populated_places/ne_10m_populated_places.shp \
+  --boundaries sources/natural-earth-boundaries.toml $NE/ne_10m_admin_0_boundary_lines_land/ne_10m_admin_0_boundary_lines_land.shp \
+  --roads      sources/natural-earth-roads.toml      $NE/ne_10m_roads/ne_10m_roads.shp \
+  sources/gebco-2026-n0-s-90-w-180-e-90.toml  cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w-180.0_e-90.0_geotiff.tif  4 \
+  sources/gebco-2026-n0-s-90-w-90-e0.toml     cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w-90.0_e0.0_geotiff.tif     4 \
+  sources/gebco-2026-n0-s-90-w0-e90.toml      cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w0.0_e90.0_geotiff.tif      4 \
+  sources/gebco-2026-n0-s-90-w90-e180.toml    cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w90.0_e180.0_geotiff.tif    4 \
+  sources/gebco-2026-n90-s0-w-180-e-90.toml   cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w-180.0_e-90.0_geotiff.tif   4 \
+  sources/gebco-2026-n90-s0-w-90-e0.toml      cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w-90.0_e0.0_geotiff.tif      4 \
+  sources/gebco-2026-n90-s0-w0-e90.toml       cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w0.0_e90.0_geotiff.tif       4 \
+  sources/gebco-2026-n90-s0-w90-e180.toml     cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w90.0_e180.0_geotiff.tif     4
+```
+
+The three Natural Earth layers are what make the low zooms a *map* rather
+than a relief model: place names, country borders and the trunk road
+network. Without them the world package carries only coastlines and a
+height raster, and every zoom below the city package draws hill shading
+and nothing else. Fetch them into the cache first (public domain, ~13 MB
+total, pinned by SHA-256 in the three `sources/natural-earth-*.toml`
+descriptors) from `https://naciscdn.org/naturalearth/10m/cultural/`:
+`ne_10m_populated_places`, `ne_10m_admin_0_boundary_lines_land` and
+`ne_10m_roads`.
+
+That writes 16,132 tiles across z1–z7 (~2.1 GB) and a manifest naming all
+twelve sources; `verify-package` checks it, and building it twice from
+clean gives byte-identical tile digests. Serve it with CORS alongside the
+London package, open `/#/card/globe-real`, and put the two `manifest.json`
+URLs in **Мир** and **Город**. The two packages compose on one map:
+`addSourceLevels` unions the pyramids rather than replacing them, and
+wherever the city package has no coverage the renderer draws the nearest
+world tile underneath instead of leaving a hole.
+
+Both packages are also what the opt-in acceptance suite runs against:
+
+```sh
+cd applications/maps-v2-lab
+MAPS2_WORLD_PACKAGE_ROOT=../../pipelines/maps-v2-ingest/packages/world-v9 \
+MAPS2_REAL_PACKAGE_ROOT=../../pipelines/maps-v2-ingest/packages/london-v5 \
+npx playwright test
+```
+
 ## 20 animated studies
 
 Launch the full gallery at `/#/showcase`. Every study is a live WebGL2 canvas

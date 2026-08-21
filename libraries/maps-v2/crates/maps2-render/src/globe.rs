@@ -141,6 +141,54 @@ mod tests {
         View::of(&Camera::new(EALING, Zoom::new(zoom)), (800.0, 600.0))
     }
 
+    /// The flat affine placement the label and road paths used to use:
+    /// tile origin scaled to pixels, no globe term anywhere.
+    fn flat_offset_px(nrm: (f64, f64), view: &View) -> (f64, f64) {
+        (
+            (nrm.0 - view.centre_normalised.0) * view.world_px,
+            (nrm.1 - view.centre_normalised.1) * view.world_px,
+        )
+    }
+
+    #[test]
+    fn the_globe_projection_only_agrees_with_a_flat_one_at_the_screen_centre() {
+        // Why the label and road paths could look right in a spot check
+        // and still be wrong: measuring the city the camera is centred
+        // on compares the two projections exactly where they must
+        // agree. The disagreement is a function of distance from that
+        // centre, so the check has to be made away from it.
+        let view = view_at(2.0);
+        let centre = normalised(EALING);
+        let (dx, dy) = {
+            let globe = project_normalised(centre, &view, 1.0);
+            let flat = flat_offset_px(centre, &view);
+            ((globe.x - flat.0).abs(), (globe.y - flat.1).abs())
+        };
+        assert!(dx < 0.5 && dy < 0.5, "at the centre the two agree: {dx}, {dy}");
+
+        // San Francisco, most of a hemisphere away — where the reported
+        // labels ended up stranded beside the globe.
+        let far = normalised(Lonlat { lon: -122.4194, lat: 37.7749 });
+        let globe = project_normalised(far, &view, 1.0);
+        let flat = flat_offset_px(far, &view);
+        let apart = (globe.x - flat.0).hypot(globe.y - flat.1);
+        assert!(apart > 100.0, "far from centre they must not agree: {apart} px");
+    }
+
+    #[test]
+    fn a_place_on_the_far_side_of_the_globe_reports_itself_as_behind_it() {
+        // Half the named places on a globe are behind it. Drawing them
+        // is what put San Francisco, Lima and Melbourne on screen at
+        // once with Europe facing the camera.
+        let view = view_at(2.0);
+        let facing = project_normalised(normalised(EALING), &view, 1.0);
+        assert!(facing.front > 0.0, "the centred point faces the camera");
+
+        let antipode = normalised(Lonlat { lon: 179.0, lat: -51.5 });
+        let behind = project_normalised(antipode, &view, 1.0);
+        assert!(behind.front < 0.0, "the antipode is behind: {}", behind.front);
+    }
+
     #[test]
     fn the_shader_projection_is_the_camera_projection() {
         // The vertex shader cannot be unit-tested; this twin of it can,

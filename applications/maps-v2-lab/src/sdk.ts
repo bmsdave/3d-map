@@ -41,6 +41,20 @@ export interface DebugState {
   height_tiles: number;
   /** Высота под центром камеры, метры; null — тайл без высот. */
   centre_height_m: number | null;
+  /** Where the last frame's milliseconds went, measured in the renderer. */
+  frame_ms: number;
+  residency_ms: number;
+  ground_ms: number;
+  buildings_ms: number;
+  fills_ms: number;
+  roads_ms: number;
+  labels_ms: number;
+  /** Residency plans the frame computed. More than one means a caller
+   *  asked the same question twice. */
+  plans: number;
+  /** Tiles the host is holding, and their bytes. */
+  cpu_tiles: number;
+  cpu_bytes: number;
 }
 
 // Одна судьба одного кандидата в подписи. Карточки и e2e читают именно
@@ -69,8 +83,13 @@ export interface LabelEntry {
 export interface MapHandle {
   setZoom(zoom: number): void;
   setSourceLevels(levels: number[]): void;
+  addSourceLevels(levels: number[]): void;
   missingTiles(): string[];
+  prefetchTiles(): string[];
+  fallbackTiles(): string[];
   evictableTiles(): string[];
+  /** All four demand lists from one residency plan. */
+  tileDemand(): TileDemand;
   loadTile(bytes: Uint8Array): void;
   unloadTile(z: number, x: number, y: number): void;
   setCentre(lon: number, lat: number): void;
@@ -130,16 +149,34 @@ export interface TilePackageManifest {
   sources: PackageSource[];
 }
 
+/** What the renderer wants, answered by a single residency plan. */
+export interface TileDemand {
+  missing: string[];
+  prefetch: string[];
+  fallback: string[];
+  evictable: string[];
+}
+
 export interface PackageLoadResult {
   loaded: number;
   unloaded: number;
   unavailable: number;
+  /** Main-thread milliseconds this pass spent, excluding awaited I/O.
+   *  A slow network and a slow map look identical from the outside and
+   *  are fixed in completely different places. */
+  blockedMs: number;
 }
 
 export interface TilePackageLoader {
   manifest: TilePackageManifest;
   loadVisible(): Promise<PackageLoadResult>;
 }
+
+/// How long a single pass may hold the main thread decoding tiles
+/// before letting the page breathe. Decoding a tile builds every mesh
+/// and shapes every label in it, so a batch arriving together — which
+/// is what a zoom does — blocked for most of a second in one go.
+const DECODE_SLICE_MS = 6;
 
 const MAX_PACKAGE_TILES = 50_000;
 const MAX_TILE_BYTES = 4 * 1024 * 1024;
@@ -237,24 +274,67 @@ async function sha256(bytes: Uint8Array): Promise<string> {
  * package view, then calls `loadVisible` after camera changes. Network policy
  * stays in the host instead of leaking into the render loop.
  */
-export async function createTilePackageLoader(map: MapHandle, manifestUrl: string): Promise<TilePackageLoader> {
+export async function createTilePackageLoader(
+  map: MapHandle,
+  manifestUrl: string,
+  options: { additive?: boolean } = {},
+): Promise<TilePackageLoader> {
   const manifest = await fetchPackageManifest(manifestUrl);
   const base = new URL(manifestUrl, window.location.href);
   const paths = new Map(manifest.tiles.map((path) => [path, new URL(path, base).toString()]));
   const loaded = new Set<string>();
   const inFlight = new Set<string>();
-  map.setSourceLevels(packageLevels(manifest));
+  // A second package composed onto the same map (e.g. a low-zoom world
+  // package under a high-zoom regional one) must add its levels rather
+  // than replace the first package's — see addSourceLevels's doc comment
+  // in maps2-web for why a replace silently mis-plans residency.
+  if (options.additive) {
+    map.addSourceLevels(packageLevels(manifest));
+  } else {
+    map.setSourceLevels(packageLevels(manifest));
+  }
   return {
     manifest,
     async loadVisible(): Promise<PackageLoadResult> {
-      const evicted = map.evictableTiles();
-      for (const path of evicted) {
-        unloadPackageTile(map, path);
-        loaded.delete(path);
-      }
-      const requested = map.missingTiles();
+      // One residency plan answers all four questions. Asking them
+      // separately cost a plan each, and this runs on every pointer
+      // move: a single drag was computing nine plans per event.
+      let blockedMs = 0;
+      const blocking = <T>(work: () => T): T => {
+        const started = performance.now();
+        const value = work();
+        blockedMs += performance.now() - started;
+        return value;
+      };
+      const demand = blocking(() => map.tileDemand());
+      // Only ever unload this package's own tiles. The evictable list
+      // speaks for the whole map, and several packages compose onto one
+      // map — a world package dropping the city package's tiles would
+      // leave that loader still believing they were resident, so it
+      // would never refetch them and the city would never come back.
+      const evicted = demand.evictable.filter((path) => loaded.has(path));
+      blocking(() => {
+        for (const path of evicted) {
+          unloadPackageTile(map, path);
+          loaded.delete(path);
+        }
+      });
+      // Missing tiles are wanted on screen now; prefetch tiles are a level
+      // deeper the camera hasn't reached yet (see prefetch_tiles's doc
+      // comment in maps2-web) — fetching both here means a package
+      // boundary's deeper level is already resident by the time the
+      // camera's zoom actually crosses it, instead of popping in.
+      // Missing tiles are wanted on screen now; fallback tiles are the
+      // coarser ancestors that stand in wherever this package has no
+      // coverage at all; prefetch tiles are a level deeper the camera
+      // hasn't reached yet (see the doc comments on prefetch_tiles and
+      // fallback_tiles in maps2-web). All three are fetched here, but
+      // only a genuinely missing tile counts as a hole in the map —
+      // a package legitimately carries no tile at most of these paths.
+      const { missing, fallback, prefetch } = demand;
+      const requested = [...missing, ...fallback, ...prefetch];
       const available = requested.filter((path) => paths.has(path) && !loaded.has(path) && !inFlight.has(path));
-      const unavailable = requested.filter((path) => !paths.has(path)).length;
+      const unavailable = missing.filter((path) => !paths.has(path)).length;
       available.forEach((path) => inFlight.add(path));
       let bytes: readonly (readonly [string, Uint8Array])[] = [];
       try {
@@ -262,16 +342,29 @@ export async function createTilePackageLoader(map: MapHandle, manifestUrl: strin
       } finally {
         available.forEach((path) => inFlight.delete(path));
       }
-      const stillWanted = new Set(map.missingTiles());
+      const after = blocking(() => map.tileDemand());
+      const stillWanted = new Set([...after.missing, ...after.fallback, ...after.prefetch]);
       let loadedNow = 0;
+      // Decode in slices, yielding between them. The work is the same;
+      // spreading it means a zoom that pulls a dozen tiles no longer
+      // freezes the page while they are all turned into meshes.
+      let sliceStart = performance.now();
       for (const [path, tile] of bytes) {
         if (!stillWanted.has(path)) continue;
-        map.loadTile(tile);
-        loaded.add(path);
-        loadedNow += 1;
+        blocking(() => {
+          map.loadTile(tile);
+          loaded.add(path);
+          loadedNow += 1;
+        });
+        if (performance.now() - sliceStart >= DECODE_SLICE_MS) {
+          await new Promise((resume) => setTimeout(resume, 0));
+          sliceStart = performance.now();
+        }
       }
-      map.render();
-      return { loaded: loadedNow, unloaded: evicted.length, unavailable };
+      // A repaint is only owed when the frame would differ. The caller
+      // has already drawn this camera; loading nothing changes nothing.
+      if (loadedNow > 0 || evicted.length > 0) blocking(() => map.render());
+      return { loaded: loadedNow, unloaded: evicted.length, unavailable, blockedMs };
     },
   };
 }
@@ -295,8 +388,12 @@ let nextCanvasId = 0;
 
 interface PackageMapApi {
   set_source_levels(levels: Uint8Array): void;
+  add_source_levels(levels: Uint8Array): void;
   missing_tiles(): string;
+  prefetch_tiles(): string;
+  fallback_tiles(): string;
   evictable_tiles(): string;
+  tile_demand(): string;
   unload_tile(z: number, x: number, y: number): void;
 }
 
@@ -326,7 +423,11 @@ export async function createMap(canvas: HTMLCanvasElement, pack: string | null):
   const handle: MapHandle = {
     setZoom: (zoom) => map.set_zoom(zoom),
     setSourceLevels: (levels) => packageApi.set_source_levels(new Uint8Array(levels)),
+    addSourceLevels: (levels) => packageApi.add_source_levels(new Uint8Array(levels)),
     missingTiles: () => JSON.parse(packageApi.missing_tiles()) as string[],
+    prefetchTiles: () => JSON.parse(packageApi.prefetch_tiles()) as string[],
+    fallbackTiles: () => JSON.parse(packageApi.fallback_tiles()) as string[],
+    tileDemand: () => JSON.parse(packageApi.tile_demand()) as TileDemand,
     evictableTiles: () => JSON.parse(packageApi.evictable_tiles()) as string[],
     loadTile: (bytes) => map.load_tile(bytes),
     unloadTile: (z, x, y) => packageApi.unload_tile(z, x, y),

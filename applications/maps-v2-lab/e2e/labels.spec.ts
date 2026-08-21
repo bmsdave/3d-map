@@ -58,8 +58,14 @@ test.describe("подписи", () => {
 
   test("labels-collision: размещённые боксы не пересекаются", async ({ page }) => {
     const stage = await openCard(page, "labels-collision");
-    expect(await number(page, "candidates")).toBeGreaterThan(1000);
-    expect(await number(page, "placed")).toBeGreaterThan(0);
+    // Кандидатов должно быть много больше, чем помещается: именно это
+    // заставляет этап отбирать. Считаются те, что кадр действительно
+    // взвесил — подписи за пределами экрана отсеиваются до подсчёта,
+    // потому что шейпинг каждой из них и был самым дорогим в кадре.
+    const candidates = await number(page, "candidates");
+    const placed = await number(page, "placed");
+    expect(candidates).toBeGreaterThan(placed);
+    expect(placed).toBeGreaterThan(0);
     expect(await number(page, "collisions")).toBeGreaterThan(0);
     // Два инварианта этапа, посчитанные хостом из label_debug().
     await expect(readout(page, "overlaps")).toHaveText("0");
@@ -97,7 +103,9 @@ test.describe("подписи", () => {
     page,
   }) => {
     await openCard(page, "poi-density");
-    expect(await number(page, "candidates")).toBeGreaterThan(1000);
+    // Плотное поле кандидатов — предпосылка карточки. Число считает
+    // только те, что кадр взвесил: заэкранные отсеиваются раньше.
+    expect(await number(page, "candidates")).toBeGreaterThan(500);
 
     const seen: number[] = [];
     for (const percent of ["1", "3", "8", "15", "25"]) {

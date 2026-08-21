@@ -1,10 +1,12 @@
 import { TRANSITIONS } from "../bands";
 import { bandToggleCard } from "./bandToggle";
 import { buildings3d } from "./buildings3d";
+import { globeReal } from "./globeReal";
 import { globeRelief } from "./globeRelief";
 import { globeTransition } from "./globeTransition";
 import { inputFlat } from "./inputFlat";
 import { labelsCollision } from "./labelsCollision";
+import { mapReal } from "./mapReal";
 import { poiDensity } from "./poiDensity";
 import { packageLoader } from "./packageLoader";
 import { roadsMicro } from "./roadsMicro";
@@ -26,6 +28,8 @@ export const CARDS: readonly CardSpec[] = [
   globeTransition,
   terrainShade,
   globeRelief,
+  globeReal,
+  mapReal,
   packageLoader,
   ...TRANSITIONS.map(bandToggleCard),
 ];

@@ -69,6 +69,11 @@ pub struct Candidate {
     /// Where the label wants to sit, already projected.
     pub anchor: (f32, f32),
     pub size: (f32, f32),
+    /// Whether a nearby label with the same text is a repeat of this
+    /// one rather than a different thing that shares its name. True for
+    /// roads, which the source data stores as a run of separate ways;
+    /// false for places and POI, where two "Cafe" really are two cafes.
+    pub repeats_by_text: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -92,7 +97,19 @@ pub enum Rejection {
     OffScreen,
     /// Another copy of the same feature, from a neighbouring tile.
     Duplicate,
+    /// Another label with the same text already stands nearby. A street
+    /// is many separate ways in the source data, each with its own
+    /// identity and its own name, so identity alone cannot tell that
+    /// five "Commercial Street" labels are all one street.
+    Repeat,
 }
+
+/// How close two labels with the same text have to be before the second
+/// is taken as a repeat of the first rather than a different place of
+/// the same name. Generous enough to collapse one street's run of
+/// segments across a screen, short enough to keep two distant towns
+/// that happen to share a name.
+pub const REPEAT_RADIUS_PX: f32 = 260.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RejectedLabel {
@@ -127,6 +144,7 @@ pub fn place(candidates: &[Candidate], viewport: (f32, f32), budget: f32) -> Pla
         rejected: Vec::new(),
         used: 0.0,
         seen: Vec::new(),
+        seen_text: Vec::new(),
     };
     let mut spent = false;
     for candidate in rank_order(candidates) {
@@ -170,9 +188,30 @@ struct Frame {
     rejected: Vec<RejectedLabel>,
     used: f32,
     seen: Vec<u128>,
+    /// Text already standing this frame, with where it stands, so a
+    /// repeat of the same name nearby can be recognised — see
+    /// [`Rejection::Repeat`].
+    seen_text: Vec<(String, (f32, f32))>,
 }
 
 impl Frame {
+    /// Whether the same text is already placed within
+    /// [`REPEAT_RADIUS_PX`] of this candidate.
+    ///
+    /// Only asked of labels whose class opts in, and never of an empty
+    /// string: unnamed features arrive as candidates too, and matching
+    /// those against each other would let the first one suppress every
+    /// other unnamed feature in the frame.
+    fn repeats_nearby(&self, candidate: &Candidate) -> bool {
+        if !candidate.repeats_by_text || candidate.text.is_empty() {
+            return false;
+        }
+        self.seen_text.iter().any(|(text, at)| {
+            text == &candidate.text
+                && (at.0 - candidate.anchor.0).hypot(at.1 - candidate.anchor.1) <= REPEAT_RADIUS_PX
+        })
+    }
+
     fn reject(&mut self, candidate: &Candidate, bounds: ScreenBox, reason: Rejection) {
         self.rejected.push(RejectedLabel {
             id: candidate.id,
@@ -198,6 +237,10 @@ impl Frame {
             self.reject(candidate, bounds, Rejection::Duplicate);
             return false;
         }
+        if self.repeats_nearby(candidate) {
+            self.reject(candidate, bounds, Rejection::Repeat);
+            return false;
+        }
         self.seen.push(candidate.id);
         if let Some(by) = self.grid.first_hit(bounds, &self.placed) {
             self.reject(candidate, bounds, Rejection::Collision { by });
@@ -209,6 +252,7 @@ impl Frame {
             return true;
         }
         self.grid.insert(bounds, self.placed.len());
+        self.seen_text.push((candidate.text.clone(), candidate.anchor));
         self.used += area;
         self.placed.push(PlacedLabel {
             id: candidate.id,
@@ -221,7 +265,12 @@ impl Frame {
     }
 }
 
-fn within_margin(bounds: ScreenBox, viewport: (f32, f32)) -> bool {
+/// Whether a box is close enough to the viewport to be worth deciding
+/// about. Public so a host can drop a label before building a candidate
+/// for it: a name far off screen is not a decision the frame has to
+/// record, and at world zoom most names are far off screen.
+#[must_use]
+pub fn within_margin(bounds: ScreenBox, viewport: (f32, f32)) -> bool {
     bounds.x1 > -LABEL_MARGIN_PX
         && bounds.y1 > -LABEL_MARGIN_PX
         && bounds.x0 < viewport.0 + LABEL_MARGIN_PX
@@ -288,6 +337,7 @@ mod tests {
                 text: format!("label {i}"),
                 anchor: (a * spread - (spread - VIEWPORT.0) / 2.0, b * spread - (spread - VIEWPORT.1) / 2.0),
                 size: (40.0 + (i % 7).to_f32().expect("size step fits f32") * 12.0, 14.0),
+                repeats_by_text: false,
             });
         }
         out
@@ -335,6 +385,77 @@ mod tests {
     }
 
     #[test]
+    fn one_street_written_as_many_ways_is_labelled_once() {
+        // Reported from the live map at z17: "Commercial Street" five
+        // times down the right-hand edge, "Whitechapel High Street"
+        // three. A street is not one feature in the source data — it is
+        // a run of ways, each with its own id — so identity dedupe
+        // cannot see that they are all the same street.
+        let segment = |id: u128, y: f32| Candidate {
+            id,
+            rank: 4,
+            text: "Commercial Street".into(),
+            anchor: (620.0, y),
+            size: (130.0, 12.0),
+            repeats_by_text: true,
+        };
+        let candidates: Vec<Candidate> =
+            [110.0, 175.0, 240.0, 305.0, 370.0].iter().enumerate()
+                .map(|(index, y)| segment(index as u128 + 1, *y))
+                .collect();
+
+        let placement = place(&candidates, VIEWPORT, 1.0);
+
+        assert_eq!(placement.placed.len(), 1, "one street, one label");
+        assert!(placement.rejected.iter().all(|r| r.reason == Rejection::Repeat));
+    }
+
+    #[test]
+    fn unnamed_features_do_not_suppress_each_other() {
+        // The trap in the repeat rule: unnamed features arrive as
+        // candidates with an empty string, and matching those against
+        // each other let the first one reject every other unnamed
+        // feature in the frame — 652 of them, in the collision card.
+        let blank = |id: u128, x: f32| Candidate {
+            id,
+            rank: 4,
+            text: String::new(),
+            anchor: (x, 200.0),
+            size: (10.0, 10.0),
+            repeats_by_text: true,
+        };
+        let candidates = [blank(1, 100.0), blank(2, 140.0), blank(3, 180.0)];
+
+        let placement = place(&candidates, VIEWPORT, 1.0);
+
+        assert_eq!(placement.placed.len(), 3, "an empty string is not a name");
+        assert!(placement.rejected.iter().all(|r| r.reason != Rejection::Repeat));
+    }
+
+    #[test]
+    fn two_far_apart_places_of_the_same_name_both_survive() {
+        // The other half of the rule: "High Street" in two different
+        // towns is two answers, not a repeat of one.
+        let here = Candidate {
+            id: 1,
+            rank: 4,
+            text: "High Street".into(),
+            anchor: (80.0, 80.0),
+            size: (90.0, 12.0),
+            repeats_by_text: true,
+        };
+        let far = Candidate { id: 2, anchor: (700.0, 420.0), ..here.clone() };
+        assert!(
+            (here.anchor.0 - far.anchor.0).hypot(here.anchor.1 - far.anchor.1) > REPEAT_RADIUS_PX,
+            "the fixture has to straddle the radius to be testing anything",
+        );
+
+        let placement = place(&[here, far], VIEWPORT, 1.0);
+
+        assert_eq!(placement.placed.len(), 2);
+    }
+
+    #[test]
     fn a_feature_seen_from_two_tiles_is_placed_once() {
         let one = Candidate {
             id: 77,
@@ -342,6 +463,7 @@ mod tests {
             text: "Ealing Broadway".into(),
             anchor: (400.0, 300.0),
             size: (120.0, 14.0),
+            repeats_by_text: false,
         };
         // The neighbouring tile's copy: same feature, same place, and
         // its own rounding of the anchor.
@@ -431,6 +553,7 @@ mod tests {
             text: "elsewhere".into(),
             anchor: (-4000.0, 300.0),
             size: (60.0, 14.0),
+            repeats_by_text: false,
         };
         let placement = place(&[far], VIEWPORT, 1.0);
         assert!(placement.placed.is_empty());
