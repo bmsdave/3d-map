@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- Added [`docs/architecture.md`](libraries/maps-v2/docs/architecture.md): what
+  each crate owns, the life of one tile from OSM extract to pixel, where the
+  frame's time goes, and a **Known gaps** section that records what is
+  deliberately not built yet — tilt is stored but never projected, text is
+  unshaped, roof shape is a bounding-box guess. Linked from the README.
+- The performance trace now records *what* a span was working on, not only how
+  long it took: `decode` spans carry the tile path and the reporter prints it,
+  so a failing line reads `802.2ms decode 1/0/0.mt2` instead of leaving the
+  address to be guessed. `frameMeasurement` also resets the trace before
+  measuring, so a `frame` row's phase breakdown describes its own window rather
+  than the whole session.
+- Buildings triangulate through `earcutr` like fills do; the hand-written ear
+  clipper, whose ear test rescanned every remaining vertex, is gone.
+- `build_line_bucket` decodes each road section once and sorts features into
+  tunnel/ground/bridge storeys, instead of walking the section once per storey.
+  Eight walks per tile rather than twenty-four.
+- Label collision no longer grows with the square of the frame: the duplicate
+  check is a `HashSet` and the repeat check a map from text to the places that
+  name already stands. `labels-collision` worst block fell from 98 ms to 30 ms.
+- Measured, and written down: the remaining ~800 ms `decode` failures are one
+  thing — the z1 world tiles carry ~856,000 coastline vertices, and triangulating
+  them is 780 ms of the 786 ms that `load_tile` spends. Decoding those vertices
+  costs 6 ms. See
+  [`e2e/perf/FINDINGS.md`](applications/maps-v2-lab/e2e/perf/FINDINGS.md) for the
+  measurements, what does not fix it, and what would.
 - The lab's front page is now the lab. Twenty studies mount live on it —
   hero canvas, SDK snippet, and every study interactive without a click —
   filtered by text or group instead of navigated to. A WebGL2 context budget

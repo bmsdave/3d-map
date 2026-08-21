@@ -118,8 +118,9 @@ function line(row: Row): string {
   const where = `${row.study.padEnd(22)} ${row.scenario.slice(0, 34).padEnd(34)}`;
   if (row.error) return `${where} ${row.error}`;
   const phase = row.worstPhase ? ` ${row.worstPhase}` : "";
+  const at = row.worstDetail ? ` ${row.worstDetail}` : "";
   const busiest = topPhase(row);
-  return `${where} ${fixed(row.worstBlockMs)}${phase}${busiest}`;
+  return `${where} ${fixed(row.worstBlockMs)}${phase}${at}${busiest}`;
 }
 
 /// Худший вызов говорит, где рвётся; самая дорогая фаза за проход

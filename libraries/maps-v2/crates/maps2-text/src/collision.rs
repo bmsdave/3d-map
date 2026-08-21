@@ -13,7 +13,7 @@
 //! share of the viewport, and everything past that point is rejected
 //! for budget rather than for collision.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use num_traits::ToPrimitive;
 
@@ -143,8 +143,8 @@ pub fn place(candidates: &[Candidate], viewport: (f32, f32), budget: f32) -> Pla
         placed: Vec::new(),
         rejected: Vec::new(),
         used: 0.0,
-        seen: Vec::new(),
-        seen_text: Vec::new(),
+        seen: HashSet::new(),
+        seen_text: HashMap::new(),
     };
     let mut spent = false;
     for candidate in rank_order(candidates) {
@@ -187,11 +187,16 @@ struct Frame {
     placed: Vec<PlacedLabel>,
     rejected: Vec<RejectedLabel>,
     used: f32,
-    seen: Vec<u128>,
+    seen: HashSet<u128>,
     /// Text already standing this frame, with where it stands, so a
     /// repeat of the same name nearby can be recognised — see
     /// [`Rejection::Repeat`].
-    seen_text: Vec<(String, (f32, f32))>,
+    ///
+    /// Keyed by the text rather than a flat list: a crowded micro frame
+    /// offers a thousand candidates, and scanning every name already
+    /// placed to answer each one made the frame cost grow with its own
+    /// square. Only the places *this* name already stands are relevant.
+    seen_text: HashMap<String, Vec<(f32, f32)>>,
 }
 
 impl Frame {
@@ -206,9 +211,10 @@ impl Frame {
         if !candidate.repeats_by_text || candidate.text.is_empty() {
             return false;
         }
-        self.seen_text.iter().any(|(text, at)| {
-            text == &candidate.text
-                && (at.0 - candidate.anchor.0).hypot(at.1 - candidate.anchor.1) <= REPEAT_RADIUS_PX
+        self.seen_text.get(&candidate.text).is_some_and(|places| {
+            places.iter().any(|at| {
+                (at.0 - candidate.anchor.0).hypot(at.1 - candidate.anchor.1) <= REPEAT_RADIUS_PX
+            })
         })
     }
 
@@ -241,7 +247,7 @@ impl Frame {
             self.reject(candidate, bounds, Rejection::Repeat);
             return false;
         }
-        self.seen.push(candidate.id);
+        self.seen.insert(candidate.id);
         if let Some(by) = self.grid.first_hit(bounds, &self.placed) {
             self.reject(candidate, bounds, Rejection::Collision { by });
             return false;
@@ -252,7 +258,7 @@ impl Frame {
             return true;
         }
         self.grid.insert(bounds, self.placed.len());
-        self.seen_text.push((candidate.text.clone(), candidate.anchor));
+        self.seen_text.entry(candidate.text.clone()).or_default().push(candidate.anchor);
         self.used += area;
         self.placed.push(PlacedLabel {
             id: candidate.id,

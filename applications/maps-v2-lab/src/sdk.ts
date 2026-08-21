@@ -376,7 +376,7 @@ export async function createTilePackageLoader(
         if (!wanted()) break;
         if (!stillWanted.has(path)) continue;
         blocking(() => {
-          traced("decode", () => map.loadTile(tile));
+          traced("decode", () => map.loadTile(tile), path);
           loaded.add(path);
           loadedNow += 1;
         });

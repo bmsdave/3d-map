@@ -30,6 +30,9 @@ interface Span {
   ms: number;
   /** `performance.now()` начала — чтобы сопоставить с кадрами. */
   at: number;
+  /** Адрес работы внутри фазы: какой тайл декодировался. Необязателен —
+   *  у `render` его нет и быть не может. */
+  detail?: string;
 }
 
 /// Долгий кадр глазами браузера. `blockingDuration` — то самое время,
@@ -62,6 +65,9 @@ export const BLOCKING_PHASES: readonly Phase[] = [
 export interface WorstBlock {
   phase: Phase | null;
   ms: number;
+  /** Что именно столько стоило, если фаза знает. Число говорит, что
+   *  порвалось; адрес говорит, где чинить. */
+  detail?: string;
 }
 
 export interface PhaseSummary {
@@ -85,13 +91,13 @@ let observer: PerformanceObserver | null = null;
  * Замер синхронного участка. Возвращает то же, что и работа внутри, —
  * чтобы обёртка вставала в существующий код без перестановки строк.
  */
-export function traced<T>(phase: Phase, work: () => T): T {
+export function traced<T>(phase: Phase, work: () => T, detail?: string): T {
   if (!enabled) return work();
   const started = performance.now();
   try {
     return work();
   } finally {
-    record(phase, started, performance.now());
+    record(phase, started, performance.now(), detail);
   }
 }
 
@@ -117,8 +123,8 @@ export function recordSpan(phase: Phase, ms: number): void {
   if (spans.length > MAX_SPANS) spans.shift();
 }
 
-function record(phase: Phase, started: number, ended: number): void {
-  spans.push({ phase, ms: ended - started, at: started });
+function record(phase: Phase, started: number, ended: number, detail?: string): void {
+  spans.push({ phase, ms: ended - started, at: started, detail });
   if (spans.length > MAX_SPANS) spans.shift();
   // Те же интервалы попадают в запись DevTools, а не только в наш
   // буфер: два механизма для одного вопроса разошлись бы через месяц.
@@ -149,7 +155,7 @@ function worstBlock(): WorstBlock {
   let worst: WorstBlock = { phase: null, ms: 0 };
   for (const span of spans) {
     if (!BLOCKING_PHASES.includes(span.phase)) continue;
-    if (span.ms > worst.ms) worst = { phase: span.phase, ms: round(span.ms) };
+    if (span.ms > worst.ms) worst = { phase: span.phase, ms: round(span.ms), detail: span.detail };
   }
   return worst;
 }
@@ -200,7 +206,8 @@ function log(): void {
   console.table(summary());
   // eslint-disable-next-line no-console
   console.log(
-    `худший блок: ${worst.ms.toFixed(1)}ms (${worst.phase ?? "нет"})` +
+    `худший блок: ${worst.ms.toFixed(1)}ms (${worst.phase ?? "нет"}` +
+      `${worst.detail ? ` ${worst.detail}` : ""})` +
       ` · долгих кадров ${longFrames.length}`,
   );
 }

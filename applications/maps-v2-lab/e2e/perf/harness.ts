@@ -35,6 +35,8 @@ export interface Measurement {
   /** Худший одиночный блокирующий вызов и его фаза. */
   worstBlockMs: number;
   worstPhase: string | null;
+  /** Адрес этой работы, если фаза его знает: для `decode` — путь тайла. */
+  worstDetail?: string;
   /** Худший долгий кадр по данным браузера; 0 — крупных не было. */
   worstLongFrameMs: number;
   /** Стена от начала сценария до тишины. Не бюджет, а справка. */
@@ -103,6 +105,7 @@ export async function measure(page: Page, action: Interaction): Promise<Measurem
     return {
       worstBlockMs: worst.ms,
       worstPhase: worst.phase,
+      worstDetail: worst.detail,
       worstLongFrameMs: perf.worstLongFrameMs(),
       phases: perf.summary(),
     };
@@ -191,6 +194,11 @@ async function centreOf(page: Page): Promise<{ x: number; y: number }> {
  * вопрос: сколько стоит кадр сам по себе, без движения.
  */
 export async function frameMeasurement(page: Page, readyMs: number): Promise<Measurement> {
+  // Обнуление до тридцати кадров, а не после: без него `phases` ниже
+  // описывали всю сессию, и каждая строка `frame` в отчёте несла
+  // восьмисотмиллисекундный `decode` со старта страницы — работу,
+  // которой в этом окне не было.
+  await page.evaluate(() => window.__maps2Perf!.reset());
   const p95 = await page.evaluate(() =>
     window.maps2?.measureFrames(30) ?? Number.POSITIVE_INFINITY);
   const state = await page.evaluate(() => {
@@ -219,6 +227,7 @@ export async function traceMeasurement(page: Page, readyMs?: number): Promise<Me
     return {
       worstBlockMs: block.ms,
       worstPhase: block.phase,
+      worstDetail: block.detail,
       worstLongFrameMs: perf.worstLongFrameMs(),
       phases: perf.summary(),
     };
