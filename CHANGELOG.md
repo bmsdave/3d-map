@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- Low-zoom water is simplified again, by snapping rather than thinning.
+  `simplify_area_ring` skipped Douglas-Peucker entirely for water at z≤7 — the
+  whole range the world package is built at — because thinning decides which of
+  a ring's points survive from that ring's own neighbours, so two grid-split
+  ocean pieces kept different subsets of the edge they shared and pulled apart.
+  Snapping asks only where a point is, so a shared edge survives shared.
+  `WATER_SNAP_STEP` is one level-independent constant where the thinning path
+  needs a per-level formula: a tile is drawn at about the same pixel size at
+  every zoom, so 1/1024 of a tile is half a pixel at z1 and at z7 alike.
+- Snapping can fold a bay narrower than the lattice onto a line, leaving a ring
+  that walks out along itself and back. `earcutr` handed one of those as a
+  *hole* does not fail — it does not return. `fold_out` unwinds the creases, and
+  a ring that still revisits its own points keeps its original geometry rather
+  than being drawn wrong.
+- The committed lab packages are rebuilt from those sources. `1/0/0.mt2` fell
+  from 1,971 KB to 897 KB and its fill bucket from 755 ms to 97 ms, with total
+  water area within 0.05% of before. Worst blocking call across the lab: 836.9 ms
+  to 180.2 ms. Every visual golden is unmoved.
+- Buildings are no longer triangulated into the fill bucket as well as their own.
+  The flat copy was uploaded to the GPU and then skipped at draw time, because
+  the 3D bucket had already drawn it. `resident_classes` now asks the building
+  bucket where buildings are, instead of reading it out of the fills.
+- `load_tile` takes its bytes instead of borrowing and copying them a second
+  time, and a tile's height raster is a range into the bytes already held rather
+  than a duplicate 128 KB per terrain tile.
+- `vite.config.ts` honours `PORT`, defaulting to 5178, so a second copy of the
+  lab can run beside the first.
+
 - Added [`docs/architecture.md`](libraries/maps-v2/docs/architecture.md): what
   each crate owns, the life of one tile from OSM extract to pixel, where the
   frame's time goes, and a **Known gaps** section that records what is

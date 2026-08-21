@@ -1,6 +1,7 @@
 //! The `Map` handle exported to JS.
 
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 
 use wasm_bindgen::prelude::*;
 use web_sys::WebGl2RenderingContext as Gl;
@@ -82,7 +83,11 @@ pub struct Map {
     gpu_buildings: HashMap<TileId, GpuBuildingBucket>,
     /// Heights follow the same two lives as the meshes: the bytes stay,
     /// the texture comes and goes with residency.
-    heights: HashMap<TileId, Vec<u8>>,
+    /// Where each tile's height raster sits inside the bytes already
+    /// held in `tiles` — a range, not a copy. The raster is 128 KB and
+    /// keeping a second one per resident tile bought nothing: the bytes
+    /// it duplicated cannot be dropped while `tiles` needs them.
+    heights: HashMap<TileId, Range<usize>>,
     height_textures: HashMap<TileId, HeightTexture>,
     viewport: (f64, f64),
     frame_draw_calls: u32,
@@ -400,8 +405,11 @@ impl Map {
 
     /// Ingest one tile: the CPU mesh is built here, once. The GPU copy
     /// appears when residency admits the tile, and leaves when it stops.
-    pub fn load_tile(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
-        let view = TileView::parse(bytes).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
+    /// Takes the bytes rather than borrowing them: wasm-bindgen has
+    /// already copied them out of the JS heap, and copying that copy so
+    /// the tile could be kept was the second of two.
+    pub fn load_tile(&mut self, bytes: Vec<u8>) -> Result<(), JsValue> {
+        let view = TileView::parse(&bytes).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
         let id = view.header().id;
         register_source_level(&mut self.source_levels, id.z);
         let fills = build_fill_bucket(&view).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
@@ -414,12 +422,15 @@ impl Map {
         self.lines.insert(id, roads);
         self.names.insert(id, names);
         self.labels.placement_dirty = true;
-        self.tiles.insert(id, bytes.to_vec());
+
         self.invalidate_plan();
         if let Some(raster) = view.raster(CLASS_HEIGHTS) {
             HeightsRaster::parse(raster).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-            self.heights.insert(id, raster.to_vec());
+            if let Some(span) = view.section_span(CLASS_HEIGHTS) {
+                self.heights.insert(id, span);
+            }
         }
+        self.tiles.insert(id, bytes);
         Ok(())
     }
 
@@ -901,12 +912,19 @@ impl Map {
         (self.camera.zoom().world_pixels() / (maps2_units::EARTH_CIRCUMFERENCE_METRES * cos_lat)) as f32
     }
 
+    /// The height raster of a resident tile, borrowed out of the tile
+    /// bytes it arrived in.
+    fn height_bytes(&self, id: TileId) -> Option<&[u8]> {
+        let span = self.heights.get(&id)?;
+        self.tiles.get(&id)?.get(span.clone())
+    }
+
     /// Height in metres under the camera centre, when a resident tile
     /// can answer. The terrain card's readout, and the cheapest proof
     /// that the raster arrived and is addressed correctly.
     fn centre_height_m(&self) -> Option<f32> {
         let point = locate(self.camera.centre(), self.active_level());
-        let bytes = self.heights.get(&point.tile)?;
+        let bytes = self.height_bytes(point.tile)?;
         let raster = HeightsRaster::parse(bytes).ok()?;
         let last = (HEIGHTS_SIDE - 1) as f32;
         let texel = |grid: u16| (f32::from(grid) / 65535.0 * last).round() as i32;
@@ -1021,7 +1039,7 @@ impl Map {
             self.gpu_buildings.insert(id, gpu);
         }
         if !self.height_textures.contains_key(&id)
-            && let Some(bytes) = self.heights.get(&id)
+            && let Some(bytes) = self.height_bytes(id)
             && let Ok(texture) = HeightTexture::upload(&self.gl, bytes)
         {
             self.height_textures.insert(id, texture);
@@ -1192,7 +1210,7 @@ impl Map {
         for (range, alpha) in passes {
             // The ground surface already drew the land, tessellated —
             // a four-corner land rectangle would cut the globe flat.
-            if alpha < 0.004 || range.class == Class::Land || range.class == Class::Building {
+            if alpha < 0.004 || range.class == Class::Land {
                 continue;
             }
             let gl = &self.gl;
@@ -1354,19 +1372,31 @@ impl Map {
         )
     }
 
+    /// Which classes are on screen, for the band studies' readout.
+    ///
+    /// Buildings are asked about separately because they are not fills:
+    /// they have their own bucket, and the fill bucket stopped carrying a
+    /// second flat copy of them that nothing drew.
     fn resident_classes(&self) -> Vec<String> {
         let level = self.active_level();
         let mut classes: Vec<Class> = Vec::new();
+        let mut admit = |class: Class, classes: &mut Vec<Class>| {
+            let visible = class_alpha(class, self.camera.zoom(), self.override_band) > 0.0;
+            if visible && !classes.contains(&class) {
+                classes.push(class);
+            }
+        };
         for (id, bucket) in &self.gpu {
             if id.z != level {
                 continue;
             }
             for range in &bucket.ranges {
-                let visible =
-                    class_alpha(range.class, self.camera.zoom(), self.override_band) > 0.0;
-                if visible && !classes.contains(&range.class) {
-                    classes.push(range.class);
-                }
+                admit(range.class, &mut classes);
+            }
+        }
+        for (id, bucket) in &self.gpu_buildings {
+            if id.z == level && !bucket.is_empty() {
+                admit(Class::Building, &mut classes);
             }
         }
         classes.sort_by_key(|c| c.code());

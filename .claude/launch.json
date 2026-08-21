@@ -4,8 +4,12 @@
     {
       "name": "maps-v2-lab",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "cd applications/maps-v2-lab && npm run dev"],
-      "port": 5178
+      "runtimeArgs": [
+        "-c",
+        "cd applications/maps-v2-lab && npm run dev"
+      ],
+      "port": 5178,
+      "autoPort": true
     }
   ]
 }

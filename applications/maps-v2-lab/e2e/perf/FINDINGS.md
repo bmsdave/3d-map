@@ -209,12 +209,14 @@ renderer cannot repair at sixty frames a second what the build got wrong. A z1
 coastline needs hundreds of vertices per ring, not thousands. It would cut
 triangulation super-linearly, and shrink a 2 MB tile at the same time.
 
-This was **not done here**, and the reason is concrete rather than a
-preference: it means rebuilding the committed lab packages, whose pinned
-sources — the split water-polygon shapefile and the eight GEBCO quadrants — are
-not in the repository, and re-committing 118 MB of tiles and their digests.
-`carve` cannot help, because it copies tiles verbatim by design. That is a data
-change with an owner and a review, not a patch.
+This was not done in that round. It means rebuilding the committed lab
+packages and re-committing 118 MB of tiles and their digests; `carve` cannot
+help, because it copies tiles verbatim by design.
+
+**Correction.** That round recorded the pinned sources as unavailable. They are
+not in the *repository* — `pipelines/maps-v2-ingest/cache/` is gitignored — but
+they are on the machine this was measured on, all 99 GB of them. The rebuild was
+possible all along. See the next section.
 
 **Or move decode off the main thread.** A worker holding its own wasm instance
 would make an 800 ms tile a slow tile rather than a frozen page. That is an
@@ -239,3 +241,158 @@ anything in this document.
 One machine, one run each, macOS, single Playwright worker. No CI numbers. The
 committed `baseline.json` records the post-change figures, so the next run
 compares against these, not against the worse ones above.
+
+---
+
+# Round two: snapping the world's coastline
+
+## What the 780 ms actually was
+
+The address said `1/0/0.mt2`, so the next question was answerable by reading the
+ingest. The tolerance was not too fine. There was no tolerance at all:
+
+```rust
+// maps2-ingest/src/lib.rs — before
+const WATER_TOPOLOGY_SAFE_MAX_LEVEL: u8 = 7;
+let water_would_split_at_a_shared_edge =
+    class == Class::Water && level <= WATER_TOPOLOGY_SAFE_MAX_LEVEL;
+if class == Class::Building || water_would_split_at_a_shared_edge
+    || level >= 16 || points.len() < 4 { return points; }
+```
+
+Water at z≤7 skipped simplification entirely, and the world package is built at
+exactly z1–z7 — so **no simplification ever ran on water anywhere it was built.**
+
+The bypass was not an oversight. The water dataset ships pre-split into a grid,
+so one tile carries several polygons that share a cut edge, and Douglas–Peucker
+decides which of a ring's points survive by looking at *that ring's own
+neighbours*. Two rings that shared an edge kept different subsets of it and
+pulled apart — the pale wedges over the North Sea that commit `b393e11` fixed by
+turning simplification off.
+
+## Snap, don't thin
+
+Snapping to a lattice has the property Douglas–Peucker lacks: it asks only where
+a point is, so the same position lands on the same lattice point whichever ring
+is asking, and a shared edge survives shared. That is the bypass's requirement,
+met rather than avoided.
+
+It is also a simpler rule than the one it replaces. A tile is drawn at roughly
+the same pixel size at every zoom, so a lattice in tile fractions is a lattice in
+pixels — `WATER_SNAP_STEP = 1/1024` is half a pixel on a 512-pixel tile at z1 and
+at z7 alike, where `generalisation_tolerance` needs a per-level formula. At z1
+whole runs of coastline land in one pixel and collapse; at z7 there is almost
+nothing to drop. One constant, and each level keeps what it can show.
+
+## The part that was wrong
+
+The plan predicted the win from vertex count alone. The first snapped tile was
+six times smaller and **hung a release build for minutes.** Dissecting the
+feature it stopped on:
+
+```
+outer 28 verts, 1 hole
+(65087,44031) (65023,44031) (64959,44031) (65023,44031) (65023,43967) (65023,44031) …
+hole: (65215,43967) (65151,43967) (65215,43967) (65151,43967) …
+```
+
+Snapping had folded a bay narrower than the lattice onto a line, and what was
+left walked out along itself and straight back. The outer ring alone triangulates
+in 5 µs. Handed the same shape as a *hole*, `earcutr` does not fail — bridging a
+hole into an outer ring assumes the hole encloses something, and it does not
+return.
+
+Two things fix it, and both are in `snap_ring`:
+
+- **`fold_out`** — a stack pass where a point equal to the one before it is a
+  duplicate and a point equal to the one two back means the path doubled back,
+  so the step out is unwound. It removes the creases.
+- **A guard.** If the folded ring still returns to a point it has already
+  visited, snapping has made it stranger rather than smaller, and the original
+  ring is kept. That ring stays expensive; drawing it correctly is worth more
+  than drawing it cheaply. The lattice is halved and retried up to four times
+  before giving up, because a ring that folds at half a pixel often sits happily
+  at an eighth of one.
+
+## Measured, on `1/0/0.mt2`
+
+| | before | after |
+|---|---|---|
+| fill bucket build | **755 ms** | **97 ms** |
+| tile size | 1,971 KB | 819 KB |
+| vertices | 856,343 | 361,190 |
+| rings | 33,857 | 4,876 |
+| features | 4,951 | 3,715 |
+| water area | 69.263% of tile | 69.229% |
+
+**7.8× on the work that dominated everything**, and the coastline is provably
+still where it was: total water area moved by 0.05% relative while the tile
+carries 2.4× fewer vertices.
+
+## Measured, in the lab
+
+Same machine, single worker, against the rebuilt packages. "First" is the
+original run of 2026-08-21, "round one" the earcut/collision changes, "now" this
+one.
+
+| study / scenario | first | round one | now | total |
+|---|---|---|---|---|
+| `board/open-study` | 836.9 ms | 808.2 ms | **113.0 ms** | 7.4× |
+| `board/scroll` | 836.7 ms | 802.2 ms | **180.2 ms** | 4.6× |
+| `showcase/animation` | 833.4 ms | 807.7 ms | **110.7 ms** | 7.5× |
+| `zoom-bands/primary` | 727.9 ms | 711.1 ms | **177.0 ms** | 4.1× |
+| `input-flat/secondary` | 725.5 ms | 721.8 ms | **53.4 ms** | 13.6× |
+| `globe-real/primary` | 340.5 ms | 339.9 ms | **178.6 ms** | 1.9× |
+| `globe-transition/primary` | 214.5 ms | 212.5 ms | **48.6 ms** | 4.4× |
+| `labels-collision/primary` | 98.0 ms | 30.3 ms | **29.7 ms** | 3.3× |
+| `map-real/primary` | 32.6 ms | 31.0 ms | **30.6 ms** | 1.1× |
+
+Peak resident memory fell with it: 80 tiles / 31.6 MB at the worst, now 55 tiles
+/ 23.4 MB. Every visual golden is unmoved, including `globe-relief` and
+`terrain-shade` — the two that would show an ocean sliver if snapping had opened
+one.
+
+**The bottleneck moved.** The worst block used to name `1/0/0.mt2` in almost
+every study; now the expensive tile is `5/17/9.mt2`. At z5 a tile covers a
+thirty-second of the planet, so the same coastline is thirty-two times denser in
+tile fractions and much less of it lands inside one lattice cell. The rule is
+doing what it should — each level keeps what it can show — and z5 is simply the
+level where that is still a lot.
+
+`map-real` barely moved, which is right: it is a city package, its water comes
+from OSM rather than the split world dataset, and none of this touched it.
+
+## What is still true
+
+**Nine rows still miss the budget, the same nine.** The worst is 180 ms against
+10 ms. Getting the rest means proper snap rounding, which is a published
+algorithm and a real piece of work, not a constant to tune. The guard is
+deliberately conservative — on the z1 tile 361,190 vertices survive against an
+ideal of roughly 13,000 — so most of what remains is rings snapping could not
+safely touch at any lattice.
+
+Two other things landed in the same round, neither of them a fix for the above:
+
+- **The building fill is gone.** `Class::Building` was in `FILL_ORDER`, so every
+  footprint was triangulated into the fill bucket and uploaded to the GPU — and
+  then skipped at draw time, because the 3D building bucket had already drawn it.
+  The geometry was dead work; the *ranges* were not. `resident_classes` read them
+  to answer "which classes are on screen" for the band studies' readout, so
+  removing them silently dropped Building from it — caught by `cards.spec.ts`,
+  not by reading the draw path. It now asks the building bucket, which is the
+  question it meant. `Class::Land` is in the same position and was left alone;
+  removing it would rewrite two contract tests for no measured gain.
+- **Two copies per tile removed.** `load_tile` now takes the bytes rather than
+  borrowing and copying them a second time, and the heights raster is a range
+  into bytes already held instead of a duplicate 128 KB per terrain tile.
+
+## Declined, on the measurements
+
+- **Decode-once in `maps2-tile`**: 6 ms of 786, and it would replace a `Copy`,
+  zero-copy `FeatureView` with a shared scratch buffer touching all four bucket
+  builders.
+- **Building LOD as a shader uniform**: needs a per-vertex role tag and bigger
+  building vertices to delete a rebuild no measurement blames.
+- **The Web Worker**: it makes an expensive tile a slow tile rather than a frozen
+  page, but it does not make it cheaper. Worth revisiting now that the number it
+  would be hiding is 97 ms rather than 800.
