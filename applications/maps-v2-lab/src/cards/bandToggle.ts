@@ -31,7 +31,7 @@ export function bandToggleCard(transition: Transition): CardSpec {
         { key: "composition", label: "активная полоса" },
         { key: "classes", label: "классы на экране (SDK)" },
       ]);
-      out.set("camera", `z${cameraZoom} · Ealing Broadway`);
+      out.set("camera", `z${cameraZoom} · Трафальгарская площадь`);
 
       const bandSelect = el("select", { "data-testid": "composition-toggle" });
       for (const band of [lower, upper]) {

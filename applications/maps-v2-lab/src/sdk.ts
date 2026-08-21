@@ -126,7 +126,7 @@ export interface MapHandle {
   tick(dtMs: number): boolean;
 }
 
-// Где стоит камера, чтобы увидеть пакет. Пишется генератором фикстур —
+// Где стоит камера, чтобы увидеть пакет. Пишется тем, кто пакет собрал, —
 // проекцию Меркатора не повторяем в TypeScript.
 export interface PackCentre {
   lon: number;
@@ -289,7 +289,7 @@ async function sha256(bytes: Uint8Array): Promise<string> {
 export async function createTilePackageLoader(
   map: MapHandle,
   manifestUrl: string,
-  options: { additive?: boolean } = {},
+  options: { additive?: boolean; active?: () => boolean } = {},
 ): Promise<TilePackageLoader> {
   const manifest = await fetchPackageManifest(manifestUrl);
   const base = new URL(manifestUrl, window.location.href);
@@ -308,6 +308,13 @@ export async function createTilePackageLoader(
   return {
     manifest,
     async loadVisible(): Promise<PackageLoadResult> {
+      // Загрузка карты, которую уже никто не смотрит, — не бесплатная
+      // фоновая работа: декодирование тайла строит все его меши и
+      // раскладывает все подписи. Шесть студий доски, доигрывающих
+      // свой проход после перехода, отнимали процессор ровно у той
+      // студии, которую человек только что открыл.
+      const wanted = options.active ?? (() => true);
+      if (!wanted()) return { loaded: 0, unloaded: 0, unavailable: 0, blockedMs: 0 };
       // One residency plan answers all four questions. Asking them
       // separately cost a plan each, and this runs on every pointer
       // move: a single drag was computing nine plans per event.
@@ -362,6 +369,7 @@ export async function createTilePackageLoader(
       // freezes the page while they are all turned into meshes.
       let sliceStart = performance.now();
       for (const [path, tile] of bytes) {
+        if (!wanted()) break;
         if (!stillWanted.has(path)) continue;
         blocking(() => {
           map.loadTile(tile);
@@ -531,7 +539,9 @@ export async function createPackageMap(
   options: { zoom: number; centre?: { lon: number; lat: number }; manifestUrl?: string },
 ): Promise<PackageMap> {
   const raw = await createMap(canvas, null);
-  const loader = await createTilePackageLoader(raw, options.manifestUrl ?? TRAFALGAR_MANIFEST);
+  const loader = await createTilePackageLoader(raw, options.manifestUrl ?? TRAFALGAR_MANIFEST, {
+    active: () => canvas.isConnected,
+  });
   const centre = options.centre ?? TRAFALGAR;
   raw.setCentre(centre.lon, centre.lat);
   raw.setZoom(options.zoom);

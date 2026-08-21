@@ -8,7 +8,7 @@ import type { CardSpec } from "./types";
 // любом кегле и halo; проверяемое числами — что поворот и наклон
 // камеры не трогают текст: он не в меше мира, а отдельным проходом.
 
-const DEFAULT_TEXT = "Ealing Broadway 1863";
+const DEFAULT_TEXT = "Trafalgar Square 1844";
 
 export const typeSpecimen: CardSpec = {
   id: "type-specimen",
