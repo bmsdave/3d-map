@@ -385,13 +385,21 @@ impl LineBucket {
 /// Returns [`TileError`] when a road feature cannot be decoded.
 pub fn build_line_bucket(tile: &TileView, options: LineOptions) -> Result<LineBucket, TileError> {
     let mut bucket = LineBucket::default();
+    let mut storeys = Storeys::default();
     for class in ROAD_ORDER {
         let Some(section) = tile.section(class.code()) else {
             continue;
         };
+        // One walk of the section, not one per storey. A feature's
+        // geometry is a varint stream: reading it is the expensive part,
+        // and asking the section three times which of its roads are
+        // bridges decoded every road three times to answer twice "no".
+        storeys.fill(&section)?;
         for level in ROAD_LEVELS {
             let first_index = u32::try_from(bucket.indices.len()).map_err(|_| TileError::TooLarge)?;
-            append_level(&mut bucket, &section, level, options)?;
+            for points in storeys.of(level) {
+                bucket.push_polyline(points, options);
+            }
             let index_count = u32::try_from(bucket.indices.len()).map_err(|_| TileError::TooLarge)? - first_index;
             if index_count > 0 {
                 bucket.ranges.push(LineRange { class, level, first_index, index_count });
@@ -401,21 +409,40 @@ pub fn build_line_bucket(tile: &TileView, options: LineOptions) -> Result<LineBu
     Ok(bucket)
 }
 
-fn append_level(
-    bucket: &mut LineBucket,
-    section: &SectionView<'_>,
-    level: RoadLevel,
-    options: LineOptions,
-) -> Result<(), TileError> {
-    for feature in section.features() {
-        let feature = feature?;
-        if RoadLevel::of(feature.flags) != level {
-            continue;
+/// One class's roads, decoded once and sorted into the three storeys the
+/// bucket draws in order. Reused across classes so a tile pays for these
+/// vectors once rather than once per class.
+#[derive(Default)]
+struct Storeys {
+    tunnel: Vec<Vec<TileCoord>>,
+    ground: Vec<Vec<TileCoord>>,
+    bridge: Vec<Vec<TileCoord>>,
+}
+
+impl Storeys {
+    fn fill(&mut self, section: &SectionView<'_>) -> Result<(), TileError> {
+        self.tunnel.clear();
+        self.ground.clear();
+        self.bridge.clear();
+        for feature in section.features() {
+            let feature = feature?;
+            let points = feature.vertices().collect::<Result<Vec<_>, _>>()?;
+            match RoadLevel::of(feature.flags) {
+                RoadLevel::Tunnel => self.tunnel.push(points),
+                RoadLevel::Ground => self.ground.push(points),
+                RoadLevel::Bridge => self.bridge.push(points),
+            }
         }
-        let points = feature.vertices().collect::<Result<Vec<_>, _>>()?;
-        bucket.push_polyline(&points, options);
+        Ok(())
     }
-    Ok(())
+
+    fn of(&self, level: RoadLevel) -> &[Vec<TileCoord>] {
+        match level {
+            RoadLevel::Tunnel => &self.tunnel,
+            RoadLevel::Ground => &self.ground,
+            RoadLevel::Bridge => &self.bridge,
+        }
+    }
 }
 
 #[cfg(test)]

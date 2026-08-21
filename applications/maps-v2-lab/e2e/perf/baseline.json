@@ -1,11 +1,11 @@
 {
- "board/scroll": 836.7,
- "board/open-study": 836.9,
- "showcase/animation": 833.4,
- "zoom-bands/primary": 727.9,
- "labels-collision/primary": 98,
- "input-flat/secondary": 725.5,
- "globe-transition/primary": 214.5,
- "globe-real/primary": 340.5,
- "map-real/primary": 32.6
+ "board/scroll": 802.2,
+ "board/open-study": 808.2,
+ "showcase/animation": 807.7,
+ "zoom-bands/primary": 711.1,
+ "labels-collision/primary": 30.3,
+ "input-flat/secondary": 721.8,
+ "globe-transition/primary": 212.5,
+ "globe-real/primary": 339.9,
+ "map-real/primary": 31
 }
