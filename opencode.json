@@ -1,0 +1,30 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "lsp": true,
+  "instructions": [
+    "Read AGENTS.md first. Use it as repo map. Read full docs only on demand via grep.",
+    "Prefer grep before read. Use glob with specific pattern like 'libraries/maps-v2/crates/*/src/*.rs', never '**/*'.",
+    "Use read with offset/limit. Never read target/, node_modules/, public/packages/, public/fixtures/, dist/, *.mt2, e2e snapshots.",
+    "Always emit file_path:line refs for every code reference.",
+    "Keep diffs minimal. Verify with: cargo test --workspace (libraries/maps-v2) and npm run typecheck (applications/maps-v2-lab).",
+    "For tile format changes: bump FORMAT_VERSION in maps2-tile/src/lib.rs:48, update docs/tile-format.md, and migrate golden hash in maps2-fixtures/src/lib.rs:382.",
+    "For ingest changes: run cargo run -p maps2-ingest -- verify-package <dir> after.",
+    "Token budget: stay under 2.5k tokens bootstrap (AGENTS.md + one targeted file). Do not read README.md + architecture.md fully unless task requires narrative context.",
+    "For multi-task or long-loop work: delegate per-crate/card work to isolated subagents via task tool; controller keeps summaries only, never re-reads file subagent summarized.",
+    "Dispatch reviewer subagent between tasks; do not review diffs inline in controller (burns context)."
+  ],
+  "permission": {
+    "read": {
+      "libraries/maps-v2/target/**": "deny",
+      "applications/maps-v2-lab/node_modules/**": "deny",
+      "applications/maps-v2-lab/src/generated/**": "deny",
+      "applications/maps-v2-lab/public/packages/**": "deny",
+      "applications/maps-v2-lab/public/fixtures/**": "deny",
+      "applications/maps-v2-lab/dist/**": "deny",
+      "pipelines/maps-v2-ingest/cache/**": "deny",
+      "pipelines/maps-v2-ingest/packages/**": "deny",
+      "**/*.mt2": "deny",
+      "**/e2e/*snapshots/**": "deny"
+    }
+  }
+}

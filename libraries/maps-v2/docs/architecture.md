@@ -1,4 +1,5 @@
 # Architecture
+> For agents: start with `architecture.tldr.md` (30 lines, ~425 tok). Read this full doc only on demand via `grep` → `read offset/limit`.
 
 How the 3D Maps SDK is put together: what each crate owns, how a tile travels
 from an OpenStreetMap extract to a pixel, and where the frame's time goes.
