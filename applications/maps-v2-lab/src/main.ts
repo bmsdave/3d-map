@@ -1,5 +1,7 @@
 import { cardById } from "./cards";
 import { destroyHome, home } from "./home";
+import { PerfOverlay } from "./perfOverlay";
+import { installPerfTrace, perfOverlayRequested } from "./perfTrace";
 import { destroyShowcase, showcase } from "./showcase";
 import { el, stageEl } from "./ui";
 import "./style.css";
@@ -30,12 +32,37 @@ function renderCard(id: string): HTMLElement {
   const stage = stageEl(card.id);
   const panel = el("aside", { class: "panel" });
   card.mount(stage, panel);
+  if (perfOverlayRequested()) attachOverlay(stage);
   return el("main", { class: "card-page", "data-card": card.id }, [
     el("a", { class: "back", href: "#/" }, ["← вся доска"]),
     el("h1", {}, [card.title]),
     el("p", { class: "purpose" }, [card.purpose]),
     el("div", { class: "card-layout" }, [stage, panel]),
   ]);
+}
+
+/**
+ * Показания кадра поверх любой студии, а не одной.
+ *
+ * Оверлей был встроен в карточку map-real за галочкой — то есть
+ * единственная студия, у которой можно было спросить, куда ушло время,
+ * оказалась той, где его меньше всего. Здесь он навешивается снаружи, на
+ * готовую сцену: карточкам про него знать незачем.
+ */
+function attachOverlay(stage: HTMLElement): void {
+  const overlay = new PerfOverlay();
+  stage.style.position = "relative";
+  stage.append(overlay.root);
+  const draw = () => {
+    const map = window.maps2;
+    if (!stage.isConnected) return;
+    if (map) {
+      overlay.beginHostWork();
+      overlay.endHostWork(map);
+    }
+    requestAnimationFrame(draw);
+  };
+  requestAnimationFrame(draw);
 }
 
 function view(): { route: string; body: HTMLElement } {
@@ -68,5 +95,6 @@ function route(): void {
   );
 }
 
+installPerfTrace();
 window.addEventListener("hashchange", route);
 route();

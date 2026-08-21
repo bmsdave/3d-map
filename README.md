@@ -345,6 +345,16 @@ npm run test:e2e
 The lab regenerates its synthetic fixture output locally. It needs no
 proprietary data, pipeline cache, or external map package.
 
+### Performance
+
+`npm run test:perf` measures every study against a responsiveness budget —
+no single stretch of main-thread work over 10 ms — and prints a summary plus
+one line per study that misses it, naming the phase that ate the budget.
+It runs on its own config with a single worker, because timings taken while
+three Chromiums fight over the CPU are not timings. Open any study with
+`?perf=overlay` to watch the same numbers live. See
+[PERF.md](applications/maps-v2-lab/PERF.md).
+
 ## Initial local-SDK scope
 
 This first open-source version is for local development. It includes the SDK,

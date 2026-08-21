@@ -15,6 +15,7 @@
     "build:fixtures": "cargo run --quiet --manifest-path ../../libraries/maps-v2/Cargo.toml --bin gen-fixtures -- public/fixtures",
     "preview": "vite preview",
     "test:e2e": "playwright test",
+    "test:perf": "playwright test --config playwright.perf.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
