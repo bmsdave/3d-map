@@ -102,6 +102,16 @@ Trafalgar Square. Direct routes still isolate one concern at a time —
 animated gallery. `http://localhost:5178/demo/` is the public demo page — the
 same one published to GitHub Pages, served from the same build.
 
+### Building your own package
+
+`applications/maps-v2-lab/public/packages/trafalgar` is a carve. To build
+something larger — up to the whole planet, vector to z14 and terrain to
+z12 — see [PLANET.md](pipelines/maps-v2-ingest/PLANET.md), which covers what
+it costs, how to resume a build that dies partway, and how to host what
+comes out. The demo takes `?package=<manifest url>`, so pointing it at a
+hosted package needs no rebuild. What you owe the people whose data it is
+made of: [docs/DATA-LICENCE.md](docs/DATA-LICENCE.md).
+
 ### The lab package
 
 `applications/maps-v2-lab/public/packages/trafalgar` is committed: 559 MT2 tiles,

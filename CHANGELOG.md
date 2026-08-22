@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- A build plan for the planet (`plans/planet.toml`), its source descriptor, and
+  [PLANET.md](pipelines/maps-v2-ingest/PLANET.md) — the runbook for a build
+  measured in machine-days: what it needs, what it costs, how to pin a planet
+  file that is republished weekly, how to resume, how to verify a package too
+  large to carry per-tile digests, and how to host it. Vector to z14 rather
+  than z16 on purpose: below z14 a street is redrawn larger rather than
+  described better, and a city that wants more is a carve out of the same
+  package.
+- The demo takes `?package=<manifest url>`, so pointing it at a hosted package
+  is a link rather than a rebuild. Without it, the carve committed beside the
+  lab, which is what makes the page work from a clone.
+- `docs/DATA-LICENCE.md`: what a published package owes the people whose data
+  it is made of. The short of it is that MT2 tiles carry real geometry, which
+  makes a package a derived database rather than a produced work, so ODbL's
+  share-alike applies to the package itself and not only to the page drawing
+  it.
+
 - Tiles are built across cores, in batches of sixty-four. Building a tile is
   the expensive half of ingest — triangulation, line joins, label shaping —
   and worth spreading, but only a batch is ever in the air, because not
