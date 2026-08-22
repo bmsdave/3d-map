@@ -1,0 +1,10 @@
+[
+  {
+    "path": "src/generated/maps2-web/maps2_web_bg.wasm",
+    "limit": "400 KB"
+  },
+  {
+    "path": "src/generated/maps2-web/maps2_web.js",
+    "limit": "50 KB"
+  }
+]

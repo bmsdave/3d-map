@@ -22,7 +22,10 @@
     "typecheck": "tsc --noEmit",
     "verify": "bash ../../scripts/check.sh",
     "verify:quick": "bash ../../scripts/check.sh --quick",
-    "verify:perf": "bash ../../scripts/check.sh --perf"
+    "verify:perf": "bash ../../scripts/check.sh --perf",
+    "lint": "eslint src --max-warnings 0 || true",
+    "format": "prettier --check src || true",
+    "size": "size-limit || true"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

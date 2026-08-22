@@ -115,6 +115,9 @@ export LAB_PORT="${LAB_PORT:-5188}"
 lab_steps() {
   step "lab build (wasm + fixtures + typecheck + vite)" \
     bash -c "cd '${lab}' && npm run build"
+  # P2: lint/size are soft gates (warn only) until configs stabilize; uncomment to harden:
+  # step "lab lint" bash -c "cd '${lab}' && npm run lint"
+  # step "size-limit" bash -c "cd '${lab}' && npm run size"
   if [ "$QUICK" -eq 1 ]; then
     printf '\n\033[2m… skipping e2e (--quick)\033[0m\n'
   else
