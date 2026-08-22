@@ -1,6 +1,7 @@
 import { createMap, createTilePackageLoader, TRAFALGAR_CITY_MANIFEST, TRAFALGAR_MANIFEST, type MapHandle, type TilePackageLoader } from "../sdk";
 import { controlRow, el, readout, section } from "../ui";
 import type { CardSpec } from "./types";
+import { attachNavigation } from "./navigation";
 
 // Два разных пакета вокруг одной площади: полная вырезка, чьи низкие
 // уровни — весь мир, и отдельная городская, только z12–16. Один и тот
@@ -14,32 +15,7 @@ const CITY_MANIFEST = TRAFALGAR_CITY_MANIFEST;
 /// city geometry.
 const CITY_ENTRY_ZOOM = 12;
 
-function canvasPoint(canvas: HTMLCanvasElement, event: PointerEvent | WheelEvent): [number, number] {
-  const rect = canvas.getBoundingClientRect();
-  return [(event.clientX - rect.left) * canvas.width / rect.width, (event.clientY - rect.top) * canvas.height / rect.height];
-}
 
-function attachNavigation(canvas: HTMLCanvasElement, map: MapHandle, refresh: () => void): void {
-  let dragging = false;
-  canvas.addEventListener("pointerdown", (event) => {
-    dragging = true;
-    canvas.setPointerCapture(event.pointerId);
-    map.pointerDown(...canvasPoint(canvas, event), event.timeStamp);
-  });
-  canvas.addEventListener("pointermove", (event) => {
-    if (!dragging) return;
-    map.pointerMove(...canvasPoint(canvas, event), event.timeStamp);
-    map.render();
-    refresh();
-  });
-  canvas.addEventListener("pointerup", () => { dragging = false; map.pointerUp(); });
-  canvas.addEventListener("wheel", (event) => {
-    event.preventDefault();
-    map.wheel(...canvasPoint(canvas, event), event.deltaY, event.ctrlKey);
-    map.render();
-    refresh();
-  }, { passive: false });
-}
 
 /**
  * The globe-to-city demo: a real, world-wide low-zoom package (real
@@ -56,6 +32,7 @@ export const globeReal: CardSpec = {
     "Два реальных пакета на одной карте: мир (мелкие зумы, реальные береговые линии и рельеф GEBCO) снизу, город (крупные зумы) поверх — addSourceLevels объединяет уровни без замены. Там, где у города нет покрытия, подкладывается ближайший мировой тайл, а не пустота.",
   group: "Глобус",
   mount(stage, panel) {
+    let navCleanup: (() => void) | null = null;
     const out = readout([
       { key: "shape", label: "форма (SDK)" },
       { key: "zoom", label: "зум камеры" },
@@ -186,7 +163,7 @@ export const globeReal: CardSpec = {
         out.set("attribution", Array.from(new Set(attributions)).join(" · "));
         panel.replaceChildren(source, section("Показания", out.root));
         stage.setAttribute("data-state", "ready");
-        attachNavigation(canvas, map, () => void refresh());
+        navCleanup = attachNavigation(canvas, map, () => void refresh());
       } catch (error) {
         if (request === generation) showError(error, attemptedUrl);
       }
@@ -203,5 +180,9 @@ export const globeReal: CardSpec = {
     // running like every other study. The idle state stays for a URL
     // the operator points somewhere else and clears.
     void loadBoth();
+    return () => {
+      generation++;
+      try { navCleanup?.(); } catch {}
+    };
   },
 };

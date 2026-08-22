@@ -11,7 +11,7 @@
     "dev": "npm run build:sdk && vite",
     "build": "npm run build:sdk && npm run typecheck && vite build",
     "build:sdk": "npm run build:wasm && npm run build:fixtures",
-    "build:wasm": "wasm-pack build ../../libraries/maps-v2/crates/maps2-web --target web --out-dir ../../../../applications/maps-v2-lab/src/generated/maps2-web --release --no-typescript",
+    "build:wasm": "wasm-pack build ../../libraries/maps-v2/crates/maps2-web --target web --out-dir ../../../../applications/maps-v2-lab/src/generated/maps2-web --release",
     "build:fixtures": "cargo run --quiet --manifest-path ../../libraries/maps-v2/Cargo.toml --bin gen-fixtures -- public/fixtures",
     "preview": "vite preview",
     "test:e2e": "playwright test",

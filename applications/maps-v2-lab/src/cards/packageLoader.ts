@@ -1,35 +1,11 @@
 import { createMap, createTilePackageLoader, TRAFALGAR_MANIFEST, type MapHandle } from "../sdk";
 import { controlRow, el, readout, section } from "../ui";
 import type { CardSpec } from "./types";
+import { attachNavigation } from "./navigation";
 
 const MANIFEST = TRAFALGAR_MANIFEST;
 
-function canvasPoint(canvas: HTMLCanvasElement, event: PointerEvent | WheelEvent): [number, number] {
-  const rect = canvas.getBoundingClientRect();
-  return [(event.clientX - rect.left) * canvas.width / rect.width, (event.clientY - rect.top) * canvas.height / rect.height];
-}
 
-function attachPackageNavigation(canvas: HTMLCanvasElement, map: MapHandle, refresh: () => void): void {
-  let dragging = false;
-  canvas.addEventListener("pointerdown", (event) => {
-    dragging = true;
-    canvas.setPointerCapture(event.pointerId);
-    map.pointerDown(...canvasPoint(canvas, event), event.timeStamp);
-  });
-  canvas.addEventListener("pointermove", (event) => {
-    if (!dragging) return;
-    map.pointerMove(...canvasPoint(canvas, event), event.timeStamp);
-    map.render();
-    refresh();
-  });
-  canvas.addEventListener("pointerup", () => { dragging = false; map.pointerUp(); });
-  canvas.addEventListener("wheel", (event) => {
-    event.preventDefault();
-    map.wheel(...canvasPoint(canvas, event), event.deltaY, event.ctrlKey);
-    map.render();
-    refresh();
-  }, { passive: false });
-}
 
 export const packageLoader: CardSpec = {
   id: "package-loader",
@@ -38,6 +14,7 @@ export const packageLoader: CardSpec = {
     "Версионированный MT2 manifest задаёт камеру, уровни и список тайлов; хост подгружает только покрытие видимой области.",
   group: "Пакеты",
   mount(stage, panel) {
+    let navCleanup: (() => void) | null = null;
     const out = readout([
       { key: "package-tiles", label: "загружено из пакета" },
       { key: "package-unloaded", label: "выгружено из памяти" },
@@ -122,7 +99,7 @@ export const packageLoader: CardSpec = {
         panel.replaceChildren(source, section("Пакет", out.root));
         stage.setAttribute("data-manifest", manifestUrl);
         stage.setAttribute("data-state", "ready");
-        attachPackageNavigation(canvas, map, () => void refresh());
+        navCleanup = attachNavigation(canvas, map, () => void refresh());
         canvas.addEventListener("webglcontextlost", (event) => {
           event.preventDefault();
           recoveries += 1;
@@ -140,5 +117,9 @@ export const packageLoader: CardSpec = {
     tilt.addEventListener("input", applyTilt);
     panel.append(source);
     void loadPackage();
+    return () => {
+      generation++;
+      try { navCleanup?.(); } catch {}
+    };
   },
 };

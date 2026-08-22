@@ -11,6 +11,8 @@ import "./style.css";
 // остаётся точкой входа для e2e: тест загружает ровно одну фичу.
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
+let activeCleanup: (() => void) | null = null;
+let activeOverlayCancel: (() => void) | null = null;
 
 function header(route: string): HTMLElement {
   const link = (href: string, text: string): HTMLElement =>
@@ -31,8 +33,11 @@ function renderCard(id: string): HTMLElement {
   }
   const stage = stageEl(card.id);
   const panel = el("aside", { class: "panel" });
-  card.mount(stage, panel);
-  if (perfOverlayRequested()) attachOverlay(stage);
+  const c = card.mount(stage, panel);
+  if (typeof c === "function") activeCleanup = c;
+  else if (typeof card.unmount === "function") activeCleanup = card.unmount;
+  else activeCleanup = null;
+  if (perfOverlayRequested()) activeOverlayCancel = attachOverlay(stage);
   return el("main", { class: "card-page", "data-card": card.id }, [
     el("a", { class: "back", href: "#/" }, ["← вся доска"]),
     el("h1", {}, [card.title]),
@@ -49,10 +54,11 @@ function renderCard(id: string): HTMLElement {
  * оказалась той, где его меньше всего. Здесь он навешивается снаружи, на
  * готовую сцену: карточкам про него знать незачем.
  */
-function attachOverlay(stage: HTMLElement): void {
+function attachOverlay(stage: HTMLElement): () => void {
   const overlay = new PerfOverlay();
   stage.style.position = "relative";
   stage.append(overlay.root);
+  let frame = 0;
   const draw = () => {
     const map = window.maps2;
     if (!stage.isConnected) return;
@@ -60,9 +66,10 @@ function attachOverlay(stage: HTMLElement): void {
       overlay.beginHostWork();
       overlay.endHostWork(map);
     }
-    requestAnimationFrame(draw);
+    frame = requestAnimationFrame(draw);
   };
-  requestAnimationFrame(draw);
+  frame = requestAnimationFrame(draw);
+  return () => cancelAnimationFrame(frame);
 }
 
 function view(): { route: string; body: HTMLElement } {
@@ -87,6 +94,10 @@ function attribution(): HTMLElement {
 }
 
 function route(): void {
+  try { activeCleanup?.(); } catch {}
+  try { activeOverlayCancel?.(); } catch {}
+  activeCleanup = null;
+  activeOverlayCancel = null;
   destroyShowcase();
   destroyHome();
   const { route: current, body } = view();

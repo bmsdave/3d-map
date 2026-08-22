@@ -2,6 +2,7 @@ import { PerfOverlay } from "../perfOverlay";
 import { createMap, createTilePackageLoader, TRAFALGAR_MANIFEST, type MapHandle, type TilePackageLoader } from "../sdk";
 import { controlRow, el, readout, section } from "../ui";
 import type { CardSpec } from "./types";
+import { attachNavigation } from "./navigation";
 
 const MAP_MANIFEST = TRAFALGAR_MANIFEST;
 
@@ -11,32 +12,7 @@ const MAP_MANIFEST = TRAFALGAR_MANIFEST;
 /// shading a 30 m DEM speckles the streets.
 const CITY_ENTRY_ZOOM = 12;
 
-function canvasPoint(canvas: HTMLCanvasElement, event: PointerEvent | WheelEvent): [number, number] {
-  const rect = canvas.getBoundingClientRect();
-  return [(event.clientX - rect.left) * canvas.width / rect.width, (event.clientY - rect.top) * canvas.height / rect.height];
-}
 
-function attachNavigation(canvas: HTMLCanvasElement, map: MapHandle, refresh: () => void): void {
-  let dragging = false;
-  canvas.addEventListener("pointerdown", (event) => {
-    dragging = true;
-    canvas.setPointerCapture(event.pointerId);
-    map.pointerDown(...canvasPoint(canvas, event), event.timeStamp);
-  });
-  canvas.addEventListener("pointermove", (event) => {
-    if (!dragging) return;
-    map.pointerMove(...canvasPoint(canvas, event), event.timeStamp);
-    map.render();
-    refresh();
-  });
-  canvas.addEventListener("pointerup", () => { dragging = false; map.pointerUp(); });
-  canvas.addEventListener("wheel", (event) => {
-    event.preventDefault();
-    map.wheel(...canvasPoint(canvas, event), event.deltaY, event.ctrlKey);
-    map.render();
-    refresh();
-  }, { passive: false });
-}
 
 /**
  * One package, built from every source at once.
@@ -55,6 +31,7 @@ export const mapReal: CardSpec = {
     "Один пакет, собранный build-map из плана: мир (береговые линии, рельеф GEBCO, границы, города, магистрали) и реальный город в одной пирамиде без разрывов. Пересечения источников разрешены на сборке, а не в браузере.",
   group: "Глобус",
   mount(stage, panel) {
+    let navCleanup: (() => void) | null = null;
     const out = readout([
       { key: "shape", label: "форма (SDK)" },
       { key: "zoom", label: "зум камеры" },
@@ -197,7 +174,7 @@ export const mapReal: CardSpec = {
         );
         panel.replaceChildren(source, section("Показания", out.root));
         stage.setAttribute("data-state", "ready");
-        attachNavigation(canvas, map, () => void refresh());
+        navCleanup = attachNavigation(canvas, map, () => void refresh());
       } catch (error) {
         if (request === generation) showError(error, manifestUrl);
       }
@@ -208,5 +185,9 @@ export const mapReal: CardSpec = {
     zoomSlider.addEventListener("input", applyControls);
     panel.append(source);
     void loadPackage();
+    return () => {
+      generation++;
+      try { navCleanup?.(); } catch {}
+    };
   },
 };
