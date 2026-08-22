@@ -65,6 +65,7 @@ fn the_spool_costs_less_disk_than_the_tiles_it_builds() {
     build_tiles_spooled(
         prepared.clone(),
         &[],
+        maps2_ingest::TERRAIN_MAX_Z,
         &spool_dir,
         16,
         |_: TileId, bytes: Vec<u8>| -> Result<(), SpoolError> {

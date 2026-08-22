@@ -13,8 +13,8 @@ carve, its rasters, its packages. The rest are estimates, and say so.
 | | |
 |---|---|
 | Vector | z1–z7 generalised world, z8–z14 OpenStreetMap |
-| Terrain | z0–z12, packed (`TERRAIN_MAX_Z`; deeper tiles read an ancestor) |
-| Size | **~250–400 GB** (estimate; terrain ~80–100 GB of it) |
+| Terrain | z0–z8 from GEBCO, packed (`terrain_metres`; deeper tiles read an ancestor) |
+| Size | **~150–250 GB** (estimate) — vector nearly all of it, terrain about 1 GB |
 | Tiles | order 10⁷ |
 | Manifest | envelope, not an enumeration — past 50,000 tiles the list is dropped for per-level bounds |
 
@@ -46,9 +46,10 @@ rather than for the planet.
 **Disk: 600 GB free is enough, 1 TB is comfortable.**
 
 - Source ~95 GB, if it is not already sitting there.
-- Output **~250–400 GB (estimate)**. The weakest number in this document:
-  it comes from published planet pyramids at this depth plus the measured
-  packing ratio, not from a build.
+- Output **~150–250 GB (estimate)**, and served roughly half that with
+  `Content-Encoding: br`. The weakest number in this document: it comes
+  from published planet pyramids at this depth, not from a build. Terrain
+  is about 1 GB of it once the cap follows GEBCO's actual resolution.
 - Scratch **~0.3× of the level being built (measured)**. The spool writes
   each level's features down and deletes them when that level is done, and
   its records deflate about five to one, so this is tens of gigabytes
@@ -67,14 +68,54 @@ minutes and the planet is four orders of magnitude more ground.
 
 **Money: $20–100** of spot instance, or a week of a spare desktop.
 
-### What is not compressed, and could be
+### Where the bytes actually go
 
-The height rasters are packed (3.7× measured). The **vector sections are
-not**: MT2 stores them raw, and they deflate **2.0× measured** across the
-committed carve. That is the largest single lever left on the size of a
-published package, and it costs nothing at serving time — store the tiles
-pre-compressed and serve them with `Content-Encoding: br`, which the
-hosting step below does.
+Measured by parsing every feature of the committed carve — 778,329
+features, 44.3 MB of vector sections:
+
+| | share |
+|---|---|
+| geometry (coordinates, already varint deltas) | 49.6% |
+| name text | 15.2% |
+| feature ids (8 bytes each, every feature, every level) | 14.1% |
+| building fields (6 bytes each — on 778k features, 8k are buildings) | 10.5% |
+| flags, rank, name length, hole count | 10.5% |
+
+A third of it is per-feature header on features that mostly have nothing
+to put there. It looks like an obvious target. It is not, and this is the
+measurement that says so:
+
+| | raw | deflated |
+|---|---|---|
+| as it is today | 44.3 MB | **22.5 MB** |
+| make the building and hole fields optional | 38.9 MB | 21.4 MB |
+| …and put one name table per section | 35.0 MB | **21.3 MB** |
+
+Rewriting the format saves 21% raw and **5% after compression**, because
+those bytes are mostly zeros and repeated names, which is exactly what a
+compressor eats for free. So:
+
+- **Compress the vector sections.** 1.97× measured — half the vector half
+  of the package, for no format change at all. Either store them deflated
+  behind a section flag, or store the tiles pre-compressed and serve
+  `Content-Encoding: br`, which the hosting step below does.
+- **Do not redesign the feature header for size.** There is a case for it
+  — fewer bytes to parse is less decode time and less memory per tile —
+  but it is a speed argument, not a size one, and it should be made with
+  frame timings rather than with this table.
+
+### The two levers that actually move a planet
+
+1. **Terrain depth, against the DEM's real resolution.** Terrain z0–12 is
+   about 214 GB. From GEBCO — 15 arc-seconds, about 460 m — everything
+   below z8 is interpolation the renderer does for free, and z0–8 is about
+   **1 GB**. `terrain_metres` in the plan sets this; the planet plan
+   declares 460 and gets z8. Deepen it only where a finer DEM covers the
+   ground.
+2. **Vector depth.** Each level has four times the tiles of the one above,
+   so the deepest level is roughly three quarters of the whole pyramid.
+   z14 → z13 is about four times smaller. This plan stops at z14 because
+   below it a street is drawn larger rather than described better.
 
 ## Steps
 

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- The terrain cap follows the DEM, not a constant. `terrain_cap_for_metres`
+  gives the deepest level a source of a given ground resolution has anything
+  new to say at, and a build plan declares its own with `terrain_metres`.
+  Copernicus GLO-30 is 30 m and still gives z12; GEBCO's global grid is about
+  460 m and gives z8. For a planet built from GEBCO that is the difference
+  between roughly 214 GB of terrain and roughly 1 GB — four levels that would
+  have been interpolation the renderer already does for nothing.
+- PLANET.md now says where a package's bytes actually go, measured by parsing
+  all 778,329 features of the committed carve: geometry 49.6%, names 15.2%,
+  feature ids 14.1%, building fields 10.5% (on 8,087 buildings out of 778,329
+  features), the rest small fixed fields. And it says what that is worth:
+  making the empty fields optional and adding a per-section name table saves
+  21% raw but only 5% after deflate, because zeros and repeated names are
+  exactly what a compressor eats for free. Compress the sections; do not
+  redesign the header for size.
+
 - The spool writes deflated blocks. Its records are repetitive by nature —
   the same street name on every part of a road, coordinates differing in
   their low bits — and on a city's worth of streets they compress about five

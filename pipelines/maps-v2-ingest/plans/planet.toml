@@ -9,6 +9,17 @@
 # a hundred gigabytes of source, and the two numbers that decide whether
 # it fits are in there.
 
+# GEBCO's global grid is 15 arc-seconds — about 460 m on the ground. The
+# deepest level worth giving a raster of its own follows from that: below
+# it every raster is an interpolation of the one above, which the renderer
+# does at draw time for nothing. Left at the 30 m default this plan would
+# write four levels of interpolation and spend roughly two hundred
+# gigabytes saying nothing.
+#
+# Raise this only with a finer DEM under it — Copernicus GLO-30 is 30, a
+# national LiDAR DTM is 1 — and then only for the ground that DEM covers.
+terrain_metres = 460.0
+
 # --- The world, generalised. Coastlines, borders, the roads that show at
 # --- continental zoom, and the places worth a label there.
 [[layer]]

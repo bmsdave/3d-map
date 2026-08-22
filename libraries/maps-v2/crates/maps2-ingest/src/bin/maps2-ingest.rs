@@ -2,7 +2,8 @@ use std::{collections::BTreeMap, env, fs, fs::File, path::{Path, PathBuf}, proce
 
 use maps2_ingest::{
     DemGrid, LayerClaim, PreparedFeature, SourceDescriptor, SourceKind, SourceLayer, build_tiles,
-    build_tiles_spooled, build_tiles_with_terrains, claimed_levels, conflate, SpoolError,
+    build_tiles_spooled, build_tiles_with_terrains, claimed_levels, conflate,
+    terrain_cap_for_metres, SpoolError, TERRAIN_MAX_Z,
     load_copernicus_dem, load_gebco_quadrant_decimated, load_gebco_window, read_descriptor,
     resolve_boundary_lines, resolve_major_roads, resolve_osm_pbf, resolve_place_labels,
     resolve_water_polygons, scan_osm_pbf, stitch_world_quadrants, validate_source,
@@ -1204,36 +1205,44 @@ adapter_version = "osm-v1""#,
         assert!(done.restored().is_none(), "a path that does not parse is not a digest");
     }
 
+    /// A few named roads long enough to cross tile boundaries, which is
+    /// what makes a package out of more than one file.
+    fn roads_over_several_tiles() -> Vec<maps2_ingest::PreparedFeature> {
+        [(10_u64, -0.1278_f64, 51.5074_f64), (11, -0.1180, 51.5100), (12, 0.0021, 51.4769)]
+            .into_iter()
+            .flat_map(|(id, lon, lat)| {
+                maps2_ingest::prepare_features(
+                    id,
+                    &[("highway", "primary"), ("name", "Long Road")],
+                    &[
+                        maps2_units::Lonlat { lon, lat },
+                        maps2_units::Lonlat { lon: lon + 0.02, lat: lat + 0.01 },
+                    ],
+                    12,
+                )
+            })
+            .collect()
+    }
+
     /// Writing a level tile by tile has to leave the same package behind
     /// as building every tile first and writing them after — the same
     /// files, the same bytes, the same digests. This is the composition
     /// `write_conflated_level` performs, checked without a build plan.
     #[test]
     fn a_spooled_level_writes_the_same_package_as_an_in_memory_one() {
-        let features: Vec<maps2_ingest::PreparedFeature> = [
-            (10_u64, -0.1278_f64, 51.5074_f64),
-            (11, -0.1180, 51.5100),
-            (12, 0.0021, 51.4769),
-        ]
-        .into_iter()
-        .flat_map(|(id, lon, lat)| {
-            maps2_ingest::prepare_features(
-                id,
-                &[("highway", "primary"), ("name", "Long Road")],
-                &[
-                    maps2_units::Lonlat { lon, lat },
-                    maps2_units::Lonlat { lon: lon + 0.02, lat: lat + 0.01 },
-                ],
-                12,
-            )
-        })
-        .collect();
+        let features = roads_over_several_tiles();
         assert!(features.len() > 2, "the fixture spreads over tiles");
 
         let spooled = tempfile::tempdir().expect("spooled output");
         let mut spooled_digests = Vec::new();
-        let heights = write_spooled_tiles(spooled.path(), features.clone(), &[], &mut spooled_digests)
-            .expect("spooled build");
+        let heights = write_spooled_tiles(
+            spooled.path(),
+            features.clone(),
+            &[],
+            maps2_ingest::TERRAIN_MAX_Z,
+            &mut spooled_digests,
+        )
+        .expect("spooled build");
         assert_eq!(heights, 0, "no terrain grids, so no terrain tiles");
 
         let direct = tempfile::tempdir().expect("in-memory output");
@@ -1345,6 +1354,17 @@ struct PlanTerrain {
 
 #[derive(Debug, Deserialize)]
 struct BuildPlan {
+    /// Ground resolution of the DEM this plan builds from, in metres.
+    ///
+    /// The deepest level that gets a raster of its own follows from it:
+    /// below that the rasters are interpolations of the one above, which
+    /// the renderer does at draw time for nothing. Copernicus GLO-30 is
+    /// 30 and gives z12; GEBCO's 15 arc-second grid is about 460 and
+    /// gives z9, which for a planet is the difference between three
+    /// gigabytes of terrain and two hundred.
+    ///
+    /// Absent, the default cap stands.
+    terrain_metres: Option<f64>,
     #[serde(default)]
     layer: Vec<PlanLayer>,
     #[serde(default)]
@@ -1397,6 +1417,7 @@ fn build_map(plan_path: &str, output: &str) -> Result<(), String> {
     if let Ok(world) = stitch_world_quadrants(&grids) {
         grids.push(world);
     }
+    let terrain_max_z = plan.terrain_metres.map_or(TERRAIN_MAX_Z, terrain_cap_for_metres);
     let levels = claimed_levels(&layers.iter().map(|l| l.claim).collect::<Vec<_>>());
     if levels.is_empty() {
         return Err("a build plan needs at least one layer".to_string());
@@ -1405,8 +1426,10 @@ fn build_map(plan_path: &str, output: &str) -> Result<(), String> {
     let output = Path::new(output);
     let mut totals = MapBuildTotals::default();
     let mut digests = Vec::new();
+    println!("{{\"terrain_max_level\":{terrain_max_z}}}");
+    let sources = LevelSources { layers: &layers, grids: &grids, terrain_max_z };
     for level in &levels {
-        build_or_resume_level(*level, &layers, &grids, output, &mut totals, &mut digests)?;
+        build_or_resume_level(*level, &sources, output, &mut totals, &mut digests)?;
     }
     let (feature_count, height_tile_count) = (totals.features, totals.height_tiles);
     let (covered, matched) = (totals.covered, totals.matched);
@@ -1421,6 +1444,15 @@ fn build_map(plan_path: &str, output: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Everything a level is built from: the layers, the terrain, and how
+/// deep that terrain is worth writing. Travels together because it is the
+/// same for every level of a build and is only ever read.
+struct LevelSources<'a> {
+    layers: &'a [LoadedLayer],
+    grids: &'a [DemGrid],
+    terrain_max_z: u8,
+}
+
 /// Builds one level, or takes it from what a previous run left behind.
 ///
 /// A planet is measured in machine-days, and a run that dies at hour nine
@@ -1428,8 +1460,7 @@ fn build_map(plan_path: &str, output: &str) -> Result<(), String> {
 /// what it built; a level that did not wrote nothing and is built again.
 fn build_or_resume_level(
     level: u8,
-    layers: &[LoadedLayer],
-    grids: &[DemGrid],
+    sources: &LevelSources<'_>,
     output: &Path,
     totals: &mut MapBuildTotals,
     digests: &mut Vec<TileDigest>,
@@ -1443,7 +1474,7 @@ fn build_or_resume_level(
         return Ok(());
     }
     let before = (totals.features, totals.height_tiles, digests.len());
-    write_conflated_level(level, layers, grids, output, totals, digests)?;
+    write_conflated_level(level, sources, output, totals, digests)?;
     record_level(
         output,
         level,
@@ -1544,23 +1575,23 @@ impl MapBuildTotals {
 /// tiles that come out.
 fn write_conflated_level(
     level: u8,
-    layers: &[LoadedLayer],
-    grids: &[DemGrid],
+    sources: &LevelSources<'_>,
     output: &Path,
     totals: &mut MapBuildTotals,
     digests: &mut Vec<TileDigest>,
 ) -> Result<(), String> {
-    let mut sources = Vec::new();
-    for layer in layers {
-        sources.push(SourceLayer { claim: layer.claim, features: layer.resolve(level)? });
+    let mut layers = Vec::new();
+    for layer in sources.layers {
+        layers.push(SourceLayer { claim: layer.claim, features: layer.resolve(level)? });
     }
-    let (features, report) = conflate(level, sources);
+    let (features, report) = conflate(level, layers);
     totals.covered += report.covered;
     totals.matched += report.matched;
     totals.features += features.len();
 
-    totals.height_tiles += write_spooled_tiles(output, features, grids, digests)
-        .map_err(|error| format!("cannot build level {level}: {error}"))?;
+    totals.height_tiles +=
+        write_spooled_tiles(output, features, sources.grids, sources.terrain_max_z, digests)
+            .map_err(|error| format!("cannot build level {level}: {error}"))?;
     Ok(())
 }
 
@@ -1577,6 +1608,7 @@ fn write_spooled_tiles(
     output: &Path,
     features: Vec<maps2_ingest::PreparedFeature>,
     grids: &[DemGrid],
+    terrain_max_z: u8,
     digests: &mut Vec<TileDigest>,
 ) -> Result<usize, String> {
     let scratch = output.join(".spool");
@@ -1584,6 +1616,7 @@ fn write_spooled_tiles(
     let build = build_tiles_spooled(
         features,
         grids,
+        terrain_max_z,
         &scratch,
         SPOOL_SHARDS,
         |tile, bytes| -> Result<(), SpoolError> {

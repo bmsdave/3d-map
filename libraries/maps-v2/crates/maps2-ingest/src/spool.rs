@@ -144,6 +144,7 @@ impl FeatureSpool {
     pub fn drain<E>(
         mut self,
         terrain: &[DemGrid],
+        terrain_max_z: u8,
         mut sink: impl FnMut(TileId, Vec<u8>) -> Result<(), E>,
     ) -> Result<(), SpoolError>
     where
@@ -163,7 +164,7 @@ impl FeatureSpool {
             shard.flush()?;
             let file = shard.get_mut();
             file.seek(SeekFrom::Start(0))?;
-            drain_shard(&read_shard(file)?, terrain, threads, &mut sink)?;
+            drain_shard(&read_shard(file)?, terrain, terrain_max_z, threads, &mut sink)?;
         }
         Ok(())
     }
@@ -193,6 +194,7 @@ const SPOOL_LEVEL: u8 = 1;
 fn drain_shard<E>(
     grouped: &HashMap<TileId, Vec<PreparedFeature>>,
     terrain: &[DemGrid],
+    terrain_max_z: u8,
     threads: usize,
     sink: &mut impl FnMut(TileId, Vec<u8>) -> Result<(), E>,
 ) -> Result<(), SpoolError>
@@ -202,7 +204,7 @@ where
     let mut ids: Vec<TileId> = grouped.keys().copied().collect();
     ids.sort_by_key(|id| (id.z, id.x, id.y));
     for batch in ids.chunks(BATCH_TILES) {
-        for (id, bytes) in build_batch(batch, grouped, terrain, threads)? {
+        for (id, bytes) in build_batch(batch, grouped, terrain, terrain_max_z, threads)? {
             sink(id, bytes)?;
         }
     }
@@ -230,11 +232,12 @@ fn build_batch(
     batch: &[TileId],
     grouped: &HashMap<TileId, Vec<PreparedFeature>>,
     terrain: &[DemGrid],
+    terrain_max_z: u8,
     threads: usize,
 ) -> Result<Vec<(TileId, Vec<u8>)>, SpoolError> {
     let one = |id: &TileId| -> Result<(TileId, Vec<u8>), SpoolError> {
         let features: Vec<&PreparedFeature> = grouped[id].iter().collect();
-        Ok(build_tile(*id, &features, terrain)?)
+        Ok(build_tile(*id, &features, terrain, terrain_max_z)?)
     };
     if threads <= 1 || batch.len() <= 1 {
         return batch.iter().map(one).collect();
@@ -577,6 +580,7 @@ mod tests {
         crate::build_tiles_spooled(
             prepared.iter().cloned(),
             &[],
+            crate::TERRAIN_MAX_Z,
             dir,
             shards,
             |id, bytes| -> Result<(), SpoolError> {
@@ -601,10 +605,10 @@ mod tests {
         let mut ids: Vec<TileId> = grouped.keys().copied().collect();
         ids.sort_by_key(|id| (id.z, id.x, id.y));
 
-        let alone = build_batch(&ids, &grouped, &[], 1).expect("single-threaded");
+        let alone = build_batch(&ids, &grouped, &[], crate::TERRAIN_MAX_Z, 1).expect("single-threaded");
         for threads in [2, 3, 8, 64] {
             assert_eq!(
-                build_batch(&ids, &grouped, &[], threads).expect("threaded"),
+                build_batch(&ids, &grouped, &[], crate::TERRAIN_MAX_Z, threads).expect("threaded"),
                 alone,
                 "with {threads} threads",
             );

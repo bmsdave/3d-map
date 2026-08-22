@@ -893,10 +893,10 @@ fn cell_index(offset: f64, span: f64, cells: u32) -> usize {
     usize::try_from(index).unwrap_or_default()
 }
 
-/// The deepest level worth giving a raster of its own.
+/// The deepest level worth giving a raster of its own, for a 30 m DEM.
 ///
 /// Copernicus GLO-30 samples the ground every 30 m. A z12 tile's raster
-/// samples every 38 m, so z12 is where the source is fully spent; a z13
+/// samples every 38 m, so z12 is where that source is fully spent; a z13
 /// tile would resample the same numbers at 19 m and a z16 tile at 2.4 m.
 /// Those tiles are not more detail, they are the same detail written out
 /// sixteen times per axis — and each costs another 128 KiB before
@@ -904,10 +904,52 @@ fn cell_index(offset: f64, span: f64, cells: u32) -> usize {
 /// has a raster (see `maps2_render::height_source`), which is the same
 /// surface at the resolution the DEM actually has.
 ///
-/// Raising this is a data decision, not a rendering one: it only makes
-/// sense with a DEM finer than 30 m under it, such as a national `LiDAR`
-/// DTM.
+/// **This is the default, not the rule.** The right cap is a property of
+/// the DEM underneath, so a build plan sets its own — see
+/// [`terrain_cap_for_metres`]. GEBCO's global grid is 15 arc-seconds,
+/// about 460 m, which is spent at z9; capping a GEBCO planet at 12 would
+/// write three levels of interpolation and cost two hundred gigabytes to
+/// say nothing.
 pub const TERRAIN_MAX_Z: u8 = 12;
+
+/// The deepest level a DEM of this ground resolution has anything new to
+/// say at.
+///
+/// A tile's raster is 255 samples across whatever ground the tile covers,
+/// so the level where the two meet is where the source is spent. Below it
+/// every raster is an interpolation of the one above, which the renderer
+/// can do for free at draw time.
+///
+/// | source | metres | cap |
+/// |---|---|---|
+/// | national `LiDAR` DTM | 1 | 17 |
+/// | Copernicus GLO-30 | 30 | 12 |
+/// | GEBCO 15 arc-second | 460 | 8 |
+///
+/// The rule is the last level whose samples are still no finer than the
+/// source, which is what makes 30 m give the 12 this crate has always
+/// used. Half a level of caution is built in by that choice: a z12 raster
+/// samples every 38 m against a 30 m source, and the alternative
+/// convention — the first level finer than the source — would say 13.
+#[must_use]
+pub fn terrain_cap_for_metres(metres: f64) -> u8 {
+    if !metres.is_finite() || metres <= 0.0 {
+        return TERRAIN_MAX_Z;
+    }
+    // Ground covered by one raster sample at level z is
+    // EARTH_CIRCUMFERENCE / 2^z / 255. The cap is the largest z where that
+    // is still no finer than the source.
+    let samples = f64::from(u32::try_from(HEIGHTS_SIDE - 1).unwrap_or(255));
+    let mut cap = 0_u8;
+    for level in 0..=22_u8 {
+        let sample_metres =
+            maps2_units::EARTH_CIRCUMFERENCE_METRES / f64::from(1_u32 << level) / samples;
+        if sample_metres >= metres {
+            cap = level;
+        }
+    }
+    cap
+}
 
 /// Samples a DEM on the edge-aligned grid defined by an MT2 height section.
 #[must_use]
@@ -1679,6 +1721,7 @@ pub fn build_tiles_with_terrains(
 pub fn build_tiles_spooled<E>(
     features: impl IntoIterator<Item = PreparedFeature>,
     terrain: &[DemGrid],
+    terrain_max_z: u8,
     dir: &std::path::Path,
     shards: usize,
     sink: impl FnMut(TileId, Vec<u8>) -> Result<(), E>,
@@ -1691,7 +1734,7 @@ where
         spool.push(&feature)?;
     }
     let count = spool.features();
-    spool.drain(terrain, sink)?;
+    spool.drain(terrain, terrain_max_z, sink)?;
     Ok(count)
 }
 
@@ -1705,13 +1748,14 @@ fn build_tiles_inner(
     }
     let mut ids = grouped.keys().copied().collect::<Vec<_>>();
     ids.sort_by_key(|id| (id.z, id.x, id.y));
-    ids.into_iter().map(|id| build_tile(id, &grouped[&id], terrain)).collect()
+    ids.into_iter().map(|id| build_tile(id, &grouped[&id], terrain, TERRAIN_MAX_Z)).collect()
 }
 
 pub(crate) fn build_tile(
     id: TileId,
     features: &[&PreparedFeature],
     terrain: &[DemGrid],
+    terrain_max_z: u8,
 ) -> Result<(TileId, Vec<u8>), TileError> {
     let mut features = features.to_vec();
     features.sort_by_key(|feature| (feature.class.code(), feature.feature.id));
@@ -1723,7 +1767,7 @@ pub(crate) fn build_tile(
     // it looks like, and a pyramid of them is most of what a world package
     // weighs. `maps2-tile` keeps reading the plain section, so every
     // package built before this one still loads.
-    if id.z <= TERRAIN_MAX_Z
+    if id.z <= terrain_max_z
         && let Some(grid) = terrain.iter().find(|grid| grid.covers_tile(id))
     {
         builder.push_raster(CLASS_HEIGHTS_PACKED, pack(&height_raster_for_tile(grid, id))?);
@@ -2536,6 +2580,24 @@ adapter_version = "osm-v1""#,
 
         let packed = tile.raster(CLASS_HEIGHTS_PACKED).expect("packed heights");
         assert_eq!(unpack(packed).expect("unpacks").len(), HEIGHTS_BYTES);
+    }
+
+    /// The cap follows from the DEM's own resolution, because that is the
+    /// only thing that decides where a raster stops saying something new.
+    #[test]
+    fn the_cap_is_the_level_where_the_source_runs_out() {
+        // Copernicus GLO-30, which is where the default comes from.
+        assert_eq!(terrain_cap_for_metres(30.0), TERRAIN_MAX_Z);
+        // GEBCO's 15 arc-second grid, by the same rule: four levels
+        // shallower, which on a planet is the difference between about a
+        // gigabyte of terrain and two hundred.
+        assert_eq!(terrain_cap_for_metres(460.0), 8);
+        // A metre of national LiDAR reaches deeper than tiles usefully go.
+        assert!(terrain_cap_for_metres(1.0) > 16);
+        // Nonsense in, the default out — never a panic, never zero.
+        assert_eq!(terrain_cap_for_metres(0.0), TERRAIN_MAX_Z);
+        assert_eq!(terrain_cap_for_metres(-5.0), TERRAIN_MAX_Z);
+        assert_eq!(terrain_cap_for_metres(f64::NAN), TERRAIN_MAX_Z);
     }
 
     /// Below the cap the DEM has nothing left to say, so the tile says
