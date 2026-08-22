@@ -1223,22 +1223,159 @@ fn simplify_road(points: Vec<GridPoint>, class: Class, level: u8) -> Vec<GridPoi
 /// only that one ring's own neighbours, so two rings that shared an
 /// edge in the source data can each keep a different subset of it and
 /// pull apart — a visible sliver gap between "adjacent" ocean pieces.
-/// The source is already simplified for exactly this zoom range, so
-/// skipping the extra pass here keeps a shared edge byte-identical
-/// between neighbours instead of guessing badly at fixing it per ring.
 ///
 /// This has to cover every level the world package is cut at, not just
 /// the shallow ones: raising that package from z5 to z7 immediately put
 /// pale wedges back over the North Sea and the Channel, because z6 and
 /// z7 had fallen back through to the simplifying path.
+///
+/// Up to here, water is snapped rather than thinned — see [`snap_ring`].
+/// Simply not simplifying, which is what this range used to mean, left a
+/// z1 tile carrying 856,000 coastline vertices for a quarter of the
+/// planet drawn a few hundred pixels wide; triangulating them cost the
+/// browser 780 ms in one call.
 const WATER_TOPOLOGY_SAFE_MAX_LEVEL: u8 = 7;
+
+/// The lattice low-zoom water is snapped to, as a fraction of a tile.
+///
+/// A tile is drawn at roughly the same pixel size whatever its level, so
+/// a step in tile fractions is a step in pixels: 1/1024 is half a pixel
+/// on a 512-pixel tile, at z1 and at z7 alike. One constant does what
+/// `generalisation_tolerance` needs a per-level formula for, and each
+/// level keeps exactly the detail it can show — at z1 whole runs of
+/// coastline land in one pixel and collapse, at z7 there is almost
+/// nothing to drop.
+///
+/// A power of two, so a point already on a tile edge snaps to itself
+/// exactly and `on_tile_edge`'s guarantee survives the arithmetic.
+const WATER_SNAP_STEP: f64 = 1.0 / 1024.0;
+
+/// Simplification that cannot open a sliver.
+///
+/// Douglas-Peucker decides which of a ring's points survive by looking at
+/// that ring's own neighbours, so two polygons that shared an edge in the
+/// source each keep a different subset of it and pull apart. Snapping asks
+/// only where the point is: the same position lands on the same lattice
+/// point whichever ring is asking, so an edge that was shared stays shared.
+///
+/// The pipeline already snaps — `tile_coord` quantises to the tile's
+/// 65535-step grid and `prepared_part` dedups the result. This is that
+/// same step on a lattice coarse enough to matter at low zoom.
+///
+/// Returns nothing when nothing survives. An island smaller than the
+/// lattice is smaller than a pixel, and drawing it was never the
+/// difference between a right frame and a wrong one.
+/// Snaps to the coarsest lattice this ring survives.
+///
+/// A ring that folds at half a pixel often sits happily at an eighth of
+/// one, and an eighth of a pixel is still eight times less geometry than
+/// none at all. Trying coarse first and stepping down costs a few passes
+/// over a ring at build time and saves the browser the difference on
+/// every load, for ever.
+fn snap_ring(points: Vec<GridPoint>, step: f64) -> Vec<GridPoint> {
+    let mut step = step;
+    for _ in 0..SNAP_ATTEMPTS {
+        match snap_ring_once(points.clone(), step) {
+            Snapped::Ok(ring) => return ring,
+            Snapped::Dropped => return Vec::new(),
+            Snapped::Damaged => step /= 2.0,
+        }
+    }
+    points
+}
+
+/// How many times to halve the lattice before leaving a ring alone.
+/// Four takes half a pixel down to a sixteenth, which is finer than the
+/// tile grid can express at the levels this runs at — past there the
+/// answer is genuinely "do not touch it".
+const SNAP_ATTEMPTS: u32 = 4;
+
+enum Snapped {
+    Ok(Vec<GridPoint>),
+    /// Nothing of the ring was left; it is smaller than the lattice.
+    Dropped,
+    /// Snapping folded the ring onto itself at this lattice.
+    Damaged,
+}
+
+fn snap_ring_once(points: Vec<GridPoint>, step: f64) -> Snapped {
+    let snapped = points.into_iter()
+        .map(|point| GridPoint { x: snap(point.x, step), y: snap(point.y, step) })
+        .collect::<Vec<_>>();
+    let mut ring = fold_out(snapped);
+    // The fold can meet itself around the seam, where the pass above
+    // never compares the two ends. Rotating is not worth it: closing the
+    // loop by hand converges in a step or two.
+    while ring.len() >= 3 {
+        let last = ring.len() - 1;
+        if ring[0] == ring[last] {
+            ring.pop();
+        } else if ring[1] == ring[last] {
+            ring.remove(0);
+        } else if ring[0] == ring[last - 1] {
+            ring.pop();
+        } else {
+            break;
+        }
+    }
+    if ring.len() < 3 {
+        return Snapped::Dropped;
+    }
+    // Snapping is only allowed to make a ring smaller, never stranger.
+    // Where it has folded the outline back onto a point it already
+    // visited, the result encloses its own boundary, and no amount of
+    // unwinding turns that back into a polygon. `earcutr` handed one of
+    // those as a hole does not fail — it does not return.
+    if revisits_a_point(&ring) { Snapped::Damaged } else { Snapped::Ok(ring) }
+}
+
+/// Whether a ring returns to a point it has already been to. After
+/// snapping this is the tell-tale of a collapsed shape, and it is what
+/// `earcutr` cannot bridge a hole through.
+fn revisits_a_point(ring: &[GridPoint]) -> bool {
+    let mut seen = HashSet::with_capacity(ring.len());
+    !ring.iter().all(|point| seen.insert((point.x.to_bits(), point.y.to_bits())))
+}
+
+/// Removes the creases snapping leaves behind.
+///
+/// A bay narrower than the lattice folds onto a line, and what is left
+/// is a path that walks out along itself and straight back — a run like
+/// `a, b, a, b, a`. It has no area to draw, and `earcutr` given a *hole*
+/// shaped like that does not fail, it does not terminate: bridging a
+/// hole into an outer ring assumes the hole encloses something. One
+/// z1 tile's worth of these was enough to hang a release build for
+/// minutes where the whole tile should cost single-digit milliseconds.
+///
+/// The stack does both jobs at once: a point equal to the one before it
+/// is a duplicate and is dropped, and a point equal to the one two back
+/// means the path just doubled back, so the step out is unwound.
+fn fold_out(points: Vec<GridPoint>) -> Vec<GridPoint> {
+    let mut out: Vec<GridPoint> = Vec::with_capacity(points.len());
+    for point in points {
+        if out.last() == Some(&point) {
+            continue;
+        }
+        if out.len() >= 2 && out[out.len() - 2] == point {
+            out.pop();
+            continue;
+        }
+        out.push(point);
+    }
+    out
+}
+
+fn snap(value: f64, step: f64) -> f64 {
+    (value / step).round() * step
+}
 
 fn simplify_area_ring(
     points: Vec<GridPoint>, class: Class, level: u8, tile: TileId,
 ) -> Vec<GridPoint> {
-    let water_would_split_at_a_shared_edge =
-        class == Class::Water && level <= WATER_TOPOLOGY_SAFE_MAX_LEVEL;
-    if class == Class::Building || water_would_split_at_a_shared_edge || level >= 16 || points.len() < 4 {
+    if class == Class::Water && level <= WATER_TOPOLOGY_SAFE_MAX_LEVEL {
+        return snap_ring(points, WATER_SNAP_STEP);
+    }
+    if class == Class::Building || level >= 16 || points.len() < 4 {
         return points;
     }
     let tolerance = generalisation_tolerance(level);
@@ -1583,14 +1720,132 @@ mod tests {
         ]
     }
 
+    /// The property the old bypass existed to protect, stated directly.
+    ///
+    /// Two grid-split ocean pieces share a cut edge. Douglas-Peucker chose
+    /// which of that edge's points to keep from each ring's own
+    /// neighbours, so the two rings kept different subsets and pulled
+    /// apart into a pale wedge. Snapping asks only where a point is, so
+    /// whatever the two rings did with the rest of their outlines, the
+    /// edge they share comes out of it identical.
     #[test]
-    fn a_world_zoom_water_ring_keeps_every_point_even_a_collinear_run() {
+    fn two_water_rings_sharing_an_edge_still_share_every_point_of_it() {
         let tile = TileId { z: 3, x: 4, y: 4 };
-        let points = ring_with_a_collinear_edge();
+        // The shared cut: a run of collinear points down x = 4.5, which is
+        // exactly the run a thinning pass would disagree about.
+        let cut = [
+            GridPoint { x: 4.5, y: 4.2 },
+            GridPoint { x: 4.5, y: 4.4 },
+            GridPoint { x: 4.5, y: 4.6 },
+            GridPoint { x: 4.5, y: 4.8 },
+        ];
+        let mut west = vec![GridPoint { x: 4.1, y: 4.2 }];
+        west.extend_from_slice(&cut);
+        west.push(GridPoint { x: 4.1, y: 4.8 });
+        // The east piece walks the same cut the other way round, and its
+        // wrap falls in a different place — the asymmetry that used to
+        // make the two disagree.
+        let mut east = vec![GridPoint { x: 4.9, y: 4.2 }, GridPoint { x: 4.9, y: 4.8 }];
+        east.extend(cut.iter().rev().copied());
 
-        let kept = simplify_area_ring(points.clone(), Class::Water, 3, tile);
+        let west_kept = simplify_area_ring(west, Class::Water, 3, tile);
+        let east_kept = simplify_area_ring(east, Class::Water, 3, tile);
 
-        assert_eq!(kept, points, "a world-package water ring must not be thinned at all");
+        let on_cut = |ring: &[GridPoint]| {
+            let mut ys = ring.iter()
+                .filter(|point| (point.x - snap(4.5, WATER_SNAP_STEP)).abs() < f64::EPSILON)
+                .map(|point| point.y)
+                .collect::<Vec<_>>();
+            ys.sort_by(f64::total_cmp);
+            ys
+        };
+        assert_eq!(
+            on_cut(&west_kept), on_cut(&east_kept),
+            "both pieces must keep the same points along the edge they share",
+        );
+        assert_eq!(on_cut(&west_kept).len(), cut.len(), "and must keep all of them");
+    }
+
+    #[test]
+    fn water_finer_than_the_lattice_collapses_and_coarser_water_survives() {
+        let tile = TileId { z: 1, x: 0, y: 0 };
+        let step = WATER_SNAP_STEP;
+        // Eight points spread over a quarter of one lattice cell: every
+        // one of them lands on the same pixel, so one of them is the
+        // honest answer.
+        let hair = (0..8).map(|i| GridPoint { x: 0.25 + f64::from(i) * step / 32.0, y: 0.25 })
+            .chain([GridPoint { x: 0.25, y: 0.9 }, GridPoint { x: 0.9, y: 0.9 }])
+            .collect::<Vec<_>>();
+        let coarse = (0..8).map(|i| GridPoint { x: 0.25 + f64::from(i) * step * 4.0, y: 0.25 })
+            .chain([GridPoint { x: 0.25, y: 0.9 }, GridPoint { x: 0.9, y: 0.9 }])
+            .collect::<Vec<_>>();
+
+        let thinned = simplify_area_ring(hair.clone(), Class::Water, 1, tile);
+        let kept = simplify_area_ring(coarse.clone(), Class::Water, 1, tile);
+
+        assert_eq!(thinned.len(), 3, "a sub-pixel run of coastline is one point, plus the ring's other two");
+        assert_eq!(kept.len(), coarse.len(), "points a lattice cell apart are all still worth keeping");
+    }
+
+    /// The real ring that hung a release build, in the coordinates it
+    /// had when it did. A bay narrower than the lattice folded onto a
+    /// line and the ring walked out and back along itself; earcutr,
+    /// handed that as a hole, never returned.
+    #[test]
+    fn a_ring_that_snapping_folds_onto_itself_is_not_emitted() {
+        let step = WATER_SNAP_STEP;
+        let at = |x: f64, y: f64| GridPoint { x: x * step, y: y * step };
+        // (…, a, b, a, b, a, …) — the fold, verbatim in lattice steps.
+        let folded = vec![
+            at(1019.0, 688.0), at(1018.0, 688.0), at(1019.0, 688.0),
+            at(1018.0, 688.0), at(1019.0, 688.0), at(1018.0, 688.0),
+        ];
+
+        let kept = snap_ring(folded, step);
+
+        assert!(kept.is_empty(), "a ring with no width left is not a ring: {kept:?}");
+    }
+
+    #[test]
+    fn folding_keeps_the_part_of_a_ring_that_still_encloses_something() {
+        let step = WATER_SNAP_STEP;
+        let at = |x: f64, y: f64| GridPoint { x: x * step, y: y * step };
+        // A real square with a hair growing off one corner.
+        let with_a_hair = vec![
+            at(100.0, 100.0), at(104.0, 100.0), at(104.0, 104.0),
+            at(100.0, 104.0), at(100.0, 108.0), at(100.0, 104.0),
+        ];
+
+        let kept = snap_ring(with_a_hair, step);
+
+        assert_eq!(kept.len(), 4, "the square survives, the hair does not: {kept:?}");
+    }
+
+    #[test]
+    fn a_water_ring_smaller_than_the_lattice_is_dropped_entirely() {
+        let tile = TileId { z: 1, x: 0, y: 0 };
+        let speck = vec![
+            GridPoint { x: 0.5, y: 0.5 },
+            GridPoint { x: 0.5 + WATER_SNAP_STEP / 8.0, y: 0.5 },
+            GridPoint { x: 0.5, y: 0.5 + WATER_SNAP_STEP / 8.0 },
+        ];
+
+        let kept = simplify_area_ring(speck, Class::Water, 1, tile);
+
+        assert!(kept.is_empty(), "an island smaller than a pixel is not drawn, it is dropped");
+    }
+
+    #[test]
+    fn snapping_lands_a_tile_edge_on_itself_exactly() {
+        // `on_tile_edge` compares against integer tile bounds with
+        // `f64::EPSILON`, so the lattice has to be a power of two or a
+        // point on the seam would drift off it and re-open the gap
+        // between two tiles instead of between two rings.
+        // Bit equality, not a tolerance: the claim is that the value is
+        // unchanged, and a tolerance would pass even if it were not.
+        for edge in [0.0_f64, 1.0, 4.0, 4096.0] {
+            assert_eq!(snap(edge, WATER_SNAP_STEP).to_bits(), edge.to_bits(), "tile edge {edge} moved");
+        }
     }
 
     #[test]

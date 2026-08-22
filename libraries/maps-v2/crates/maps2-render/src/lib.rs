@@ -36,7 +36,13 @@ pub use triangulate::{ring_area, triangles_area, triangulate, triangulate_with_h
 
 /// Fill draw order, bottom to top. Roads are not fills — they get
 /// their own bucket and passes at stage 4.
-pub const FILL_ORDER: [Class; 4] = [Class::Land, Class::Water, Class::Park, Class::Building];
+///
+/// Buildings are not fills either, and used to be listed here anyway:
+/// every footprint was triangulated into this bucket, uploaded to the
+/// GPU, and then skipped at draw time because [`build_building_bucket`]
+/// had already drawn it in three dimensions. A building is described in
+/// one place now.
+pub const FILL_ORDER: [Class; 3] = [Class::Land, Class::Water, Class::Park];
 
 /// One vertex of the fill mesh, in tile grid coordinates. Colour is a
 /// per-range style lookup at draw time, not vertex data — repainting
@@ -188,7 +194,7 @@ mod tests {
         let order_of = |class| FILL_ORDER.iter().position(|c| *c == class).expect("in order");
         assert!(classes.windows(2).all(|w| order_of(w[0]) < order_of(w[1])));
         assert!(classes.contains(&Class::Land));
-        assert!(classes.contains(&Class::Building));
+        assert!(!classes.contains(&Class::Building), "buildings belong to the building bucket, not the fills");
 
         assert_eq!(bucket.indices.len() % 3, 0);
         let max = bucket.indices.iter().max().expect("indices");

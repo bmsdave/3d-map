@@ -105,6 +105,12 @@ pub struct GpuBuildingBucket {
 }
 
 impl GpuBuildingBucket {
+    /// Whether this tile drew any buildings at all — the band readout
+    /// asks, because a tile can be resident with nothing to show.
+    pub fn is_empty(&self) -> bool {
+        self.ranges.is_empty()
+    }
+
     pub fn upload(gl: &Gl, bucket: &BuildingBucket) -> Result<Self, JsValue> {
         let vertices = gl.create_buffer().ok_or("no building vertex buffer")?;
         gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&vertices));

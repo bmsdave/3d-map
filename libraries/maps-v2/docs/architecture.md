@@ -160,6 +160,12 @@ Reading a corrupted tile always yields `Err`, never a panic: `TooShort`, `BadMag
 
 **Conflation rules** (`src/conflate.rs`). `conflate(level, layers)` applies two rules in order, documented in the module doc: **coverage** — inside the bounds of an *active, strictly stronger* source at that level, a weaker source's features are dropped, which is what stops a world road network being drawn under a city's own; and **identity** — a place a stronger source already named is not named again by a weaker one even outside its bounds, which stops one city carrying two labels a kilometre apart (`crates/maps2-ingest/src/conflate.rs:1-15,82-90`). `PLACE_MATCH_METRES = 25_000.0` is the matching radius, deliberately generous because two sources can disagree by kilometres about where a city "is" — historic centre versus built-up-area centroid (`crates/maps2-ingest/src/conflate.rs:29-33`). Identity matching is asked only of point classes (`Class::Label`, `Class::Poi`, via `names_a_place`) — the doc explains why: "a road is a line whose two renderings share no vertex and often no midpoint, so matching it by position would be guesswork; coverage already settles roads, and pretending otherwise would drop real geometry on a coincidence" (`crates/maps2-ingest/src/conflate.rs:91-95,160-164`). Only *strictly* stronger layers count toward coverage and identity for a given precedence tier — peers of equal precedence describe different global things (coastline, borders, roads, places) and must not silence each other (`crates/maps2-ingest/src/conflate.rs:97-104`).
 
+**Simplification, and the one class that cannot use it.** Non-water areas and roads are thinned by Douglas-Peucker against `generalisation_tolerance(level)` (`crates/maps2-ingest/src/lib.rs`), which drops a point when it sits close enough to the line between its neighbours. Water below `WATER_TOPOLOGY_SAFE_MAX_LEVEL` (z7, the deepest level the world package is built at) cannot use that rule: the water dataset ships pre-split into a grid, so one tile carries several polygons that share a cut edge, and a rule that decides from a ring's own neighbours lets two rings keep different subsets of the edge they share and pull apart into a visible sliver.
+
+Water at those levels is **snapped** instead, by `snap_ring`. Snapping asks only where a point is, so the same position lands on the same lattice point whichever ring is asking and a shared edge survives shared. `WATER_SNAP_STEP` is `1/1024` of a tile — and because a tile is drawn at roughly the same pixel size at every zoom, that one level-independent constant is half a pixel at z1 and at z7 alike, where the Douglas-Peucker path needs a per-level formula.
+
+Snapping can fold a bay narrower than the lattice onto a line, leaving a ring that walks out along itself and back. `fold_out` unwinds those creases; if a ring still returns to a point it has already visited, snapping has made it stranger rather than smaller and the original is kept instead — a ring `earcutr` cannot bridge a hole through is one it does not finish triangulating at all.
+
 **Two opposite GEBCO readers**, and why both exist. `gebco.rs`'s `load_gebco_window` does a *bounded* read: it turns a wanted geographic extent into a pixel window and decodes only the TIFF chunks that window touches, so cost tracks the requested region, not the multi-gigabyte source file. `WINDOW_CELL_LIMIT = 4 * 1024 * 1024` (4 Mi cells, 16 MiB of `f32`) caps what this reader will ever materialise, so a caller that forgot to bound its request fails loudly instead of swapping (`crates/maps2-ingest/src/gebco.rs:1-18`). `world_terrain.rs`'s `load_gebco_quadrant_decimated` does the opposite on purpose: it decodes an *entire* 90°×90° quadrant and keeps every `stride`-th sample, discarding the full decode afterward. Its module doc explains the reasoning: a low-zoom world tile's terrain raster is a fixed 256×256 samples regardless of source resolution, and a world tile at z2–z5 is itself wider than any in-budget bounded window could cover, so the bounded reader is "the wrong tool here" — peak memory is one quadrant's native decode (about 1.9 GB for a 21600×21600 `f32` grid) for the duration of the decimation pass (`crates/maps2-ingest/src/world_terrain.rs:1-38`).
 
 ### What a package is
@@ -184,7 +190,13 @@ bug where one drag built nine plans per pointer event. The one thing genuinely
 rebuilt every frame is the glyph vertex buffer, because label placement is
 itself a per-frame decision.
 
-**Load time is where the cost concentrates**, and deliberately so: `load_tile`
+**Build time is where geometry cost is settled.** How much coastline a z1 tile
+carries is decided by the ingest, once, and no amount of care in the renderer
+recovers from getting it wrong — the same argument the pipeline already makes
+about conflation. A z1 tile that carried its source's full detail cost the
+browser 780 ms of triangulation per load, every load, on every client.
+
+**Load time is where the remaining cost concentrates**, and deliberately so: `load_tile`
 turns one tile's bytes into every mesh and label anchor it will ever need, in
 one synchronous call. That is the right trade for a map that then draws
 sixty times a second from what it built — but it means a single tile can hold
