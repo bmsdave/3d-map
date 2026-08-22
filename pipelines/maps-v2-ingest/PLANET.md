@@ -1,7 +1,7 @@
 # Building the planet
 
 A runbook for `plans/planet.toml`: the whole world, vector to z14, terrain
-to z12. It is machine-days of work against roughly a hundred gigabytes of
+to z12. It is machine-days of work against ninety-five gigabytes of
 source, so most of this document is about the decisions that make it fit
 rather than the commands, which are three.
 
@@ -25,21 +25,56 @@ and watch the disk.
 
 ## What it needs
 
-- **Disk: 1 TB free.** Source ~100 GB, output ~400 GB, spool scratch in
-  between. The spool writes every prepared feature to disk once per level.
-- **Memory: 32 GB is enough, 64 GB is comfortable.** The build holds one
-  shard's features and a batch of tiles, not the package — see
-  `maps2_ingest::spool`. What still scales with the package is the digest
-  list: about eighty bytes a tile, so ~1 GB at 10⁷ tiles.
-- **Cores: as many as you have.** Tiles are built in batches across
-  threads; triangulation and label shaping are the cost.
-- **Time: estimate 1–3 machine-days.** Not measured. The London carve is
-  minutes; the planet is four orders of magnitude more ground.
-- **Money: $20–100** of spot instance, or a week of a spare desktop.
+Sizes below are measured off this machine's cache unless marked estimate.
 
-Process the DEM **in the region the data lives in**. Copernicus GLO-30 is
-hundreds of gigabytes; pulling it across a domestic connection costs more
-than the compute does.
+**Source: ~95 GB, and already compressed.** There is no win waiting here:
+
+| | |
+|---|---|
+| `planet-latest.osm.pbf` | **88 GB** — protobuf with zlib-compressed blobs; this *is* the compressed form |
+| GEBCO quadrants | **7 GB** as GeoTIFF, from a 4.1 GB archive |
+| Natural Earth, water polygons | **~150 MB** |
+| Copernicus DEM | 30 MB per degree cell; global GLO-30 is **~1.5 TB**, which is why the plan does not ask for it |
+
+GEBCO's sub-ice topo grid covers land as well as sea floor, at 15 arc-sec —
+about 450 m. That is enough terrain for the levels the cap keeps (z0–z12
+sample the ground no finer than 38 m, and below z9 nothing finer than
+GEBCO is visible anyway). Copernicus is what you add for a *region* whose
+relief you want sharper; fetch those cells for the ground you care about
+rather than for the planet.
+
+**Disk: 600 GB free is enough, 1 TB is comfortable.**
+
+- Source ~95 GB, if it is not already sitting there.
+- Output **~250–400 GB (estimate)**. The weakest number in this document:
+  it comes from published planet pyramids at this depth plus the measured
+  packing ratio, not from a build.
+- Scratch **~0.3× of the level being built (measured)**. The spool writes
+  each level's features down and deletes them when that level is done, and
+  its records deflate about five to one, so this is tens of gigabytes
+  rather than hundreds. See `tests/spool_size.rs`.
+
+**Memory: 32 GB is enough, 64 GB is comfortable.** A build holds one
+shard's features and a batch of tiles, not the package. What still grows
+with the package is the digest list, about eighty bytes a tile — a
+gigabyte at 10⁷ tiles.
+
+**Cores: as many as you have.** Tiles are built in batches across threads;
+triangulation and label shaping are the cost.
+
+**Time: 1–3 machine-days (estimate).** Not measured. The London carve is
+minutes and the planet is four orders of magnitude more ground.
+
+**Money: $20–100** of spot instance, or a week of a spare desktop.
+
+### What is not compressed, and could be
+
+The height rasters are packed (3.7× measured). The **vector sections are
+not**: MT2 stores them raw, and they deflate **2.0× measured** across the
+committed carve. That is the largest single lever left on the size of a
+published package, and it costs nothing at serving time — store the tiles
+pre-compressed and serve them with `Content-Encoding: br`, which the
+hosting step below does.
 
 ## Steps
 
@@ -104,9 +139,10 @@ served.
 rclone copy /packages/planet r2:maps2-planet/planet --transfers 32 --checkers 32
 ```
 
-Serve the tiles **pre-compressed**. The vector sections are not compressed
-in the format — only heights are — so `Content-Encoding: br` is worth
-roughly another 1.6–2× on the wire for nothing. Set a long `Cache-Control`
+Serve the tiles **pre-compressed**. Only the heights are compressed inside
+the format, and the vector sections deflate 2.0× on the committed carve
+(measured), so `Content-Encoding: br` roughly halves the vector half of
+the package on the wire for nothing. Set a long `Cache-Control`
 on tiles: a tile at a path is immutable until the package is rebuilt.
 
 Then point the demo at it. No code change:

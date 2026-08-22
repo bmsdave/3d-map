@@ -368,6 +368,7 @@ dependencies = [
  "maps2-style",
  "maps2-tile",
  "maps2-units",
+ "miniz_oxide",
  "num-traits",
  "osmpbfreader",
  "serde",

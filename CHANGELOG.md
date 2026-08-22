@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- The spool writes deflated blocks. Its records are repetitive by nature —
+  the same street name on every part of a road, coordinates differing in
+  their low bits — and on a city's worth of streets they compress about five
+  to one: scratch disk falls from 1.39x the tiles being built to 0.31x
+  (measured, `tests/spool_size.rs`, which now fails if the compression is
+  ever lost). Level 1 deflate, because scratch is written once and read once
+  minutes later.
+- Every shard's last block is written before the first shard is read. Draining
+  lazily left the other shards' buffers in memory for the whole pass — a
+  thousand shards holding up to a megabyte each is a gigabyte, which is
+  exactly what the spool exists to avoid.
+- PLANET.md's numbers are marked measured or estimate, one by one, and the
+  source table is measured off a real cache: 88 GB of planet PBF (already
+  compressed — that *is* the compressed form), 7 GB of GEBCO, 150 MB of
+  vectors. It also says what is still uncompressed and worth compressing: MT2
+  vector sections, which deflate 2.0x on the committed carve and are the
+  largest remaining lever on the size of a published package.
+
 - A build plan for the planet (`plans/planet.toml`), its source descriptor, and
   [PLANET.md](pipelines/maps-v2-ingest/PLANET.md) — the runbook for a build
   measured in machine-days: what it needs, what it costs, how to pin a planet

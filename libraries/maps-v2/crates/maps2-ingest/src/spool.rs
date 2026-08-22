@@ -12,6 +12,13 @@
 //! tiles and hands them on — so the memory a build needs is one shard,
 //! and the number of shards is how the build is made to fit.
 //!
+//! Shards are written in deflated blocks. The records are repetitive by
+//! nature — the same street name on every part of a road, coordinates
+//! that differ in their low bits — and measured on a city's worth of
+//! streets they compress five to one. That is the difference between
+//! scratch space of about one and a half times the package being built
+//! and about a third of it.
+//!
 //! Order does not matter to the result: [`crate::build_tile`] sorts a
 //! tile's features itself, and the manifest sorts its tiles, so a spooled
 //! build produces the same bytes as an in-memory one. That is a test, not
@@ -61,9 +68,19 @@ impl From<TileError> for SpoolError {
     }
 }
 
+/// How much a shard buffers before deflating and writing a block.
+///
+/// Big enough that the compressor has repetition to find — a block of
+/// records holds many parts of the same roads — and small enough that a
+/// build holds one of these per shard being written, not one per shard
+/// that exists.
+const BLOCK_BYTES: usize = 1 << 20;
+
 /// Where a feature is written down between the two passes.
 pub struct FeatureSpool {
     shards: Vec<BufWriter<File>>,
+    /// Records written but not yet deflated into their shard.
+    pending: Vec<Vec<u8>>,
     features: u64,
 }
 
@@ -87,7 +104,8 @@ impl FeatureSpool {
                 Ok(BufWriter::new(file))
             })
             .collect::<Result<Vec<_>, io::Error>>()?;
-        Ok(Self { shards: files, features: 0 })
+        let pending = files.iter().map(|_| Vec::with_capacity(BLOCK_BYTES)).collect();
+        Ok(Self { shards: files, pending, features: 0 })
     }
 
     /// How many features have been written.
@@ -105,9 +123,12 @@ impl FeatureSpool {
         let index = shard_of(feature.tile, self.shards.len());
         let mut record = Vec::new();
         encode(feature, &mut record);
-        let shard = &mut self.shards[index];
-        shard.write_all(&u32::try_from(record.len()).unwrap_or(u32::MAX).to_le_bytes())?;
-        shard.write_all(&record)?;
+        let pending = &mut self.pending[index];
+        pending.extend_from_slice(&u32::try_from(record.len()).unwrap_or(u32::MAX).to_le_bytes());
+        pending.extend_from_slice(&record);
+        if pending.len() >= BLOCK_BYTES {
+            write_block(&mut self.shards[index], pending)?;
+        }
         self.features += 1;
         Ok(())
     }
@@ -128,6 +149,15 @@ impl FeatureSpool {
     where
         SpoolError: From<E>,
     {
+        // Every shard's last block goes down before the first one is read.
+        // Draining lazily would leave the other shards' buffers in memory
+        // for the whole pass — a thousand shards holding up to a megabyte
+        // each is a gigabyte that the spool exists to avoid.
+        for (index, shard) in self.shards.iter_mut().enumerate() {
+            write_block(shard, &mut self.pending[index])?;
+        }
+        self.pending = Vec::new();
+
         let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
         for shard in &mut self.shards {
             shard.flush()?;
@@ -138,6 +168,26 @@ impl FeatureSpool {
         Ok(())
     }
 }
+
+/// Deflates whatever a shard has buffered and frames it: compressed
+/// length, then raw length, then the block. Nothing is written for an
+/// empty buffer, so a shard no feature landed in stays an empty file.
+fn write_block(shard: &mut BufWriter<File>, pending: &mut Vec<u8>) -> Result<(), SpoolError> {
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let block = miniz_oxide::deflate::compress_to_vec(pending, SPOOL_LEVEL);
+    shard.write_all(&u32::try_from(block.len()).unwrap_or(u32::MAX).to_le_bytes())?;
+    shard.write_all(&u32::try_from(pending.len()).unwrap_or(u32::MAX).to_le_bytes())?;
+    shard.write_all(&block)?;
+    pending.clear();
+    Ok(())
+}
+
+/// Deflate level for scratch. Low on purpose: this is written once and
+/// read once, minutes apart, and the difference between level 1 and level
+/// 9 here is compression time against disk that is freed the same hour.
+const SPOOL_LEVEL: u8 = 1;
 
 /// One shard's tiles, built in batches and handed on in tile order.
 fn drain_shard<E>(
@@ -221,19 +271,42 @@ fn shard_of(tile: TileId, shards: usize) -> usize {
 fn read_shard(file: &mut File) -> Result<HashMap<TileId, Vec<PreparedFeature>>, SpoolError> {
     let mut reader = BufReader::new(file);
     let mut grouped: HashMap<TileId, Vec<PreparedFeature>> = HashMap::new();
-    let mut length = [0_u8; 4];
+    let mut frame = [0_u8; 8];
     loop {
-        match reader.read_exact(&mut length) {
+        match reader.read_exact(&mut frame) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => break,
             Err(error) => return Err(SpoolError::Io(error)),
         }
-        let mut record = vec![0_u8; u32::from_le_bytes(length) as usize];
-        reader.read_exact(&mut record)?;
-        let feature = decode(&record)?;
-        grouped.entry(feature.tile).or_default().push(feature);
+        let compressed = u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
+        let raw = u32::from_le_bytes([frame[4], frame[5], frame[6], frame[7]]) as usize;
+        let mut block = vec![0_u8; compressed];
+        reader.read_exact(&mut block)?;
+        let records = miniz_oxide::inflate::decompress_to_vec_with_limit(&block, raw)
+            .map_err(|_| SpoolError::Corrupt("shard block does not inflate"))?;
+        read_records(&records, &mut grouped)?;
     }
     Ok(grouped)
+}
+
+/// The records inside one inflated block.
+fn read_records(
+    block: &[u8],
+    grouped: &mut HashMap<TileId, Vec<PreparedFeature>>,
+) -> Result<(), SpoolError> {
+    let mut at = 0;
+    while at < block.len() {
+        let length = block
+            .get(at..at + 4)
+            .ok_or(SpoolError::Corrupt("block ends mid-length"))?;
+        let length = u32::from_le_bytes([length[0], length[1], length[2], length[3]]) as usize;
+        at += 4;
+        let record = block.get(at..at + length).ok_or(SpoolError::Corrupt("block ends mid-record"))?;
+        at += length;
+        let feature = decode(record)?;
+        grouped.entry(feature.tile).or_default().push(feature);
+    }
+    Ok(())
 }
 
 // The record format is this module's own and never leaves it: no version,
