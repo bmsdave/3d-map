@@ -1,0 +1,67 @@
+name: Demo page
+
+# Публичная витрина живёт на GitHub Pages и собирается из той же
+# лаборатории: демо и студии делят SDK, wasm и пакет тайлов, поэтому
+# страница не может показать то, чего в коде нет.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Одна публикация за раз. Отмены на лету нет: половина выложенного
+# сайта — это дыры в пирамиде тайлов у того, кто в этот момент смотрит.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: libraries/maps-v2
+      - uses: jetli/wasm-pack-action@v0.4.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: applications/maps-v2-lab/package-lock.json
+      - working-directory: applications/maps-v2-lab
+        run: npm ci
+      # Пакет лежит в репозитории: демо рисует настоящий Лондон. Битый
+      # тайл молча стал бы дырой на витрине, поэтому дайджесты
+      # проверяются до сборки — тем же способом, что и в CI.
+      - run: cargo run --manifest-path libraries/maps-v2/Cargo.toml --bin maps2-ingest -- verify-package applications/maps-v2-lab/public/packages/trafalgar
+      # Project Pages живут в подкаталоге «/<repo>/», а wasm, стили и
+      # манифест пакета тянутся по URL: без BASE_PATH сайт собрался бы
+      # с корневыми ссылками и не нашёл бы ни одного тайла.
+      - working-directory: applications/maps-v2-lab
+        run: npm run build
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: applications/maps-v2-lab/dist
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

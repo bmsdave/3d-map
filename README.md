@@ -17,6 +17,19 @@ no build step, no data to download. See [the lab package](#the-lab-package).
 
 ![Animated Maps SDK showcase](applications/maps-v2-lab/assets/showcase.gif)
 
+## Live demo
+
+**[bmsdave.github.io/3d-map/demo](https://bmsdave.github.io/3d-map/demo/)** — the
+committed carve, running in the browser: a shaded globe over GEBCO bathymetry,
+flattening into the streets of London as you go down. Drag to pan, scroll to
+zoom, or take one of the four viewpoints; the panel reports the shape the
+renderer chose, the tile level it planned for, and what the last frame cost.
+
+The demo is built from this repository's lab, from the same SDK entry points the
+studies use, and is published by [`.github/workflows/pages.yml`](.github/workflows/pages.yml)
+on every push to `main`. The lab itself is deployed alongside it, at the site
+root.
+
 ## What is included
 
 - Rust crates for units, camera math, MT2 tile parsing, style, rendering, text,
@@ -86,7 +99,8 @@ Open `http://localhost:5178`. The page **is** the lab: all twenty studies are
 mounted live on it, no card to click through first, every one of them looking at
 Trafalgar Square. Direct routes still isolate one concern at a time —
 `/#/card/roads-micro`, `/#/card/globe-relief` — and `/#/showcase` runs the
-animated gallery.
+animated gallery. `http://localhost:5178/demo/` is the public demo page — the
+same one published to GitHub Pages, served from the same build.
 
 ### The lab package
 

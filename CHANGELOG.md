@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- A public demo page at `/demo/`, built from the lab and published to GitHub
+  Pages by `.github/workflows/pages.yml` on every push to `main`. One package,
+  one full-window canvas and the same SDK entry points the studies use: four
+  viewpoints fly the camera from a shaded globe down to Trafalgar Square, and
+  the panel reports the shape, the tile level, the resident tiles and the cost
+  of the last frame. `BASE_PATH` tells the build where the site is rooted,
+  because a project Pages site is served from `/<repo>/` and the wasm bundle,
+  the stylesheet and the tile manifest are all fetched by URL.
+- `Map::set_viewport` — the renderer read the canvas size once, at construction,
+  which is all a fixed study canvas ever needed. A map filling a window is not
+  fixed: every frame after a resize was planned, projected and drawn for the
+  size the page opened at.
+- The demo sizes its canvas in CSS pixels rather than device pixels. The
+  renderer measures road widths and type in `ScreenPx`, and a `ScreenPx` is a
+  canvas pixel, so a 2x backing store draws a perfectly correct map at half its
+  intended physical size. Taking a device pixel ratio properly is an SDK
+  change, not a demo one.
+
 - Low-zoom water is simplified again, by snapping rather than thinning.
   `simplify_area_ring` skipped Douglas-Peucker entirely for water at z≤7 — the
   whole range the world package is built at — because thinning decides which of
