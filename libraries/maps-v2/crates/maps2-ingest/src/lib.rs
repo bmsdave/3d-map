@@ -21,6 +21,7 @@ use sha2::{Digest, Sha256};
 use tiff::decoder::{Decoder, DecodingResult};
 
 mod conflate;
+mod spool;
 mod gebco;
 mod natural_earth;
 mod world_terrain;
@@ -35,6 +36,7 @@ pub use natural_earth::{
 };
 pub use world_terrain::{load_gebco_quadrant_decimated, stitch_world_quadrants};
 pub use world_water::{WaterPolygonsError, resolve_water_polygons};
+pub use spool::{FeatureSpool, SpoolError};
 
 /// A named pipeline input pinned to its SHA-256 digest.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1653,6 +1655,46 @@ pub fn build_tiles_with_terrains(
     build_tiles_inner(features, terrain)
 }
 
+/// Builds every tile without ever holding them all.
+///
+/// The same build as [`build_tiles_with_terrains`], with the middle
+/// written to disk: features go into shard files as they are prepared,
+/// and each tile is handed to `sink` the moment it exists so the caller
+/// can write it out and drop it. What a build holds is one shard's
+/// features and one tile's bytes, rather than every tile at once — the
+/// difference between a carve and a planet, where the tiles alone are
+/// terabytes.
+///
+/// The bytes are the same bytes: `build_tile` sorts a tile's features
+/// itself and the manifest sorts its tiles, so the order features arrive
+/// in and the order shards are drained in cannot reach the output. The
+/// test beside this says so against the in-memory path.
+///
+/// `dir` is scratch space the caller owns and should remove afterwards.
+///
+/// # Errors
+///
+/// [`SpoolError`] when a shard cannot be written or read back, a record
+/// does not decode, or a tile exceeds the MT2 limits.
+pub fn build_tiles_spooled<E>(
+    features: impl IntoIterator<Item = PreparedFeature>,
+    terrain: &[DemGrid],
+    dir: &std::path::Path,
+    shards: usize,
+    sink: impl FnMut(TileId, Vec<u8>) -> Result<(), E>,
+) -> Result<u64, SpoolError>
+where
+    SpoolError: From<E>,
+{
+    let mut spool = FeatureSpool::new(dir, shards)?;
+    for feature in features {
+        spool.push(&feature)?;
+    }
+    let count = spool.features();
+    spool.drain(terrain, sink)?;
+    Ok(count)
+}
+
 fn build_tiles_inner(
     features: &[PreparedFeature],
     terrain: &[DemGrid],
@@ -1666,7 +1708,7 @@ fn build_tiles_inner(
     ids.into_iter().map(|id| build_tile(id, &grouped[&id], terrain)).collect()
 }
 
-fn build_tile(
+pub(crate) fn build_tile(
     id: TileId,
     features: &[&PreparedFeature],
     terrain: &[DemGrid],

@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Ingest builds through a spool instead of holding the whole package. The
+  pipeline took every prepared feature as one slice and handed back every
+  tile as one `Vec`: for a carve the simplest thing that works, for a planet
+  neither end fits — order 10^9 features in, 10^8 tiles out. Features are
+  now written to shard files as they are prepared, chosen by the tile they
+  belong to so every part of a tile lands together, and the drain reads one
+  shard at a time. What a build holds is one shard's features and one tile's
+  bytes; the number of shards is the knob that makes it fit.
+- The bytes do not change, and that is a test rather than a hope: `build_tile`
+  sorts a tile's features itself and the manifest sorts its tiles, so neither
+  the order features arrive in nor the order shards drain in reaches the
+  output. `the_spool_builds_the_same_bytes_as_memory` holds the spooled build
+  against the in-memory one, and a second test builds the same features over
+  one shard and over sixty-four to show the knob cannot change the result.
+- `build-map` writes each tile as it is built and keeps only its digest —
+  eighty bytes where it used to hold a hundred and fifty thousand. The
+  remaining ceiling is honest and worth naming: the digest list is still held
+  in memory, which is fine to around 10^7 tiles and needs an external sort
+  beyond that.
+
 - A manifest stops naming its tiles once there are more than 50,000 of them.
   A carve is a few hundred and the list earns its place: the client knows
   before asking whether a tile exists, and a digest each catches a corrupt

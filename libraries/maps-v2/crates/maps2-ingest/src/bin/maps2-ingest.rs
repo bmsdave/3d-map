@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, env, fs, fs::File, path::{Path, PathBuf}, proce
 
 use maps2_ingest::{
     DemGrid, LayerClaim, PreparedFeature, SourceDescriptor, SourceKind, SourceLayer, build_tiles,
-    build_tiles_with_terrains, claimed_levels, conflate,
+    build_tiles_spooled, build_tiles_with_terrains, claimed_levels, conflate, SpoolError,
     load_copernicus_dem, load_gebco_quadrant_decimated, load_gebco_window, read_descriptor,
     resolve_boundary_lines, resolve_major_roads, resolve_osm_pbf, resolve_place_labels,
     resolve_water_polygons, scan_osm_pbf, stitch_world_quadrants, validate_source,
@@ -1157,6 +1157,55 @@ adapter_version = "osm-v1""#,
 
     /// A package too large to list its tiles is still verified whole:
     /// the digests come off the directory instead of out of the manifest.
+    /// Writing a level tile by tile has to leave the same package behind
+    /// as building every tile first and writing them after — the same
+    /// files, the same bytes, the same digests. This is the composition
+    /// `write_conflated_level` performs, checked without a build plan.
+    #[test]
+    fn a_spooled_level_writes_the_same_package_as_an_in_memory_one() {
+        let features: Vec<maps2_ingest::PreparedFeature> = [
+            (10_u64, -0.1278_f64, 51.5074_f64),
+            (11, -0.1180, 51.5100),
+            (12, 0.0021, 51.4769),
+        ]
+        .into_iter()
+        .flat_map(|(id, lon, lat)| {
+            maps2_ingest::prepare_features(
+                id,
+                &[("highway", "primary"), ("name", "Long Road")],
+                &[
+                    maps2_units::Lonlat { lon, lat },
+                    maps2_units::Lonlat { lon: lon + 0.02, lat: lat + 0.01 },
+                ],
+                12,
+            )
+        })
+        .collect();
+        assert!(features.len() > 2, "the fixture spreads over tiles");
+
+        let spooled = tempfile::tempdir().expect("spooled output");
+        let mut spooled_digests = Vec::new();
+        let heights = write_spooled_tiles(spooled.path(), features.clone(), &[], &mut spooled_digests)
+            .expect("spooled build");
+        assert_eq!(heights, 0, "no terrain grids, so no terrain tiles");
+
+        let direct = tempfile::tempdir().expect("in-memory output");
+        let tiles = build_tiles_with_terrains(&features, &[]).expect("in-memory build");
+        let direct_digests = tile_digests(&tiles);
+        write_tiles(direct.path(), &tiles).expect("write");
+
+        assert_eq!(
+            package_tile_digests(spooled.path()).expect("walk spooled"),
+            package_tile_digests(direct.path()).expect("walk direct"),
+            "the two packages are the same files with the same bytes",
+        );
+        assert_eq!(
+            package_sha256(&spooled_digests),
+            package_sha256(&direct_digests),
+            "and the manifest would hash them the same",
+        );
+    }
+
     #[test]
     fn a_package_without_listed_digests_is_verified_from_its_directory() {
         let root = tempfile::tempdir().expect("temporary package");
@@ -1351,12 +1400,61 @@ fn write_conflated_level(
     totals.covered += report.covered;
     totals.matched += report.matched;
     totals.features += features.len();
-    let tiles = build_tiles_with_terrains(&features, grids)
-        .map_err(|error| format!("cannot encode MT2: {error:?}"))?;
-    totals.height_tiles +=
-        tiles.iter().filter(|(tile, _)| grids.iter().any(|grid| grid.covers_tile(*tile))).count();
-    digests.extend(tile_digests(&tiles));
-    write_tiles(output, &tiles)
+
+    totals.height_tiles += write_spooled_tiles(output, features, grids, digests)
+        .map_err(|error| format!("cannot build level {level}: {error}"))?;
+    Ok(())
+}
+
+/// Builds a level's features into `output`, writing each tile as it is
+/// made and keeping only its digest. Returns how many of them carried
+/// terrain.
+///
+/// Through a spool, not a `Vec`: a level of a planet is tens of millions
+/// of tiles and terabytes of bytes, and holding them all to write them
+/// afterwards is the one thing such a build certainly cannot do. What
+/// stays behind per tile is its digest — eighty bytes against a hundred
+/// and fifty thousand.
+fn write_spooled_tiles(
+    output: &Path,
+    features: Vec<maps2_ingest::PreparedFeature>,
+    grids: &[DemGrid],
+    digests: &mut Vec<TileDigest>,
+) -> Result<usize, String> {
+    let scratch = output.join(".spool");
+    let mut height_tiles = 0;
+    let build = build_tiles_spooled(
+        features,
+        grids,
+        &scratch,
+        SPOOL_SHARDS,
+        |tile, bytes| -> Result<(), SpoolError> {
+            if grids.iter().any(|grid| grid.covers_tile(tile)) {
+                height_tiles += 1;
+            }
+            digests.push(TileDigest { id: tile, sha256: sha256(&bytes) });
+            write_tiles(output, &[(tile, bytes)]).map_err(io_error)
+        },
+    );
+    // The scratch goes whether the build worked or not: a failed run must
+    // not leave gigabytes of shards behind for the next one to trip on.
+    let _ = fs::remove_dir_all(&scratch);
+    build.map_err(|error| error.to_string())?;
+    Ok(height_tiles)
+}
+
+/// How many shards a level's features are spread across.
+///
+/// Memory during the drain is one shard's features, so this is the knob
+/// that decides whether a build fits. A thousand keeps a planet's level
+/// down to millions of features at a time while staying far inside any
+/// open-file limit.
+const SPOOL_SHARDS: usize = 1024;
+
+/// The sink writes tiles, and writing is where its errors come from; the
+/// spool speaks its own error type, so they meet here.
+fn io_error(message: String) -> SpoolError {
+    SpoolError::Io(std::io::Error::other(message))
 }
 
 fn load_plan_layers(plan: &BuildPlan) -> Result<Vec<LoadedLayer>, String> {
