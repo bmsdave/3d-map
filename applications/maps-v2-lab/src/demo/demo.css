@@ -1,0 +1,236 @@
+/* The demo's own sheet. The lab's style.css dresses a document of studies;
+   this page is one map with furniture floating over it, and sharing a
+   sheet between the two would make every change to either a negotiation. */
+
+:root {
+  color-scheme: dark;
+  --ink: #eef2f6;
+  --ink-dim: #9aa7b4;
+  --glass: rgba(16, 21, 28, 0.82);
+  --edge: rgba(255, 255, 255, 0.12);
+  --accent: #6cc4ff;
+  --pad: 14px;
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: #05070a;
+  color: var(--ink);
+  overflow: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+
+.demo-shell { position: fixed; inset: 0; }
+
+.stage { position: absolute; inset: 0; }
+
+#map {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+  outline: none;
+}
+
+#map:active { cursor: grabbing; }
+
+.brand {
+  position: absolute;
+  top: var(--pad);
+  left: var(--pad);
+  max-width: min(30rem, calc(100% - 2 * var(--pad)));
+  padding: 12px 16px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: var(--glass);
+  backdrop-filter: blur(8px);
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  letter-spacing: 0.02em;
+}
+
+.brand p {
+  margin: 4px 0 10px;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--ink-dim);
+}
+
+.brand nav { display: flex; gap: 8px; }
+
+.brand a {
+  padding: 5px 11px;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 0.78rem;
+  text-decoration: none;
+}
+
+.brand a:hover { border-color: var(--accent); color: var(--accent); }
+.brand a.primary { background: var(--accent); border-color: var(--accent); color: #05070a; font-weight: 600; }
+.brand a.primary:hover { color: #05070a; filter: brightness(1.1); }
+
+.panel {
+  position: absolute;
+  top: var(--pad);
+  right: var(--pad);
+  width: 19rem;
+  max-height: calc(100% - 2 * var(--pad));
+  overflow-y: auto;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: var(--glass);
+  backdrop-filter: blur(8px);
+  font-size: 0.82rem;
+}
+
+/* Before the package answers there is nothing to control: an empty
+   glass box floating over a loading map is furniture, not feedback. */
+.panel:empty,
+.panel[data-collapsed] { display: none; }
+
+.panel h2 {
+  margin: 14px 0 8px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.panel h2:first-child { margin-top: 0; }
+
+.tour { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+.tour button {
+  padding: 7px 8px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.tour button:hover { border-color: var(--accent); }
+
+.tour button[aria-current="true"] {
+  border-color: var(--accent);
+  background: rgba(108, 196, 255, 0.16);
+  color: var(--accent);
+}
+
+.hint {
+  margin: 8px 0 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--ink-dim);
+}
+
+.controls { display: grid; gap: 10px; }
+
+.control { display: grid; gap: 5px; }
+
+.control-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.76rem;
+  color: var(--ink-dim);
+}
+
+.control-label .value { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.control input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+.control.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+}
+
+.control.toggle input { accent-color: var(--accent); }
+
+.readout { margin: 0; display: grid; gap: 4px; }
+
+.readout > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.76rem;
+}
+
+.readout dt { color: var(--ink-dim); }
+.readout dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+.attribution {
+  margin: 14px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--edge);
+  font-size: 0.66rem;
+  line-height: 1.5;
+  color: var(--ink-dim);
+}
+
+.attribution a { color: var(--ink-dim); }
+
+.status {
+  position: absolute;
+  left: 50%;
+  bottom: var(--pad);
+  transform: translateX(-50%);
+  max-width: calc(100% - 2 * var(--pad));
+  padding: 7px 14px;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: var(--glass);
+  font-size: 0.72rem;
+  color: var(--ink-dim);
+  text-align: center;
+}
+
+.status[data-state="error"] {
+  border-color: #ff8a7a;
+  color: #ff8a7a;
+  border-radius: 12px;
+}
+
+.disclose {
+  position: absolute;
+  top: var(--pad);
+  right: var(--pad);
+  display: none;
+  padding: 7px 12px;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: var(--glass);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+/* Narrow screens: the panel is the page's second half, not an overlay
+   covering the map it describes. */
+@media (max-width: 720px) {
+  .disclose { display: block; z-index: 2; }
+  .panel { top: calc(var(--pad) + 42px); width: calc(100% - 2 * var(--pad)); }
+  .brand { max-width: calc(100% - 7.5rem); }
+  .brand p { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto; }
+}

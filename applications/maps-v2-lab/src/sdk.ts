@@ -94,6 +94,10 @@ export interface MapHandle {
   loadTile(bytes: Uint8Array): void;
   unloadTile(z: number, x: number, y: number): void;
   setCentre(lon: number, lat: number): void;
+  /** Tell the map the canvas has a new backing-store size. The host
+   *  resizes the canvas; the map plans and draws for whatever size it
+   *  was last told about. */
+  setViewport(width: number, height: number): void;
   setBandOverride(band: string | null): void;
   setTransitionAnimated(animated: boolean): void;
   setRoadCasing(on: boolean): void;
@@ -460,6 +464,7 @@ export async function createMap(canvas: HTMLCanvasElement, pack: string | null):
     loadTile: (bytes) => map.load_tile(bytes),
     unloadTile: (z, x, y) => packageApi.unload_tile(z, x, y),
     setCentre: (lon, lat) => map.set_centre(lon, lat),
+    setViewport: (width, height) => map.set_viewport(width, height),
     setBandOverride: (band) => map.set_band_override(band ?? undefined),
     setTransitionAnimated: (animated) => map.set_transition_animated(animated),
     setRoadCasing: (on) => map.set_road_casing(on),
@@ -620,6 +625,7 @@ export async function createPackageMap(
   const map: MapHandle = {
     ...raw,
     setZoom: after(raw.setZoom),
+    setViewport: after(raw.setViewport),
     setCentre: after(raw.setCentre),
     setTilt: after(raw.setTilt),
     setBearing: after(raw.setBearing),

@@ -6,6 +6,7 @@ declare module "*/maps2_web.js" {
     load_tile(bytes: Uint8Array): void;
     set_zoom(zoom: number): void;
     set_centre(lon: number, lat: number): void;
+    set_viewport(width: number, height: number): void;
     render(): void;
     debug(): string;
     set_band_override(band: string | undefined): void;

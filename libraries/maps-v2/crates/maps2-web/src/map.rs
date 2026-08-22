@@ -292,6 +292,26 @@ impl Map {
         })
     }
 
+    /// Follow the canvas after the host has resized it.
+    ///
+    /// The viewport is read once at construction, which is all a fixed
+    /// study canvas ever needed. A map filling a window is not fixed:
+    /// every frame after the first resize would otherwise be planned,
+    /// projected and drawn for the size the page opened at. The host
+    /// owns the backing store — it knows the device pixel ratio it
+    /// wants — so this takes the size rather than reading the element,
+    /// and drops the residency plan, which is a function of it.
+    pub fn set_viewport(&mut self, width: f64, height: f64) -> Result<(), JsValue> {
+        if !(width.is_finite() && height.is_finite()) || width < 1.0 || height < 1.0 {
+            return Err(JsValue::from_str(&format!(
+                "viewport {width}x{height} is not a drawable size"
+            )));
+        }
+        self.viewport = (width, height);
+        self.invalidate_plan();
+        Ok(())
+    }
+
     /// Draw the grey outline under every road, or not — the card's
     /// switch, and the way to see what the casing is actually doing.
     pub fn set_road_casing(&mut self, on: bool) {
