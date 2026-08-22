@@ -13,3 +13,9 @@ pipelines/maps-v2-ingest/packages/
 # Итог последнего прогона замеров: меняется каждым запуском.
 # baseline.json, наоборот, версионируется — он и есть точка отсчёта.
 applications/maps-v2-lab/e2e/perf/last-run.json
+.worktrees/
+
+# Отчёт покрытия vitest: генерируется каждым прогоном.
+applications/maps-v2-lab/coverage/
+# Второе место для git worktree — рабочие копии, а не исходники.
+.claude/worktrees/
