@@ -8,18 +8,18 @@ use web_sys::WebGl2RenderingContext as Gl;
 
 use maps2_camera::{Camera, CameraPatch, Globeness};
 use maps2_render::{
-    build_building_bucket, build_fill_bucket, build_label_bucket, build_line_bucket, building_lod,
-    height_source, normalise_source_levels, plan_residency, register_source_level, road_passes,
+    build_building_bucket, build_line_bucket, building_lod, height_source,
+    FillBucket, LabelBucket,
+    normalise_source_levels, plan_residency, register_source_level, road_passes,
     sample_bilinear, shading_z_factor, target_level, texel_metres, tile_frame, BuildingLod,
-    FillBucket, HeightWindow, LabelBucket, LineOptions, Pass, RoadLevel, RoadPass,
-    MITER_LIMIT_MAX, View,
+    HeightWindow, LineOptions, Pass, RoadLevel, RoadPass, MITER_LIMIT_MAX, View,
 };
 use maps2_style::{
     background_color, class_alpha, facade_colour, fill_color, road_width_px, Band, Class,
     CASING_EXTRA_PX, ROAD_CASING_COLOR, TUNNEL_ALPHA, TUNNEL_DASH_ON_PX, TUNNEL_DASH_PERIOD_PX,
 };
 use maps2_text::{layout_line, measure_line, Atlas, Placement, Rejection, ScreenBox};
-use maps2_tile::{unpack, HeightsRaster, TileView, CLASS_HEIGHTS, CLASS_HEIGHTS_PACKED};
+use maps2_tile::{HeightsRaster, TileView};
 use maps2_units::{locate, Lonlat, TileId, Zoom};
 
 use crate::gl::{FillProgram, GpuBucket};
