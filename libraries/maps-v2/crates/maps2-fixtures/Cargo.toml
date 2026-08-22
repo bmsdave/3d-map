@@ -6,7 +6,7 @@ description = "Deterministic synthetic world packages for the Maps SDK v2 lab"
 license = "MIT"
 
 [dependencies]
-sha2 = "0.10"
+sha2 = "0.11"
 maps2-units = { path = "../maps2-units" }
 maps2-tile = { path = "../maps2-tile" }
 maps2-style = { path = "../maps2-style" }
