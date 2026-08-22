@@ -3,6 +3,7 @@ mod input;
 mod transform;
 mod tile_store;
 mod renderer;
+mod decode;
 
 pub use labels::{
     class_of, frame_candidates, frame_quads, label_identity, label_size_px, place_frame,
@@ -10,6 +11,7 @@ pub use labels::{
 };
 pub use input::{Input, pan_patch, wheel_zoom_step, zoom_about};
 pub use transform::{place_tile, TilePlacement};
+pub use decode::{decode_tile, DecodedTile, HeightDecoded};
 pub use tile_store::{tile_paths, HeightSource, TileStore};
 pub use renderer::{FrameRenderer, FrameTimings};
 

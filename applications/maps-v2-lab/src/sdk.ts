@@ -200,6 +200,8 @@ export interface TilePackageLoader {
 /// before letting the page breathe. Decoding a tile builds every mesh
 /// and shapes every label in it, so a batch arriving together — which
 /// is what a zoom does — blocked for most of a second in one go.
+// CPU buckets (fills/buildings/lines/labels) + heights unpack live in `maps2-web/src/decode.rs` —
+// `load_tile` is Worker-eligible; host still slices *between* tiles here. Worker move is step 2.
 const DECODE_SLICE_MS = 6;
 
 const MAX_PACKAGE_TILES = 50_000;

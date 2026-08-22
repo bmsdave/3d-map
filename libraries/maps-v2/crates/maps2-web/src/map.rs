@@ -29,6 +29,7 @@ use crate::gl_terrain::{
 };
 use crate::gl_view::TilePixels;
 use crate::input::Input;
+use crate::decode::{decode_tile, HeightDecoded};
 use crate::labels::{class_of, frame_candidates, frame_quads, place_candidates};
 use crate::line_gl::{GpuLineBucket, LineProgram};
 use crate::text_gl::{BoxProgram, TextDraw, TextProgram};
@@ -444,31 +445,24 @@ impl Map {
     /// the tile could be kept was the second of two.
     pub fn load_tile(&mut self, bytes: Vec<u8>) -> Result<(), JsValue> {
         let view = TileView::parse(&bytes).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-        let id = view.header().id;
-        register_source_level(&mut self.source_levels, id.z);
-        let fills = build_fill_bucket(&view).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-        let buildings = build_building_bucket(&view, self.building_lod).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-        let roads = build_line_bucket(&view, self.line_options)
+        let decoded = decode_tile(&view, self.building_lod, self.line_options)
             .map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-        let names = build_label_bucket(&view).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-        self.cpu.insert(id, fills);
-        self.buildings.insert(id, buildings);
-        self.lines.insert(id, roads);
-        self.names.insert(id, names);
+        let id = decoded.id;
+        register_source_level(&mut self.source_levels, id.z);
+        self.cpu.insert(id, decoded.fills);
+        self.buildings.insert(id, decoded.buildings);
+        self.lines.insert(id, decoded.lines);
+        self.names.insert(id, decoded.names);
         self.labels.placement_dirty = true;
-
         self.invalidate_plan();
-        // A tile carries one or the other, never both. Packed is checked
-        // first because a v6 tile that has it has nothing plain to fall
-        // back to, and a v1–v5 tile has no packed section to find.
-        if let Some(packed) = view.raster(CLASS_HEIGHTS_PACKED) {
-            let raster = unpack(packed).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-            HeightsRaster::parse(&raster).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-            self.heights.insert(id, HeightSource::Unpacked(raster.into_boxed_slice()));
-        } else if let Some(raster) = view.raster(CLASS_HEIGHTS) {
-            HeightsRaster::parse(raster).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-            if let Some(span) = view.section_span(CLASS_HEIGHTS) {
-                self.heights.insert(id, HeightSource::Plain(span));
+        if let Some(height) = decoded.height {
+            match height {
+                HeightDecoded::Plain(span) => {
+                    self.heights.insert(id, HeightSource::Plain(span));
+                }
+                HeightDecoded::Unpacked(raster) => {
+                    self.heights.insert(id, HeightSource::Unpacked(raster));
+                }
             }
         }
         self.tiles.insert(id, bytes);
