@@ -392,6 +392,23 @@ fn write_manifest(
     fs::write(&path, bytes).map_err(|error| format!("cannot write {}: {error}", path.display()))
 }
 
+/// Above this many tiles a manifest stops naming them one by one.
+///
+/// A carve is a few hundred tiles and the list is worth having: the
+/// client knows before it asks whether a tile exists, and a digest per
+/// tile catches a corrupt commit. A planet to z14 is on the order of
+/// 10^8, where the same list is gigabytes of JSON that every visitor
+/// would download before the first frame — and the digests alone would
+/// be six gigabytes of hex.
+///
+/// So above the threshold the manifest carries the envelope instead:
+/// which levels exist and, per level, the ground they cover. The client
+/// computes tile URLs and treats a 404 as "no tile there", which is what
+/// every tile server on the web already does. `verify-package` still
+/// walks the whole directory and checks every byte — that check moves to
+/// the build, where the bytes are, rather than to each viewer.
+const MAX_ENUMERATED_TILES: usize = 50_000;
+
 fn manifest_json(
     descriptors: &[&SourceDescriptor],
     levels: &[u8],
@@ -399,14 +416,20 @@ fn manifest_json(
     tile_digests: &[TileDigest],
     height_tile_count: usize,
 ) -> Result<String, String> {
+    let enumerated = tile_digests.len() <= MAX_ENUMERATED_TILES;
     serde_json::to_string_pretty(&json!({
         "format": "MT2",
         "format_version": maps2_tile::FORMAT_VERSION,
         "levels": levels,
         "feature_count": feature_count,
         "tile_count": tile_digests.len(),
-        "tiles": tile_paths(tile_digests),
-        "tile_digests": digest_map(tile_digests),
+        // Named one by one while that is affordable; `null` past the
+        // threshold, where `bounds` is the whole answer.
+        "tiles": enumerated.then(|| tile_paths(tile_digests)),
+        "tile_digests": enumerated.then(|| digest_map(tile_digests)),
+        // Written whatever the size: this is the envelope the client
+        // plans against, and until now only `carve` produced it.
+        "bounds": carved_bounds(tile_digests),
         "package_sha256": package_sha256(tile_digests),
         "view": package_view(tile_digests),
         "height_tile_count": height_tile_count,
@@ -517,7 +540,10 @@ fn verify(descriptor_path: &str, input_path: &str) -> Result<(), String> {
 
 #[derive(Deserialize)]
 struct PackageIntegrity {
-    tile_digests: BTreeMap<String, String>,
+    /// Absent on a package too large to name its tiles one by one; the
+    /// digests are then recomputed from the directory instead.
+    #[serde(default)]
+    tile_digests: Option<BTreeMap<String, String>>,
     package_sha256: String,
 }
 
@@ -527,9 +553,62 @@ fn verify_package(path: &str) -> Result<(), String> {
         .map_err(|error| format!("cannot read package manifest: {error}"))?;
     let integrity = serde_json::from_str::<PackageIntegrity>(&manifest)
         .map_err(|error| format!("invalid package manifest: {error}"))?;
-    verify_package_contents(root, &integrity.tile_digests, &integrity.package_sha256)?;
-    println!("verified package {}", root.display());
+    // A manifest that lists its digests is checked against that list. One
+    // that does not is checked against the directory: every `.mt2` under
+    // the root is hashed, and the package hash over those has to come out
+    // the same. That is the same check — a tile changed, added or missing
+    // all move the package hash — without the manifest carrying a digest
+    // per tile that a planet cannot afford.
+    let digests = match integrity.tile_digests {
+        Some(digests) => digests,
+        None => package_tile_digests(root)?,
+    };
+    verify_package_contents(root, &digests, &integrity.package_sha256)?;
+    println!("verified package {} ({} tiles)", root.display(), digests.len());
     Ok(())
+}
+
+/// Every tile in the package directory, hashed, keyed by its manifest
+/// path. Walks levels and columns rather than the whole tree at once, so
+/// a stray file elsewhere under the root is not mistaken for a tile.
+fn package_tile_digests(root: &Path) -> Result<BTreeMap<String, String>, String> {
+    let mut digests = BTreeMap::new();
+    for level in sorted_entries(root)?.into_iter().filter(|path| path.is_dir()) {
+        for column in sorted_entries(&level)?.into_iter().filter(|path| path.is_dir()) {
+            digests.extend(column_digests(&level, &column)?);
+        }
+    }
+    if digests.is_empty() {
+        return Err("package has no tiles".to_string());
+    }
+    Ok(digests)
+}
+
+/// One column's tiles, as manifest path and digest.
+fn column_digests(level: &Path, column: &Path) -> Result<Vec<(String, String)>, String> {
+    let name = |path: &Path| {
+        path.file_name().and_then(|name| name.to_str()).unwrap_or_default().to_string()
+    };
+    sorted_entries(column)?
+        .into_iter()
+        .filter(|tile| tile.extension().and_then(|extension| extension.to_str()) == Some("mt2"))
+        .map(|tile| {
+            let bytes = fs::read(&tile)
+                .map_err(|error| format!("cannot read {}: {error}", tile.display()))?;
+            Ok((format!("{}/{}/{}", name(level), name(column), name(&tile)), sha256(&bytes)))
+        })
+        .collect()
+}
+
+/// A directory's entries in a fixed order, so the walk is reproducible.
+fn sorted_entries(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut entries = fs::read_dir(dir)
+        .map_err(|error| format!("cannot read {}: {error}", dir.display()))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("cannot read {}: {error}", dir.display()))?;
+    entries.sort();
+    Ok(entries)
 }
 
 fn verify_package_contents(
@@ -1074,6 +1153,72 @@ adapter_version = "osm-v1""#,
 
         fs::write(tile, b"changed").expect("change tile");
         assert!(verify_package_contents(root.path(), &digests, &package_hash).is_err());
+    }
+
+    /// A package too large to list its tiles is still verified whole:
+    /// the digests come off the directory instead of out of the manifest.
+    #[test]
+    fn a_package_without_listed_digests_is_verified_from_its_directory() {
+        let root = tempfile::tempdir().expect("temporary package");
+        let tiles = [("12/2047/1365.mt2", b"one".as_slice()), ("13/4094/2730.mt2", b"two".as_slice())];
+        for (path, bytes) in tiles {
+            let tile = root.path().join(path);
+            fs::create_dir_all(tile.parent().expect("tile parent")).expect("create tile parent");
+            fs::write(&tile, bytes).expect("write tile");
+        }
+        let walked = package_tile_digests(root.path()).expect("walk");
+        assert_eq!(walked.len(), 2);
+        assert_eq!(walked["12/2047/1365.mt2"], sha256(b"one"));
+
+        let manifest = json!({
+            "tile_digests": serde_json::Value::Null,
+            "package_sha256": package_sha256_map(&walked),
+        });
+        fs::write(root.path().join("manifest.json"), manifest.to_string()).expect("write manifest");
+        assert!(verify_package(root.path().to_str().expect("path")).is_ok());
+
+        // And a tile changed under it still fails, which is the whole
+        // point of keeping the check.
+        fs::write(root.path().join("12/2047/1365.mt2"), b"other").expect("change tile");
+        assert!(verify_package(root.path().to_str().expect("path")).is_err());
+    }
+
+    #[test]
+    fn a_manifest_stops_naming_tiles_once_there_are_too_many_of_them() {
+        let descriptor = read_descriptor(
+            r#"[source]
+name = "london.osm.pbf"
+kind = "osm-pbf"
+url = "https://example.test/london.osm.pbf"
+sha256 = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+source_date = "2026-08-14"
+licence = "ODbL-1.0"
+attribution = "© OpenStreetMap contributors"
+bounds = [-0.6, 51.2, 0.4, 51.8]
+adapter_version = "osm-v1""#,
+        )
+        .expect("descriptor");
+        let digest = |index: usize| TileDigest {
+            id: TileId { z: 16, x: 32736 + u32::try_from(index).unwrap_or_default(), y: 21791 },
+            sha256: format!("{index:064x}"),
+        };
+
+        let small: Vec<TileDigest> = (0..2).map(digest).collect();
+        let listed: serde_json::Value =
+            serde_json::from_str(&manifest_json(&[&descriptor], &[16], 10, &small, 0).expect("json"))
+                .expect("parse");
+        assert!(listed["tiles"].is_array(), "a small package still names its tiles");
+        assert!(listed["tile_digests"].is_object());
+        assert!(listed["bounds"]["16"].is_object(), "and carries its envelope");
+
+        let large: Vec<TileDigest> = (0..=MAX_ENUMERATED_TILES).map(digest).collect();
+        let unlisted: serde_json::Value =
+            serde_json::from_str(&manifest_json(&[&descriptor], &[16], 10, &large, 0).expect("json"))
+                .expect("parse");
+        assert!(unlisted["tiles"].is_null(), "a large one does not");
+        assert!(unlisted["tile_digests"].is_null());
+        assert_eq!(unlisted["tile_count"], json!(MAX_ENUMERATED_TILES + 1));
+        assert!(unlisted["bounds"]["16"].is_object(), "the envelope is all it has");
     }
 }
 

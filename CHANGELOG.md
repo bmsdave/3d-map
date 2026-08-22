@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- A manifest stops naming its tiles once there are more than 50,000 of them.
+  A carve is a few hundred and the list earns its place: the client knows
+  before asking whether a tile exists, and a digest each catches a corrupt
+  commit. A planet to z14 is on the order of 10^8, where the same list is
+  gigabytes of JSON before the first frame and the digests alone are six
+  gigabytes of hex. Above the threshold the manifest carries the envelope
+  instead — which levels exist, and the ground each covers — which every
+  package now writes, not just `carve`.
+- The client reads whichever it is given. Listed tiles are fetched and
+  checked exactly as before; an envelope means computed URLs, and a 404 is
+  read as "no tile there" rather than a failed pass. Misses are remembered,
+  so empty ocean is asked about once rather than on every camera move, and
+  one absent tile no longer throws away the batch it travelled with.
+- `verify-package` still checks every byte of a package that lists nothing:
+  it hashes the tiles on disk and holds the result against the package hash,
+  which moves the check to the build, where the bytes are, instead of onto
+  every machine that draws them.
+
 - Terrain stops at z12, and everything below reads it. Copernicus GLO-30
   samples the ground every 30 m; a z12 tile's raster samples every 38 m, so
   z12 is where the source is spent. A z16 tile's raster was the same numbers

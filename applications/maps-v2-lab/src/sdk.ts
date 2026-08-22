@@ -148,8 +148,15 @@ export interface PackageSource {
 export interface TilePackageManifest {
   format: "MT2";
   format_version: number;
-  tiles: string[];
-  tile_digests: Record<string, string>;
+  /** Уровни, которые пакет несёт. Единственный источник этого списка,
+   *  когда тайлы не перечислены поимённо. */
+  levels: number[];
+  /** Сколько тайлов в пакете — есть и тогда, когда их имён нет. */
+  tile_count: number;
+  /** Absent on a package too large to name every tile: the client then
+   *  computes tile URLs and reads `bounds` to know where to look. */
+  tiles?: string[];
+  tile_digests?: Record<string, string>;
   view: PackCentre;
   sources: PackageSource[];
   /** Земля, за которую пакет отвечает, по уровням. Пишет
@@ -221,11 +228,7 @@ function isTilePackageManifest(value: unknown): value is TilePackageManifest {
   const version = manifest.format_version;
   return manifest.format === "MT2"
     && typeof version === "number" && Number.isInteger(version) && version >= 2 && version <= 6
-    && Array.isArray(manifest.tiles)
-    && manifest.tiles.every((path) => typeof path === "string" && /^\d+\/\d+\/\d+\.mt2$/.test(path))
-    && !!manifest.tile_digests
-    && typeof manifest.tile_digests === "object"
-    && manifest.tiles.every((path) => typeof manifest.tile_digests![path] === "string" && /^[0-9a-f]{64}$/.test(manifest.tile_digests![path]!))
+    && isCoverage(manifest)
     && !!manifest.view
     && Number.isFinite(manifest.view.lon)
     && Number.isFinite(manifest.view.lat)
@@ -242,16 +245,47 @@ async function fetchPackageManifest(url: string): Promise<TilePackageManifest> {
   return value;
 }
 
+/**
+ * How a manifest says which tiles it has.
+ *
+ * A carve names them, with a digest each: the client knows before asking
+ * whether a tile exists, and a corrupt tile is caught on arrival. A
+ * planet cannot — the list alone would be gigabytes — so it carries
+ * `levels` and a per-level `bounds` box instead, and a tile outside the
+ * box is not asked for while one inside that turns out not to exist
+ * answers 404, which is a normal thing for a tile server to say.
+ *
+ * One or the other, and never neither: a manifest with no way to tell
+ * where its ground is would have the client guessing at the whole
+ * planet.
+ */
+function isCoverage(manifest: Partial<TilePackageManifest>): boolean {
+  const listed = Array.isArray(manifest.tiles)
+    && manifest.tiles.every((path) => typeof path === "string" && /^\d+\/\d+\/\d+\.mt2$/.test(path))
+    && !!manifest.tile_digests
+    && typeof manifest.tile_digests === "object"
+    && manifest.tiles.every((path) =>
+      typeof manifest.tile_digests![path] === "string"
+      && /^[0-9a-f]{64}$/.test(manifest.tile_digests![path]!));
+  const bounded = Array.isArray(manifest.levels)
+    && manifest.levels.length > 0
+    && manifest.levels.every((level) => Number.isInteger(level))
+    && !!manifest.bounds
+    && manifest.levels.some((level) => !!manifest.bounds![String(level)]);
+  return listed || bounded;
+}
+
 function hasTooManyTiles(value: unknown): boolean {
   return !!value && typeof value === "object" && Array.isArray((value as { tiles?: unknown }).tiles)
     && (value as { tiles: unknown[] }).tiles.length > MAX_PACKAGE_TILES;
 }
 
 function packageLevels(manifest: TilePackageManifest): number[] {
-  return [...new Set(manifest.tiles.map((path) => Number(path.split("/")[0])))].sort((a, b) => a - b);
+  const listed = manifest.tiles?.map((path) => Number(path.split("/")[0])) ?? manifest.levels;
+  return [...new Set(listed)].sort((a, b) => a - b);
 }
 
-async function fetchTile(url: string, digest: string): Promise<Uint8Array> {
+async function fetchTile(url: string, digest?: string): Promise<Uint8Array> {
   try {
     return await fetchTileOnce(url, digest);
   } catch (error) {
@@ -260,14 +294,18 @@ async function fetchTile(url: string, digest: string): Promise<Uint8Array> {
   }
 }
 
-async function fetchTileOnce(url: string, digest: string): Promise<Uint8Array> {
+async function fetchTileOnce(url: string, digest?: string): Promise<Uint8Array> {
   const response = await tracedAsync("fetch", () => fetch(url));
   if (!response.ok) throw new TileResponseError(response.status);
   const length = Number(response.headers.get("content-length"));
   if (Number.isFinite(length) && length > MAX_TILE_BYTES) throw new Error("package tile exceeds 4 MiB");
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.byteLength > MAX_TILE_BYTES) throw new Error("package tile exceeds 4 MiB");
-  if (await tracedAsync("digest", () => sha256(bytes)) !== digest) {
+  // Checked when the manifest says what to expect. A package too large
+  // to carry a digest per tile is trusted to the transport instead —
+  // `maps2-ingest verify-package` checks those bytes where they are
+  // built, rather than on every machine that draws them.
+  if (digest !== undefined && await tracedAsync("digest", () => sha256(bytes)) !== digest) {
     throw new Error("package tile checksum mismatch");
   }
   return bytes;
@@ -300,7 +338,17 @@ export async function createTilePackageLoader(
 ): Promise<TilePackageLoader> {
   const manifest = await fetchPackageManifest(manifestUrl);
   const base = new URL(manifestUrl, window.location.href);
-  const paths = new Map(manifest.tiles.map((path) => [path, new URL(path, base).toString()]));
+  const listed = manifest.tiles
+    ? new Map(manifest.tiles.map((path) => [path, new URL(path, base).toString()]))
+    : null;
+  // Paths a fetch has already answered 404 for. A package that does not
+  // list its tiles cannot say in advance which of them exist, and without
+  // remembering the misses every camera move would ask again for the same
+  // empty ocean.
+  const absent = new Set<string>();
+  const urlOf = (path: string): string => listed?.get(path) ?? new URL(path, base).toString();
+  const covers = (path: string): boolean =>
+    !absent.has(path) && (listed ? listed.has(path) : withinPackageBounds(manifest, path));
   const loaded = new Set<string>();
   const inFlight = new Set<string>();
   // A second package composed onto the same map (e.g. a low-zoom world
@@ -360,12 +408,28 @@ export async function createTilePackageLoader(
       // a package legitimately carries no tile at most of these paths.
       const { missing, fallback, prefetch } = demand;
       const requested = [...missing, ...fallback, ...prefetch];
-      const available = requested.filter((path) => paths.has(path) && !loaded.has(path) && !inFlight.has(path));
-      const unavailable = missing.filter((path) => !paths.has(path)).length;
+      const available = requested.filter((path) => covers(path) && !loaded.has(path) && !inFlight.has(path));
+      const unavailable = missing.filter((path) => !covers(path)).length;
       available.forEach((path) => inFlight.add(path));
       let bytes: readonly (readonly [string, Uint8Array])[] = [];
       try {
-        bytes = await Promise.all(available.map(async (path) => [path, await fetchTile(paths.get(path)!, manifest.tile_digests[path]!)] as const));
+        // A 404 is a fact about the package, not a failure of the pass:
+        // an envelope covers ground the build had nothing to say about.
+        // It is remembered and skipped, and the tiles that did arrive are
+        // still decoded — one absent tile must not throw away the batch
+        // it travelled with.
+        const arrivals = await Promise.all(available.map(async (path) => {
+          try {
+            return [path, await fetchTile(urlOf(path), manifest.tile_digests?.[path])] as const;
+          } catch (error) {
+            if (error instanceof TileResponseError && error.status === 404) {
+              absent.add(path);
+              return null;
+            }
+            throw error;
+          }
+        }));
+        bytes = arrivals.filter((arrival) => arrival !== null);
       } finally {
         available.forEach((path) => inFlight.delete(path));
       }
@@ -639,6 +703,30 @@ export async function createPackageMap(
 
   await refresh();
   return { map, loader, refresh, onSettled: (listener) => listeners.push(listener) };
+}
+
+/**
+ * Whether a package's envelope covers a tile path.
+ *
+ * Only asked of a manifest that does not list its tiles. The box is in
+ * degrees, so the tile's own column and row range is computed from it and
+ * the path tested against that — the same Mercator arithmetic the tile
+ * ids were made with, and the reason a tile far outside the package is
+ * never requested at all.
+ */
+function withinPackageBounds(manifest: TilePackageManifest, path: string): boolean {
+  const [z, x, y] = path.split("/").map((part) => Number.parseInt(part, 10));
+  if (z === undefined || x === undefined || y === undefined) return false;
+  const box = levelBox(manifest, z);
+  if (!box) return false;
+  const span = 2 ** z;
+  const column = (lon: number) => Math.floor((lon + 180) / 360 * span);
+  const row = (lat: number) => {
+    const radians = lat * Math.PI / 180;
+    return Math.floor((1 - Math.asinh(Math.tan(radians)) / Math.PI) / 2 * span);
+  };
+  return x >= column(box.west) && x <= column(box.east)
+    && y >= row(box.north) && y <= row(box.south);
 }
 
 /** Границы уровня, а если этого уровня в пакете нет — ближайшего

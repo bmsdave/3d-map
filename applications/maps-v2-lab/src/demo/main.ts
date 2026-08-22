@@ -406,7 +406,7 @@ async function start(): Promise<void> {
   // the kind of thing you look for rather than read.
   status.title = "Arrow keys pan, +/− step a zoom level, double-click steps in";
   status.replaceChildren(
-    `${loader.manifest.tiles.length} tiles · drag to pan, scroll to zoom`,
+    `${loader.manifest.tile_count} tiles · drag to pan, scroll to zoom`,
   );
   root.setAttribute("data-ready", "true");
   requestAnimationFrame(frame);

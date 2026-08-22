@@ -134,8 +134,9 @@ export const mapReal: CardSpec = {
         map.setReliefExpressiveness(0.22);
         map.setCentre(loader.manifest.view.lon, loader.manifest.view.lat);
         map.setZoom(Number(zoomSlider.value));
-        const levels = [...new Set(loader.manifest.tiles.map((path) => Number(path.split("/")[0])))]
-          .sort((a, b) => a - b);
+        // Уровни берутся из манифеста: у пакета, который не перечисляет
+        // тайлы поимённо, вывести их больше неоткуда.
+        const levels = [...loader.manifest.levels].sort((a, b) => a - b);
         out.set("levels", `${levels[0]}–${levels[levels.length - 1]}`);
         let loaded = 0;
         let terrainShown: boolean | null = null;
