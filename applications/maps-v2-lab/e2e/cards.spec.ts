@@ -113,5 +113,12 @@ test("студия открывается отдельной страницей 
   const href = await open.getAttribute("href");
   await open.click();
   await expect(page).toHaveURL(new RegExp(`${href}$`));
-  await expect(page.getByTestId("stage")).toHaveAttribute("data-state", "ready");
+  // Сцену ищем внутри страницы карточки, а не по всей странице. URL меняется
+  // сразу по клику, а перерисовка приходит следующим тактом, на hashchange —
+  // и в этом окне на странице ещё доска, где сцен двадцать. Локатор без рамки
+  // ловит их все и падает на strict mode, а это не «ещё не готово», это
+  // ошибка: ждать Playwright после неё уже не станет. Рамка совпадает с нулём
+  // элементов, пока доска не сменилась, и потому честно ждёт.
+  const stage = page.locator("main.card-page").getByTestId("stage");
+  await expect(stage).toHaveAttribute("data-state", "ready");
 });
