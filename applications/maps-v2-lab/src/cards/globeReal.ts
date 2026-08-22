@@ -125,7 +125,7 @@ export const globeReal: CardSpec = {
       activeRefresh = null;
       let attemptedUrl = worldInput.value.trim();
       try {
-        const map = await createMap(canvas, null);
+        const map = await createMap(canvas);
         // World first, plain (replace) so its shallow pyramid is the
         // base; city second, additive so its deep levels join rather
         // than wipe the world's — see addSourceLevels's doc comment.
