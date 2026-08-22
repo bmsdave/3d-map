@@ -1,13 +1,8 @@
-//! The browser face of the SDK: a `Map` handle over a canvas.
-//!
-//! The host (lab, later applications) fetches tile bytes itself and
-//! hands them in once; the map builds a GPU bucket per tile and never
-//! rebuilds it for a frame. `debug()` is the observable state the lab's
-//! readouts and e2e read — diagnostics on request, never paid per frame.
-
 mod labels;
 mod input;
 mod transform;
+mod tile_store;
+mod renderer;
 
 pub use labels::{
     class_of, frame_candidates, frame_quads, label_identity, label_size_px, place_frame,
@@ -15,6 +10,8 @@ pub use labels::{
 };
 pub use input::{Input, pan_patch, wheel_zoom_step, zoom_about};
 pub use transform::{place_tile, TilePlacement};
+pub use tile_store::{tile_paths, HeightSource, TileStore};
+pub use renderer::{FrameRenderer, FrameTimings};
 
 #[cfg(target_arch = "wasm32")]
 mod gl;
