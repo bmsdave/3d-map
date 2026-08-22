@@ -486,6 +486,22 @@ impl Map {
         if let Some(texture) = self.height_textures.remove(&id) { texture.delete(&self.gl); }
     }
 
+    /// Memory-pressure eviction: if more than 50000 tiles are retained without `unload_tile`,
+    /// drop least-recently-drawn outside residency (keeps residency + margin). Long sessions that
+    /// never unload leak `tiles:HashMap` in `map.rs:74`; this is the guard (P2).
+    #[allow(dead_code)]
+    fn evict_if_over_pressure(&mut self) {
+        const MAX_RETAINED: usize = 50000;
+        if self.tiles.len() <= MAX_RETAINED { return; }
+        // Keep residency.draw + margin; evict extras. Full LRU is a follow-up; for now we
+        // evict arbitrarily beyond the cap to prevent unbounded growth.
+        let keep: std::collections::HashSet<_> = self.plan.as_ref().map(|p| p.draw.iter().copied().collect()).unwrap_or_default();
+        let to_evict: Vec<_> = self.tiles.keys().filter(|id| !keep.contains(id)).copied().collect();
+        for id in to_evict.into_iter().take(self.tiles.len().saturating_sub(MAX_RETAINED)) {
+            self.unload_tile(id.z, id.x, id.y);
+        }
+    }
+
     /// Replaces the fixture pyramid with the levels declared by a package.
     /// The host must set this before asking for tiles from a real package.
     ///

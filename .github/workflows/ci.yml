@@ -42,9 +42,9 @@ jobs:
           cache-dependency-path: applications/maps-v2-lab/package-lock.json
       - working-directory: applications/maps-v2-lab
         run: npm ci
-      # Пакеты лаборатории лежат в репозитории: студии рисуют настоящий
-      # Лондон, а не фикстуру. Битый тайл в коммите молча превратился бы
-      # в дыру на карте, поэтому дайджесты проверяются до сборки.
+      # Lab packages are committed: studies render real Trafalgar tiles, not fixtures.
+      # A corrupt tile would silently become a hole, so digests are verified before build.
+      # (RU original: Пакеты лаборатории лежат в репозитории: студии рисуют настоящий Лондон...)
       - run: cargo run --manifest-path libraries/maps-v2/Cargo.toml --bin maps2-ingest -- verify-package applications/maps-v2-lab/public/packages/trafalgar
       - run: cargo run --manifest-path libraries/maps-v2/Cargo.toml --bin maps2-ingest -- verify-package applications/maps-v2-lab/public/packages/trafalgar-city
       - working-directory: applications/maps-v2-lab
