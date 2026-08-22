@@ -1157,6 +1157,53 @@ adapter_version = "osm-v1""#,
 
     /// A package too large to list its tiles is still verified whole:
     /// the digests come off the directory instead of out of the manifest.
+    /// A level that finished once is not built twice: the record it left
+    /// restores the same digests and totals a fresh build would produce.
+    #[test]
+    fn a_finished_level_is_restored_rather_than_rebuilt() {
+        let output = tempfile::tempdir().expect("output");
+        let digests = ["12/2046/1361.mt2", "12/2047/1361.mt2"]
+            .into_iter()
+            .map(|path| TileDigest {
+                id: parse_tile_path(path).expect("path"),
+                sha256: format!("{:064x}", path.len()),
+            })
+            .collect::<Vec<_>>();
+
+        assert!(restore_level(output.path(), 12).expect("no record yet").is_none());
+
+        record_level(output.path(), 12, &CompletedLevel::of(7, 2, &digests)).expect("record");
+        let done = restore_level(output.path(), 12).expect("read").expect("a record");
+
+        assert_eq!(done.features, 7);
+        assert_eq!(done.height_tiles, 2);
+        assert_eq!(done.restored().expect("digests parse"), digests);
+
+        let mut totals = MapBuildTotals::default();
+        totals.absorb(&done);
+        assert_eq!((totals.features, totals.height_tiles), (7, 2));
+    }
+
+    /// A record from another version of this program is not trusted into
+    /// a package: the level is built again, which is always correct.
+    #[test]
+    fn an_unreadable_level_record_means_build_it_again() {
+        let output = tempfile::tempdir().expect("output");
+        fs::write(level_record(output.path(), 9), "{ not json at all").expect("write");
+        assert!(restore_level(output.path(), 9).expect("no error").is_none());
+
+        let strange = CompletedLevel {
+            features: 1,
+            height_tiles: 0,
+            covered: 0,
+            matched: 0,
+            digests: BTreeMap::from([("not/a/tile".to_string(), String::new())]),
+        };
+        record_level(output.path(), 8, &strange).expect("record");
+        let done = restore_level(output.path(), 8).expect("read").expect("a record");
+        assert!(done.restored().is_none(), "a path that does not parse is not a digest");
+    }
+
     /// Writing a level tile by tile has to leave the same package behind
     /// as building every tile first and writing them after — the same
     /// files, the same bytes, the same digests. This is the composition
@@ -1359,7 +1406,7 @@ fn build_map(plan_path: &str, output: &str) -> Result<(), String> {
     let mut totals = MapBuildTotals::default();
     let mut digests = Vec::new();
     for level in &levels {
-        write_conflated_level(*level, &layers, &grids, output, &mut totals, &mut digests)?;
+        build_or_resume_level(*level, &layers, &grids, output, &mut totals, &mut digests)?;
     }
     let (feature_count, height_tile_count) = (totals.features, totals.height_tiles);
     let (covered, matched) = (totals.covered, totals.matched);
@@ -1374,12 +1421,123 @@ fn build_map(plan_path: &str, output: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Builds one level, or takes it from what a previous run left behind.
+///
+/// A planet is measured in machine-days, and a run that dies at hour nine
+/// must not begin again at hour zero. A level that finished wrote down
+/// what it built; a level that did not wrote nothing and is built again.
+fn build_or_resume_level(
+    level: u8,
+    layers: &[LoadedLayer],
+    grids: &[DemGrid],
+    output: &Path,
+    totals: &mut MapBuildTotals,
+    digests: &mut Vec<TileDigest>,
+) -> Result<(), String> {
+    if let Some(done) = restore_level(output, level)?
+        && let Some(restored) = done.restored()
+    {
+        totals.absorb(&done);
+        digests.extend(restored);
+        println!("{{\"level\":{level},\"resumed\":true}}");
+        return Ok(());
+    }
+    let before = (totals.features, totals.height_tiles, digests.len());
+    write_conflated_level(level, layers, grids, output, totals, digests)?;
+    record_level(
+        output,
+        level,
+        &CompletedLevel::of(
+            totals.features - before.0,
+            totals.height_tiles - before.1,
+            &digests[before.2..],
+        ),
+    )
+}
+
+/// What one level's build produced, kept so a later run does not repeat
+/// it.
+///
+/// Written beside the tiles rather than among them: `.level-07.done` next
+/// to `7/`, so a package directory still holds only its pyramid, and a
+/// half-built level leaves no record and is simply built again.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct CompletedLevel {
+    features: usize,
+    height_tiles: usize,
+    covered: usize,
+    matched: usize,
+    /// Tile path to digest, the shape the manifest keeps them in — so the
+    /// record needs no serde on `TileId`, and a person reading it sees the
+    /// same paths they would see in `manifest.json`.
+    digests: BTreeMap<String, String>,
+}
+
+impl CompletedLevel {
+    fn of(features: usize, height_tiles: usize, digests: &[TileDigest]) -> Self {
+        Self {
+            features,
+            height_tiles,
+            covered: 0,
+            matched: 0,
+            digests: digest_map(digests),
+        }
+    }
+
+    /// The digests as the build carries them. A path that no longer parses
+    /// means a record this program did not write, and the level is built
+    /// again rather than trusted.
+    fn restored(&self) -> Option<Vec<TileDigest>> {
+        self.digests
+            .iter()
+            .map(|(path, sha256)| {
+                Some(TileDigest { id: parse_tile_path(path)?, sha256: sha256.clone() })
+            })
+            .collect()
+    }
+}
+
+fn level_record(output: &Path, level: u8) -> PathBuf {
+    output.join(format!(".level-{level:02}.done"))
+}
+
+/// A finished level from an earlier run, if there is one.
+fn restore_level(output: &Path, level: u8) -> Result<Option<CompletedLevel>, String> {
+    let path = level_record(output, level);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    // A record that will not parse is a record from another version of
+    // this program. Building the level again is always correct; refusing
+    // to start is not.
+    Ok(serde_json::from_str(&text).ok())
+}
+
+fn record_level(output: &Path, level: u8, done: &CompletedLevel) -> Result<(), String> {
+    let path = level_record(output, level);
+    let text = serde_json::to_string(done)
+        .map_err(|error| format!("cannot serialize level record: {error}"))?;
+    fs::write(&path, text).map_err(|error| format!("cannot write {}: {error}", path.display()))
+}
+
 #[derive(Default)]
 struct MapBuildTotals {
     features: usize,
     height_tiles: usize,
     covered: usize,
     matched: usize,
+}
+
+impl MapBuildTotals {
+    /// Counts a level this run did not build.
+    fn absorb(&mut self, done: &CompletedLevel) {
+        self.features += done.features;
+        self.height_tiles += done.height_tiles;
+        self.covered += done.covered;
+        self.matched += done.matched;
+    }
 }
 
 /// Resolves every layer at one level, reconciles them, and writes the

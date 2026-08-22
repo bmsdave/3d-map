@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Tiles are built across cores, in batches of sixty-four. Building a tile is
+  the expensive half of ingest — triangulation, line joins, label shaping —
+  and worth spreading, but only a batch is ever in the air, because not
+  holding tiles is what the spool is for. `std::thread::scope` rather than a
+  pool crate: the work is already batched, so a dependency would buy `chunks`
+  and `join`. A test builds the same batch over one thread and over
+  sixty-four and demands the same bytes, so the machine's core count cannot
+  reach the package.
+- `build-map` resumes. A level that finished writes `.level-NN.done` beside
+  the pyramid with its digests and totals; a later run restores it and moves
+  on. A planet is machine-days, and a run that dies at hour nine must not
+  begin again at hour zero. A half-built level leaves no record and is simply
+  built again, and a record this program cannot read is treated the same way
+  — rebuilding is always correct, refusing to start is not.
+
 - Ingest builds through a spool instead of holding the whole package. The
   pipeline took every prepared feature as one slice and handed back every
   tile as one `Vec`: for a carve the simplest thing that works, for a planet

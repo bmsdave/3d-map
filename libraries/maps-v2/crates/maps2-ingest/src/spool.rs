@@ -128,21 +128,79 @@ impl FeatureSpool {
     where
         SpoolError: From<E>,
     {
+        let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
         for shard in &mut self.shards {
             shard.flush()?;
             let file = shard.get_mut();
             file.seek(SeekFrom::Start(0))?;
-            let grouped = read_shard(file)?;
-            let mut ids: Vec<TileId> = grouped.keys().copied().collect();
-            ids.sort_by_key(|id| (id.z, id.x, id.y));
-            for id in ids {
-                let features: Vec<&PreparedFeature> = grouped[&id].iter().collect();
-                let (id, bytes) = build_tile(id, &features, terrain)?;
-                sink(id, bytes)?;
-            }
+            drain_shard(&read_shard(file)?, terrain, threads, &mut sink)?;
         }
         Ok(())
     }
+}
+
+/// One shard's tiles, built in batches and handed on in tile order.
+fn drain_shard<E>(
+    grouped: &HashMap<TileId, Vec<PreparedFeature>>,
+    terrain: &[DemGrid],
+    threads: usize,
+    sink: &mut impl FnMut(TileId, Vec<u8>) -> Result<(), E>,
+) -> Result<(), SpoolError>
+where
+    SpoolError: From<E>,
+{
+    let mut ids: Vec<TileId> = grouped.keys().copied().collect();
+    ids.sort_by_key(|id| (id.z, id.x, id.y));
+    for batch in ids.chunks(BATCH_TILES) {
+        for (id, bytes) in build_batch(batch, grouped, terrain, threads)? {
+            sink(id, bytes)?;
+        }
+    }
+    Ok(())
+}
+
+/// Tiles built before any of them are handed on.
+///
+/// Small on purpose. Building a tile is the expensive half of ingest —
+/// triangulation, line joins, label shaping — and worth spreading across
+/// cores, but the whole point of the spool is not to hold tiles, so only
+/// a batch is ever in the air: a hundred and fifty kilobytes each, times
+/// this, times nothing else.
+const BATCH_TILES: usize = 64;
+
+/// One batch, built across threads, returned in the order it was asked
+/// for.
+///
+/// The order matters more than it looks: it is what keeps a spooled build
+/// producing the same package as a single-threaded one, whatever the
+/// machine's core count. `std::thread::scope` rather than a thread pool
+/// crate — the work is already batched, and a dependency for `chunks` and
+/// `join` would be one to no purpose.
+fn build_batch(
+    batch: &[TileId],
+    grouped: &HashMap<TileId, Vec<PreparedFeature>>,
+    terrain: &[DemGrid],
+    threads: usize,
+) -> Result<Vec<(TileId, Vec<u8>)>, SpoolError> {
+    let one = |id: &TileId| -> Result<(TileId, Vec<u8>), SpoolError> {
+        let features: Vec<&PreparedFeature> = grouped[id].iter().collect();
+        Ok(build_tile(*id, &features, terrain)?)
+    };
+    if threads <= 1 || batch.len() <= 1 {
+        return batch.iter().map(one).collect();
+    }
+    let per_thread = batch.len().div_ceil(threads.min(batch.len()));
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = batch
+            .chunks(per_thread)
+            .map(|chunk| scope.spawn(move || chunk.iter().map(&one).collect::<Result<Vec<_>, _>>()))
+            .collect();
+        let mut built = Vec::with_capacity(batch.len());
+        for handle in handles {
+            built.extend(handle.join().map_err(|_| SpoolError::Corrupt("build thread panicked"))??);
+        }
+        Ok(built)
+    })
 }
 
 /// Which shard a tile's features live in.
@@ -454,6 +512,30 @@ mod tests {
             },
         )
         .expect("spooled build")
+    }
+
+    /// However many cores the machine has, the package is the same. The
+    /// batch is built across threads and collected back in the order it
+    /// was asked for; if that ordering ever slipped, this is what would
+    /// notice.
+    #[test]
+    fn the_thread_count_does_not_reach_the_output() {
+        let prepared = features();
+        let mut grouped: HashMap<TileId, Vec<PreparedFeature>> = HashMap::new();
+        for feature in prepared {
+            grouped.entry(feature.tile).or_default().push(feature);
+        }
+        let mut ids: Vec<TileId> = grouped.keys().copied().collect();
+        ids.sort_by_key(|id| (id.z, id.x, id.y));
+
+        let alone = build_batch(&ids, &grouped, &[], 1).expect("single-threaded");
+        for threads in [2, 3, 8, 64] {
+            assert_eq!(
+                build_batch(&ids, &grouped, &[], threads).expect("threaded"),
+                alone,
+                "with {threads} threads",
+            );
+        }
     }
 
     #[test]
