@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import istanbul from "vite-plugin-istanbul";
 
 // The config runs in Node, but the lab has no `@types/node` and does not
 // need one for a single environment variable.
@@ -26,6 +27,7 @@ export default defineConfig({
   base,
   server: { port, strictPort: true },
   preview: { port, strictPort: true },
+  plugins: process.env.COVERAGE ? [istanbul({ include: "src/*", exclude: ["node_modules", "test", "e2e"], extension: [".js", ".ts"], requireEnv: false })] : [],
   build: {
     rollupOptions: {
       // Two pages out of one build: the lab at "/" and the public demo at

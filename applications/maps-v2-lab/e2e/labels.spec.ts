@@ -5,7 +5,7 @@
 // списком: непересечение боксов, порядок рангов, детерминизм,
 // доля переразмещений при малом сдвиге, потолок бюджета.
 
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "./helpers/coverage";
 
 async function openCard(page: Page, id: string): Promise<Locator> {
   await page.goto(`/#/card/${id}`);

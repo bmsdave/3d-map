@@ -2,7 +2,7 @@
 // пиксели. Утверждения формулируются через состав и показания, а не
 // «объект X виден» — по правилу роадмапа о видимости как свойстве кадра.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/coverage";
 
 async function openCard(page: Page, id: string): Promise<void> {
   await page.goto(`/#/card/${id}`);

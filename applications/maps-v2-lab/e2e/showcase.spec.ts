@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/coverage";
 
 test("showcase presents twenty animated studies in GPU-safe reels", async ({ page }) => {
   await page.goto("/#/showcase");

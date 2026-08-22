@@ -2,7 +2,7 @@
 // живая доска и анимированная галерея. На доске одновременно живут шесть
 // карт, в галерее — четыре, и обе они — то, что человек видит первым.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "../helpers/coverage";
 
 import { attachMeasurement, BLOCK_BUDGET_MS, traceMeasurement } from "./harness";
 

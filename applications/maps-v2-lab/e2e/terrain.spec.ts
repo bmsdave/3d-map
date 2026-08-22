@@ -3,7 +3,7 @@
 // саму гору принимает эталон, а «северо-западный склон светлее» проверено
 // нативным тестом в maps2-render поверх той же фикстуры.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/coverage";
 
 async function openCard(page: Page, id: string): Promise<void> {
   await page.goto(`/#/card/${id}`);

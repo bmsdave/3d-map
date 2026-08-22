@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/coverage";
 
 // Демо-страница — публичная витрина: один пакет, один канвас, весь SDK.
 // Тест держит именно те обещания, которые она даёт посетителю: карта

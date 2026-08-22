@@ -15,12 +15,19 @@
     "build:fixtures": "cargo run --quiet --manifest-path ../../libraries/maps-v2/Cargo.toml --bin gen-fixtures -- public/fixtures",
     "preview": "vite preview",
     "test:e2e": "playwright test",
+    "test:e2e:coverage": "COVERAGE=1 playwright test && npm run coverage:report",
+    "coverage:report": "nyc report --temp-dir coverage/raw --report-dir coverage --reporter=lcov --reporter=text",
+    "coverage:collect": "COVERAGE=1 playwright test --reporter list",
     "test:perf": "playwright test --config playwright.perf.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
+    "c8": "^12.0.0",
+    "monocart-coverage-reports": "^2.13.0",
+    "nyc": "^18.0.0",
     "typescript": "5.9.3",
-    "vite": "8.0.13"
+    "vite": "8.0.13",
+    "vite-plugin-istanbul": "^9.0.1"
   }
 }

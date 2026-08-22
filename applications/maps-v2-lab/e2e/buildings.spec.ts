@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./helpers/coverage";
 
 test("3d-buildings: tilt changes the terrain-clamped building frame", async ({ page }) => {
   await page.goto("/#/card/buildings-3d");

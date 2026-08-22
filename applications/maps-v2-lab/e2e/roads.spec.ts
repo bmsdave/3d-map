@@ -6,7 +6,7 @@
 // одному стыку каждого вида, город даёт их тысячами. Проверяется то,
 // что и проверялось, — правило, а не его старый счёт.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/coverage";
 
 async function openRoads(page: Page) {
   await page.goto("/#/card/roads-micro");

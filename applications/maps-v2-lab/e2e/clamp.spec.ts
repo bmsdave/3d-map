@@ -8,7 +8,7 @@
 // z7, город начинается с z8), и отсутствующий тайл там — норма, на
 // которую рендерер отвечает откатом к более грубому уровню.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/coverage";
 
 interface Box { west: number; south: number; east: number; north: number }
 

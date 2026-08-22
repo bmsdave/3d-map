@@ -87,6 +87,13 @@ web_floors=(
   # test cannot load it and c8 never sees it. Its gate is the e2e suite, which
   # drives every gesture it wires up.
 )
+lab_floors=(
+  "sdk.ts:92"
+  "home.ts:86"
+  "main.ts:64"
+  "ui.ts:93"
+  "bands.ts:100"
+)
 
 failed=0
 
@@ -145,6 +152,10 @@ case "${area}" in
     (cd "${root}/applications/map-demo" && npx c8 --include 'app/**/*.mjs' \
       --reporter text node --test tests/*.test.mjs) > "${report}"
     check_against "${report}" c8 "${web_floors[@]}"
+    ;;
+  lab)
+    (cd "${root}/applications/maps-v2-lab" && npx nyc report --temp-dir coverage/raw --reporter=text 2>&1) > "${report}"
+    check_against "${report}" c8 "${lab_floors[@]}"
     ;;
   *)
     echo "unknown area: ${area}" >&2

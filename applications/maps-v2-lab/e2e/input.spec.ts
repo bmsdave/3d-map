@@ -2,7 +2,7 @@
 // сверяет числа камеры из debug(), а не пиксели: сдвиг центра в градусах,
 // зум, неподвижность точки под курсором.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./helpers/coverage";
 
 function stage(page: Page) {
   return page.getByTestId("stage");

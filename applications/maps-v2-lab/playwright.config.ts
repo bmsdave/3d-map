@@ -7,6 +7,7 @@ const origin = `http://localhost:${port}`;
 
 export default defineConfig({
   testDir: "e2e",
+  reporter: [["list"]],
   // Замеры производительности живут в своём конфиге: здесь три воркера,
   // а там время меряется в тишине.
   testIgnore: "perf/**",

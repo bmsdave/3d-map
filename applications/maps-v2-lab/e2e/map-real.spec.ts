@@ -1,4 +1,4 @@
-import { expect, test, type Route } from "@playwright/test";
+import { expect, test, type Route } from "./helpers/coverage";
 import { join } from "node:path";
 
 const mapPackageRoot = process.env.MAPS2_MAP_PACKAGE_ROOT;

@@ -3,7 +3,7 @@
 // строки в studies.ts, останется без замеров, и это видно сразу — счёт
 // студий здесь сверяется с реестром самой лабы.
 
-import { expect, test } from "@playwright/test";
+import { expect, test } from "../helpers/coverage";
 
 import { CARDS } from "../../src/cards";
 import {
