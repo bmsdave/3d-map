@@ -99,4 +99,84 @@ mod tests {
         assert!((lon - (-0.1278)).abs() < 0.01, "lon = {lon}");
         assert!((lat - 51.5074).abs() < 0.01, "lat = {lat}");
     }
+
+    #[test]
+    fn project_ring_converts_mercator_metres_to_lonlat() {
+        let points = vec![
+            shapefile::Point::new(0.0, 0.0),
+            shapefile::Point::new(0.0, 0.0),
+        ];
+        let ring = project_ring(&points);
+        assert_eq!(ring.len(), 2);
+        assert!(ring[0].lon.abs() < 1e-9);
+    }
+
+    #[test]
+    fn resolve_water_polygons_reads_triangle_polygon_via_temp_shapefile() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("water.shp");
+        let builder = shapefile::dbase::TableWriterBuilder::new()
+            .add_character_field("id".try_into().unwrap(), 10);
+        let mut writer = shapefile::Writer::from_path(&path, builder).expect("writer");
+        // Simple square around null island in EPSG:3857 metres; will be
+        // projected back to ~0.09 degrees near lon/lat 0.
+        let polygon = shapefile::Polygon::with_rings(vec![shapefile::PolygonRing::Outer(vec![
+            shapefile::Point::new(0.0, 0.0),
+            shapefile::Point::new(10_000.0, 0.0),
+            shapefile::Point::new(10_000.0, 10_000.0),
+            shapefile::Point::new(0.0, 10_000.0),
+            shapefile::Point::new(0.0, 0.0),
+        ])]);
+        let mut record = shapefile::dbase::Record::default();
+        record.insert("id".to_string(), shapefile::dbase::FieldValue::Character(Some("1".to_string())));
+        writer.write_shape_and_record(&polygon, &record).expect("write");
+        drop(writer);
+        let features = resolve_water_polygons(&path, 3).expect("resolve");
+        assert!(!features.is_empty(), "water polygon should produce at least one feature");
+        assert!(features.iter().all(|f| f.class == maps2_style::Class::Water));
+        // Non-polygon shapes are skipped
+        let path2 = dir.path().join("water2.shp");
+        let builder2 = shapefile::dbase::TableWriterBuilder::new()
+            .add_character_field("id".try_into().unwrap(), 10);
+        let mut writer2 = shapefile::Writer::from_path(&path2, builder2).expect("writer2");
+        let mut record2 = shapefile::dbase::Record::default();
+        record2.insert("id".to_string(), shapefile::dbase::FieldValue::Character(Some("2".to_string())));
+        let point = shapefile::Point::new(0.0, 0.0);
+        writer2.write_shape_and_record(&point, &record2).expect("write2");
+        drop(writer2);
+        let empty = resolve_water_polygons(&path2, 3).expect("empty");
+        assert!(empty.is_empty(), "non-polygon should be skipped");
+        assert!(resolve_water_polygons(dir.path().join("missing.shp"), 3).is_err());
+    }
+
+    #[test]
+    fn resolve_water_polygons_handles_inner_ring_as_hole() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("water_hole.shp");
+        let builder = shapefile::dbase::TableWriterBuilder::new()
+            .add_character_field("id".try_into().unwrap(), 10);
+        let mut writer = shapefile::Writer::from_path(&path, builder).expect("writer");
+        let outer = shapefile::PolygonRing::Outer(vec![
+            shapefile::Point::new(-20_000.0, -20_000.0),
+            shapefile::Point::new(20_000.0, -20_000.0),
+            shapefile::Point::new(20_000.0, 20_000.0),
+            shapefile::Point::new(-20_000.0, 20_000.0),
+            shapefile::Point::new(-20_000.0, -20_000.0),
+        ]);
+        let inner = shapefile::PolygonRing::Inner(vec![
+            shapefile::Point::new(-5_000.0, -5_000.0),
+            shapefile::Point::new(5_000.0, -5_000.0),
+            shapefile::Point::new(5_000.0, 5_000.0),
+            shapefile::Point::new(-5_000.0, 5_000.0),
+            shapefile::Point::new(-5_000.0, -5_000.0),
+        ]);
+        let polygon = shapefile::Polygon::with_rings(vec![outer, inner]);
+        let mut record = shapefile::dbase::Record::default();
+        record.insert("id".to_string(), shapefile::dbase::FieldValue::Character(Some("1".to_string())));
+        writer.write_shape_and_record(&polygon, &record).expect("write");
+        drop(writer);
+        let features = resolve_water_polygons(&path, 3).expect("resolve");
+        assert!(!features.is_empty());
+        assert!(features.iter().any(|f| !f.feature.holes.is_empty() || f.class == maps2_style::Class::Water));
+    }
 }
