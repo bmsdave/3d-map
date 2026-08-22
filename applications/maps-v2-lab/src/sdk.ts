@@ -198,22 +198,7 @@ const DECODE_SLICE_MS = 6;
 const MAX_PACKAGE_TILES = 50_000;
 const MAX_TILE_BYTES = 4 * 1024 * 1024;
 
-export async function loadPackCentre(pack: string): Promise<PackCentre> {
-  const response = await fetch(`/fixtures/${pack}/centre.json`);
-  return (await response.json()) as PackCentre;
-}
-
 let wasmReady: Promise<unknown> | null = null;
-
-async function loadFixtureTiles(map: InstanceType<typeof SdkMap>, pack: string): Promise<void> {
-  const manifest = (await (await fetch(`/fixtures/${pack}/manifest.json`)).json()) as string[];
-  await Promise.all(
-    manifest.map(async (path) => {
-      const response = await fetch(`/fixtures/${pack}/${path}.mt2`);
-      map.load_tile(new Uint8Array(await response.arrayBuffer()));
-    }),
-  );
-}
 
 function isTilePackageManifest(value: unknown): value is TilePackageManifest {
   if (!value || typeof value !== "object") return false;
@@ -442,7 +427,7 @@ function p95RenderMs(map: InstanceType<typeof SdkMap>, samples: number): number 
   return durations[Math.ceil(durations.length * 0.95) - 1] ?? Number.POSITIVE_INFINITY;
 }
 
-export async function createMap(canvas: HTMLCanvasElement, pack: string | null): Promise<MapHandle> {
+export async function createMap(canvas: HTMLCanvasElement): Promise<MapHandle> {
   if (!canvas.id) {
     nextCanvasId += 1;
     canvas.id = `sdk-canvas-${nextCanvasId}`;
@@ -451,7 +436,6 @@ export async function createMap(canvas: HTMLCanvasElement, pack: string | null):
   await wasmReady;
   const map = new SdkMap(canvas.id);
   const packageApi = packageMapApi(map);
-  if (pack) await loadFixtureTiles(map, pack);
   const handle: MapHandle = {
     setZoom: (zoom) => map.set_zoom(zoom),
     setSourceLevels: (levels) => packageApi.set_source_levels(new Uint8Array(levels)),
@@ -538,9 +522,7 @@ export interface PackageMap {
  * Карта на вырезанном пакете: демонд-загрузка вместо «скачать пакет
  * целиком».
  *
- * Фикстурный путь (`createMap(canvas, "ealing")`) тянет все тайлы пака
- * сразу — это нормально для двадцати килобайт синтетики и невозможно
- * для реальных ста мегабайт, тем более на шести живых контекстах доски.
+ * Фикстурный путь удалён — синтетика теперь только через `public/fixtures` напрямую.
  * Здесь работает тот же загрузчик, что и в карточках реальных данных.
  *
  * Карточке не приходится знать про загрузку: движение камеры само
@@ -551,7 +533,7 @@ export async function createPackageMap(
   canvas: HTMLCanvasElement,
   options: { zoom: number; centre?: { lon: number; lat: number }; manifestUrl?: string },
 ): Promise<PackageMap> {
-  const raw = await createMap(canvas, null);
+  const raw = await createMap(canvas);
   const loader = await createTilePackageLoader(raw, options.manifestUrl ?? TRAFALGAR_MANIFEST, {
     active: () => canvas.isConnected,
   });

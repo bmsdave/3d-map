@@ -92,7 +92,7 @@ export const packageLoader: CardSpec = {
       stage.replaceChildren(canvas);
       activeMap = null;
       try {
-        const map = await createMap(canvas, null);
+        const map = await createMap(canvas);
         const loader = await createTilePackageLoader(map, manifestUrl);
         if (request !== generation) return;
         const view = loader.manifest.view;

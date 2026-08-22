@@ -128,7 +128,7 @@ export const mapReal: CardSpec = {
       stage.style.position = "relative";
       stage.append(overlay.root);
       try {
-        const map = await createMap(canvas, null);
+        const map = await createMap(canvas);
         const loader: TilePackageLoader = await createTilePackageLoader(map, manifestUrl);
         if (request !== generation) return;
         map.setReliefExpressiveness(0.22);
