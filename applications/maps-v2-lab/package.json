@@ -19,7 +19,10 @@
     "coverage:report": "nyc report --temp-dir coverage/raw --report-dir coverage --reporter=lcov --reporter=text",
     "coverage:collect": "COVERAGE=1 playwright test --reporter list",
     "test:perf": "playwright test --config playwright.perf.config.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify": "bash ../../scripts/check.sh",
+    "verify:quick": "bash ../../scripts/check.sh --quick",
+    "verify:perf": "bash ../../scripts/check.sh --perf"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
