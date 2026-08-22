@@ -73,6 +73,10 @@ Header LE 20+10*count `lib.rs:16` + raster `0xFF00` 131072B or packed `0xFF01` `
 
 `manifest.json` `bin/maps2-ingest.rs:395` MT2 v6 sorted tiles, digests. Limit 50000, 4MiB `sdk.ts:194`.
 
+## Data
+
+Sources, tile bytes, band table, measured sizes: `docs/DATA.md`. Licence obligations: `docs/DATA-LICENCE.md`. Planet build: `pipelines/maps-v2-ingest/PLANET.md`.
+
 ## Where to edit
 
 | Task | Edit | Verify |

@@ -2,6 +2,92 @@
 
 ## Unreleased
 
+- The terrain cap follows the DEM, not a constant. `terrain_cap_for_metres`
+  gives the deepest level a source of a given ground resolution has anything
+  new to say at, and a build plan declares its own with `terrain_metres`.
+  Copernicus GLO-30 is 30 m and still gives z12; GEBCO's global grid is about
+  460 m and gives z8. For a planet built from GEBCO that is the difference
+  between roughly 214 GB of terrain and roughly 1 GB — four levels that would
+  have been interpolation the renderer already does for nothing.
+- PLANET.md now says where a package's bytes actually go, measured by parsing
+  all 778,329 features of the committed carve: geometry 49.6%, names 15.2%,
+  feature ids 14.1%, building fields 10.5% (on 8,087 buildings out of 778,329
+  features), the rest small fixed fields. And it says what that is worth:
+  making the empty fields optional and adding a per-section name table saves
+  21% raw but only 5% after deflate, because zeros and repeated names are
+  exactly what a compressor eats for free. Compress the sections; do not
+  redesign the header for size.
+
+- The spool writes deflated blocks. Its records are repetitive by nature —
+  the same street name on every part of a road, coordinates differing in
+  their low bits — and on a city's worth of streets they compress about five
+  to one: scratch disk falls from 1.39x the tiles being built to 0.31x
+  (measured, `tests/spool_size.rs`, which now fails if the compression is
+  ever lost). Level 1 deflate, because scratch is written once and read once
+  minutes later.
+- Every shard's last block is written before the first shard is read. Draining
+  lazily left the other shards' buffers in memory for the whole pass — a
+  thousand shards holding up to a megabyte each is a gigabyte, which is
+  exactly what the spool exists to avoid.
+- PLANET.md's numbers are marked measured or estimate, one by one, and the
+  source table is measured off a real cache: 88 GB of planet PBF (already
+  compressed — that *is* the compressed form), 7 GB of GEBCO, 150 MB of
+  vectors. It also says what is still uncompressed and worth compressing: MT2
+  vector sections, which deflate 2.0x on the committed carve and are the
+  largest remaining lever on the size of a published package.
+
+- A build plan for the planet (`plans/planet.toml`), its source descriptor, and
+  [PLANET.md](pipelines/maps-v2-ingest/PLANET.md) — the runbook for a build
+  measured in machine-days: what it needs, what it costs, how to pin a planet
+  file that is republished weekly, how to resume, how to verify a package too
+  large to carry per-tile digests, and how to host it. Vector to z14 rather
+  than z16 on purpose: below z14 a street is redrawn larger rather than
+  described better, and a city that wants more is a carve out of the same
+  package.
+- The demo takes `?package=<manifest url>`, so pointing it at a hosted package
+  is a link rather than a rebuild. Without it, the carve committed beside the
+  lab, which is what makes the page work from a clone.
+- `docs/DATA-LICENCE.md`: what a published package owes the people whose data
+  it is made of. The short of it is that MT2 tiles carry real geometry, which
+  makes a package a derived database rather than a produced work, so ODbL's
+  share-alike applies to the package itself and not only to the page drawing
+  it.
+
+- Tiles are built across cores, in batches of sixty-four. Building a tile is
+  the expensive half of ingest — triangulation, line joins, label shaping —
+  and worth spreading, but only a batch is ever in the air, because not
+  holding tiles is what the spool is for. `std::thread::scope` rather than a
+  pool crate: the work is already batched, so a dependency would buy `chunks`
+  and `join`. A test builds the same batch over one thread and over
+  sixty-four and demands the same bytes, so the machine's core count cannot
+  reach the package.
+- `build-map` resumes. A level that finished writes `.level-NN.done` beside
+  the pyramid with its digests and totals; a later run restores it and moves
+  on. A planet is machine-days, and a run that dies at hour nine must not
+  begin again at hour zero. A half-built level leaves no record and is simply
+  built again, and a record this program cannot read is treated the same way
+  — rebuilding is always correct, refusing to start is not.
+
+- Ingest builds through a spool instead of holding the whole package. The
+  pipeline took every prepared feature as one slice and handed back every
+  tile as one `Vec`: for a carve the simplest thing that works, for a planet
+  neither end fits — order 10^9 features in, 10^8 tiles out. Features are
+  now written to shard files as they are prepared, chosen by the tile they
+  belong to so every part of a tile lands together, and the drain reads one
+  shard at a time. What a build holds is one shard's features and one tile's
+  bytes; the number of shards is the knob that makes it fit.
+- The bytes do not change, and that is a test rather than a hope: `build_tile`
+  sorts a tile's features itself and the manifest sorts its tiles, so neither
+  the order features arrive in nor the order shards drain in reaches the
+  output. `the_spool_builds_the_same_bytes_as_memory` holds the spooled build
+  against the in-memory one, and a second test builds the same features over
+  one shard and over sixty-four to show the knob cannot change the result.
+- `build-map` writes each tile as it is built and keeps only its digest —
+  eighty bytes where it used to hold a hundred and fifty thousand. The
+  remaining ceiling is honest and worth naming: the digest list is still held
+  in memory, which is fine to around 10^7 tiles and needs an external sort
+  beyond that.
+
 - A manifest stops naming its tiles once there are more than 50,000 of them.
   A carve is a few hundred and the list earns its place: the client knows
   before asking whether a tile exists, and a digest each catches a corrupt

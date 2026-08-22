@@ -1,0 +1,22 @@
+# The whole planet, as OpenStreetMap publishes it.
+#
+# `sha256` and `source_date` are placeholders and must be filled in before
+# use. A planet file is republished weekly, and this repository cannot pin
+# a hash for a file it has never seen; the number is the one upstream
+# publishes beside the download, and `maps2-ingest verify` checks the file
+# against whatever is written here before a build touches it. A build
+# started against the placeholder fails at `verify`, which is the point of
+# leaving it obviously wrong rather than absent.
+#
+# See PLANET.md for where the file comes from and what it costs.
+
+[source]
+name = "planet-latest.osm.pbf"
+kind = "osm-pbf"
+url = "https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+source_date = "1970-01-01"
+licence = "ODbL-1.0"
+attribution = "© OpenStreetMap contributors"
+bounds = [-180.0, -85.0511, 180.0, 85.0511]
+adapter_version = "osm-v1"

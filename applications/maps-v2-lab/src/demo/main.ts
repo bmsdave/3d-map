@@ -13,7 +13,27 @@ import "./demo.css";
 /** Served from wherever the site is rooted — "/" in dev, "/<repo>/" on
  *  Pages. Tile URLs resolve against the manifest, so this one path is the
  *  only place the base has to be spelled out. */
-const MANIFEST = `${import.meta.env.BASE_URL}packages/trafalgar/manifest.json`;
+const CARVE = `${import.meta.env.BASE_URL}packages/trafalgar/manifest.json`;
+
+/**
+ * Which package the demo opens.
+ *
+ * `?package=<manifest url>` points it at another one — a planet built by
+ * `maps2-ingest build-map` and put on object storage, say — without a
+ * rebuild, because the only thing that changes between one package and
+ * another is this URL. Tile URLs resolve against the manifest, so a
+ * package hosted anywhere works as long as it answers CORS.
+ *
+ * Without the parameter it opens the carve committed beside the lab,
+ * which is what makes this page work from a clone with nothing else set
+ * up.
+ */
+function packageUrl(): string {
+  const asked = new URLSearchParams(window.location.search).get("package");
+  return asked && asked.trim().length > 0 ? asked.trim() : CARVE;
+}
+
+const MANIFEST = packageUrl();
 
 /// Below this the ground is a generalised world and relief is the only
 /// thing that makes it visible; at and above it a real city extract owns

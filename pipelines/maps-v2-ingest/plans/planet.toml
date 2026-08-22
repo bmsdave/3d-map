@@ -1,0 +1,112 @@
+# The whole world, built once, from every source that has something to
+# say about it. The same shape as london-world.toml — world layers that
+# speak everywhere, one OSM layer that outranks them wherever it reaches —
+# except that here the OSM layer is the planet, so it reaches everywhere
+# too and the levels below z8 are the only ground the generalisation still
+# owns.
+#
+# Read PLANET.md before starting this. It is machine-days of work against
+# a hundred gigabytes of source, and the two numbers that decide whether
+# it fits are in there.
+
+# GEBCO's global grid is 15 arc-seconds — about 460 m on the ground. The
+# deepest level worth giving a raster of its own follows from that: below
+# it every raster is an interpolation of the one above, which the renderer
+# does at draw time for nothing. Left at the 30 m default this plan would
+# write four levels of interpolation and spend roughly two hundred
+# gigabytes saying nothing.
+#
+# Raise this only with a finer DEM under it — Copernicus GLO-30 is 30, a
+# national LiDAR DTM is 1 — and then only for the ground that DEM covers.
+terrain_metres = 460.0
+
+# --- The world, generalised. Coastlines, borders, the roads that show at
+# --- continental zoom, and the places worth a label there.
+[[layer]]
+descriptor = "sources/world-water-polygons.toml"
+input = "cache/global/simplified-water-polygons-split-3857/simplified_water_polygons.shp"
+precedence = 10
+levels = [1, 7]
+
+[[layer]]
+descriptor = "sources/natural-earth-boundaries.toml"
+input = "cache/global/naturalearth/ne_10m_admin_0_boundary_lines_land/ne_10m_admin_0_boundary_lines_land.shp"
+precedence = 10
+levels = [1, 7]
+
+[[layer]]
+descriptor = "sources/natural-earth-roads.toml"
+input = "cache/global/naturalearth/ne_10m_roads/ne_10m_roads.shp"
+precedence = 10
+levels = [1, 7]
+
+# Places reach deeper than the rest of the generalisation: they are points,
+# and rank gating admits only the larger settlements at these levels, so
+# the whole planet costs a few thousand tiles rather than millions. Below
+# z11 the OSM layer carries its own names.
+[[layer]]
+descriptor = "sources/natural-earth-places.toml"
+input = "cache/global/naturalearth/ne_10m_populated_places/ne_10m_populated_places.shp"
+precedence = 10
+levels = [1, 11]
+
+# --- Every street on Earth. Outranks the world layers wherever the two
+# --- meet, which below z8 is everywhere.
+#
+# z14 rather than z16, and that is the cost decision this file makes.
+# Each level below quadruples the tile count against a planet's worth of
+# ground: z14 is the level where a street has a shape and a name, and z15
+# and z16 mostly redraw the same geometry larger. A city that wants those
+# is a carve — `maps2-ingest carve` cuts one out of this package without
+# rebuilding anything.
+[[layer]]
+descriptor = "sources/planet.toml"
+input = "cache/planet-latest.osm.pbf"
+precedence = 90
+levels = [8, 14]
+
+# --- Terrain. Bathymetry everywhere from GEBCO; land relief needs a
+# --- Copernicus tile per degree cell, which is why PLANET.md talks about
+# --- fetching those in the region you build in rather than over a home
+# --- connection. Terrain stops at z12 whatever is listed here — see
+# --- TERRAIN_MAX_Z — so these grids are read at the levels that use them
+# --- and no deeper.
+[[terrain]]
+descriptor = "sources/gebco-2026-n0-s-90-w-180-e-90.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w-180.0_e-90.0_geotiff.tif"
+stride = 4
+
+[[terrain]]
+descriptor = "sources/gebco-2026-n0-s-90-w-90-e0.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w-90.0_e0.0_geotiff.tif"
+stride = 4
+
+[[terrain]]
+descriptor = "sources/gebco-2026-n0-s-90-w0-e90.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w0.0_e90.0_geotiff.tif"
+stride = 4
+
+[[terrain]]
+descriptor = "sources/gebco-2026-n0-s-90-w90-e180.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n0.0_s-90.0_w90.0_e180.0_geotiff.tif"
+stride = 4
+
+[[terrain]]
+descriptor = "sources/gebco-2026-n90-s0-w-180-e-90.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w-180.0_e-90.0_geotiff.tif"
+stride = 4
+
+[[terrain]]
+descriptor = "sources/gebco-2026-n90-s0-w-90-e0.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w-90.0_e0.0_geotiff.tif"
+stride = 4
+
+[[terrain]]
+descriptor = "sources/gebco-2026-n90-s0-w0-e90.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w0.0_e90.0_geotiff.tif"
+stride = 4
+
+[[terrain]]
+descriptor = "sources/gebco-2026-n90-s0-w90-e180.toml"
+input = "cache/global/gebco_quadrants/gebco_2026_sub_ice_n90.0_s0.0_w90.0_e180.0_geotiff.tif"
+stride = 4

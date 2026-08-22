@@ -36,3 +36,21 @@ test("глобус распрямляется в плоскость по дор�
   await expect(readout(page, "shape")).toHaveText("flat", { timeout: 30_000 });
   await expect(readout(page, "zoom")).toHaveText("5.20");
 });
+
+test("«?package=» открывает другой пакет, без пересборки", async ({ page }) => {
+  // Тот же пакет, но названный явно: проверяется, что демо берёт адрес из
+  // строки запроса, а не из константы. Так планетный пакет с объектного
+  // хранилища подключается без единой правки кода.
+  await page.goto("/demo/?package=/packages/trafalgar/manifest.json");
+  await expect(page.locator(".demo-shell")).toHaveAttribute("data-ready", "true", {
+    timeout: 60_000,
+  });
+  await expect(readout(page, "tiles")).not.toHaveText("—");
+});
+
+test("непригодный «?package=» показывает ошибку, а не пустую страницу", async ({ page }) => {
+  await page.goto("/demo/?package=/packages/nothing-here/manifest.json");
+  const status = page.getByTestId("demo-status");
+  await expect(status).toHaveAttribute("data-state", "error", { timeout: 60_000 });
+  await expect(status).toContainText("nothing-here");
+});

@@ -2,7 +2,8 @@ use std::{collections::BTreeMap, env, fs, fs::File, path::{Path, PathBuf}, proce
 
 use maps2_ingest::{
     DemGrid, LayerClaim, PreparedFeature, SourceDescriptor, SourceKind, SourceLayer, build_tiles,
-    build_tiles_with_terrains, claimed_levels, conflate,
+    build_tiles_spooled, build_tiles_with_terrains, claimed_levels, conflate,
+    terrain_cap_for_metres, SpoolError, TERRAIN_MAX_Z,
     load_copernicus_dem, load_gebco_quadrant_decimated, load_gebco_window, read_descriptor,
     resolve_boundary_lines, resolve_major_roads, resolve_osm_pbf, resolve_place_labels,
     resolve_water_polygons, scan_osm_pbf, stitch_world_quadrants, validate_source,
@@ -1157,6 +1158,110 @@ adapter_version = "osm-v1""#,
 
     /// A package too large to list its tiles is still verified whole:
     /// the digests come off the directory instead of out of the manifest.
+    /// A level that finished once is not built twice: the record it left
+    /// restores the same digests and totals a fresh build would produce.
+    #[test]
+    fn a_finished_level_is_restored_rather_than_rebuilt() {
+        let output = tempfile::tempdir().expect("output");
+        let digests = ["12/2046/1361.mt2", "12/2047/1361.mt2"]
+            .into_iter()
+            .map(|path| TileDigest {
+                id: parse_tile_path(path).expect("path"),
+                sha256: format!("{:064x}", path.len()),
+            })
+            .collect::<Vec<_>>();
+
+        assert!(restore_level(output.path(), 12).expect("no record yet").is_none());
+
+        record_level(output.path(), 12, &CompletedLevel::of(7, 2, &digests)).expect("record");
+        let done = restore_level(output.path(), 12).expect("read").expect("a record");
+
+        assert_eq!(done.features, 7);
+        assert_eq!(done.height_tiles, 2);
+        assert_eq!(done.restored().expect("digests parse"), digests);
+
+        let mut totals = MapBuildTotals::default();
+        totals.absorb(&done);
+        assert_eq!((totals.features, totals.height_tiles), (7, 2));
+    }
+
+    /// A record from another version of this program is not trusted into
+    /// a package: the level is built again, which is always correct.
+    #[test]
+    fn an_unreadable_level_record_means_build_it_again() {
+        let output = tempfile::tempdir().expect("output");
+        fs::write(level_record(output.path(), 9), "{ not json at all").expect("write");
+        assert!(restore_level(output.path(), 9).expect("no error").is_none());
+
+        let strange = CompletedLevel {
+            features: 1,
+            height_tiles: 0,
+            covered: 0,
+            matched: 0,
+            digests: BTreeMap::from([("not/a/tile".to_string(), String::new())]),
+        };
+        record_level(output.path(), 8, &strange).expect("record");
+        let done = restore_level(output.path(), 8).expect("read").expect("a record");
+        assert!(done.restored().is_none(), "a path that does not parse is not a digest");
+    }
+
+    /// A few named roads long enough to cross tile boundaries, which is
+    /// what makes a package out of more than one file.
+    fn roads_over_several_tiles() -> Vec<maps2_ingest::PreparedFeature> {
+        [(10_u64, -0.1278_f64, 51.5074_f64), (11, -0.1180, 51.5100), (12, 0.0021, 51.4769)]
+            .into_iter()
+            .flat_map(|(id, lon, lat)| {
+                maps2_ingest::prepare_features(
+                    id,
+                    &[("highway", "primary"), ("name", "Long Road")],
+                    &[
+                        maps2_units::Lonlat { lon, lat },
+                        maps2_units::Lonlat { lon: lon + 0.02, lat: lat + 0.01 },
+                    ],
+                    12,
+                )
+            })
+            .collect()
+    }
+
+    /// Writing a level tile by tile has to leave the same package behind
+    /// as building every tile first and writing them after — the same
+    /// files, the same bytes, the same digests. This is the composition
+    /// `write_conflated_level` performs, checked without a build plan.
+    #[test]
+    fn a_spooled_level_writes_the_same_package_as_an_in_memory_one() {
+        let features = roads_over_several_tiles();
+        assert!(features.len() > 2, "the fixture spreads over tiles");
+
+        let spooled = tempfile::tempdir().expect("spooled output");
+        let mut spooled_digests = Vec::new();
+        let heights = write_spooled_tiles(
+            spooled.path(),
+            features.clone(),
+            &[],
+            maps2_ingest::TERRAIN_MAX_Z,
+            &mut spooled_digests,
+        )
+        .expect("spooled build");
+        assert_eq!(heights, 0, "no terrain grids, so no terrain tiles");
+
+        let direct = tempfile::tempdir().expect("in-memory output");
+        let tiles = build_tiles_with_terrains(&features, &[]).expect("in-memory build");
+        let direct_digests = tile_digests(&tiles);
+        write_tiles(direct.path(), &tiles).expect("write");
+
+        assert_eq!(
+            package_tile_digests(spooled.path()).expect("walk spooled"),
+            package_tile_digests(direct.path()).expect("walk direct"),
+            "the two packages are the same files with the same bytes",
+        );
+        assert_eq!(
+            package_sha256(&spooled_digests),
+            package_sha256(&direct_digests),
+            "and the manifest would hash them the same",
+        );
+    }
+
     #[test]
     fn a_package_without_listed_digests_is_verified_from_its_directory() {
         let root = tempfile::tempdir().expect("temporary package");
@@ -1249,6 +1354,17 @@ struct PlanTerrain {
 
 #[derive(Debug, Deserialize)]
 struct BuildPlan {
+    /// Ground resolution of the DEM this plan builds from, in metres.
+    ///
+    /// The deepest level that gets a raster of its own follows from it:
+    /// below that the rasters are interpolations of the one above, which
+    /// the renderer does at draw time for nothing. Copernicus GLO-30 is
+    /// 30 and gives z12; GEBCO's 15 arc-second grid is about 460 and
+    /// gives z9, which for a planet is the difference between three
+    /// gigabytes of terrain and two hundred.
+    ///
+    /// Absent, the default cap stands.
+    terrain_metres: Option<f64>,
     #[serde(default)]
     layer: Vec<PlanLayer>,
     #[serde(default)]
@@ -1301,6 +1417,7 @@ fn build_map(plan_path: &str, output: &str) -> Result<(), String> {
     if let Ok(world) = stitch_world_quadrants(&grids) {
         grids.push(world);
     }
+    let terrain_max_z = plan.terrain_metres.map_or(TERRAIN_MAX_Z, terrain_cap_for_metres);
     let levels = claimed_levels(&layers.iter().map(|l| l.claim).collect::<Vec<_>>());
     if levels.is_empty() {
         return Err("a build plan needs at least one layer".to_string());
@@ -1309,8 +1426,10 @@ fn build_map(plan_path: &str, output: &str) -> Result<(), String> {
     let output = Path::new(output);
     let mut totals = MapBuildTotals::default();
     let mut digests = Vec::new();
+    println!("{{\"terrain_max_level\":{terrain_max_z}}}");
+    let sources = LevelSources { layers: &layers, grids: &grids, terrain_max_z };
     for level in &levels {
-        write_conflated_level(*level, &layers, &grids, output, &mut totals, &mut digests)?;
+        build_or_resume_level(*level, &sources, output, &mut totals, &mut digests)?;
     }
     let (feature_count, height_tile_count) = (totals.features, totals.height_tiles);
     let (covered, matched) = (totals.covered, totals.matched);
@@ -1325,6 +1444,115 @@ fn build_map(plan_path: &str, output: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Everything a level is built from: the layers, the terrain, and how
+/// deep that terrain is worth writing. Travels together because it is the
+/// same for every level of a build and is only ever read.
+struct LevelSources<'a> {
+    layers: &'a [LoadedLayer],
+    grids: &'a [DemGrid],
+    terrain_max_z: u8,
+}
+
+/// Builds one level, or takes it from what a previous run left behind.
+///
+/// A planet is measured in machine-days, and a run that dies at hour nine
+/// must not begin again at hour zero. A level that finished wrote down
+/// what it built; a level that did not wrote nothing and is built again.
+fn build_or_resume_level(
+    level: u8,
+    sources: &LevelSources<'_>,
+    output: &Path,
+    totals: &mut MapBuildTotals,
+    digests: &mut Vec<TileDigest>,
+) -> Result<(), String> {
+    if let Some(done) = restore_level(output, level)?
+        && let Some(restored) = done.restored()
+    {
+        totals.absorb(&done);
+        digests.extend(restored);
+        println!("{{\"level\":{level},\"resumed\":true}}");
+        return Ok(());
+    }
+    let before = (totals.features, totals.height_tiles, digests.len());
+    write_conflated_level(level, sources, output, totals, digests)?;
+    record_level(
+        output,
+        level,
+        &CompletedLevel::of(
+            totals.features - before.0,
+            totals.height_tiles - before.1,
+            &digests[before.2..],
+        ),
+    )
+}
+
+/// What one level's build produced, kept so a later run does not repeat
+/// it.
+///
+/// Written beside the tiles rather than among them: `.level-07.done` next
+/// to `7/`, so a package directory still holds only its pyramid, and a
+/// half-built level leaves no record and is simply built again.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct CompletedLevel {
+    features: usize,
+    height_tiles: usize,
+    covered: usize,
+    matched: usize,
+    /// Tile path to digest, the shape the manifest keeps them in — so the
+    /// record needs no serde on `TileId`, and a person reading it sees the
+    /// same paths they would see in `manifest.json`.
+    digests: BTreeMap<String, String>,
+}
+
+impl CompletedLevel {
+    fn of(features: usize, height_tiles: usize, digests: &[TileDigest]) -> Self {
+        Self {
+            features,
+            height_tiles,
+            covered: 0,
+            matched: 0,
+            digests: digest_map(digests),
+        }
+    }
+
+    /// The digests as the build carries them. A path that no longer parses
+    /// means a record this program did not write, and the level is built
+    /// again rather than trusted.
+    fn restored(&self) -> Option<Vec<TileDigest>> {
+        self.digests
+            .iter()
+            .map(|(path, sha256)| {
+                Some(TileDigest { id: parse_tile_path(path)?, sha256: sha256.clone() })
+            })
+            .collect()
+    }
+}
+
+fn level_record(output: &Path, level: u8) -> PathBuf {
+    output.join(format!(".level-{level:02}.done"))
+}
+
+/// A finished level from an earlier run, if there is one.
+fn restore_level(output: &Path, level: u8) -> Result<Option<CompletedLevel>, String> {
+    let path = level_record(output, level);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    // A record that will not parse is a record from another version of
+    // this program. Building the level again is always correct; refusing
+    // to start is not.
+    Ok(serde_json::from_str(&text).ok())
+}
+
+fn record_level(output: &Path, level: u8, done: &CompletedLevel) -> Result<(), String> {
+    let path = level_record(output, level);
+    let text = serde_json::to_string(done)
+        .map_err(|error| format!("cannot serialize level record: {error}"))?;
+    fs::write(&path, text).map_err(|error| format!("cannot write {}: {error}", path.display()))
+}
+
 #[derive(Default)]
 struct MapBuildTotals {
     features: usize,
@@ -1333,30 +1561,91 @@ struct MapBuildTotals {
     matched: usize,
 }
 
+impl MapBuildTotals {
+    /// Counts a level this run did not build.
+    fn absorb(&mut self, done: &CompletedLevel) {
+        self.features += done.features;
+        self.height_tiles += done.height_tiles;
+        self.covered += done.covered;
+        self.matched += done.matched;
+    }
+}
+
 /// Resolves every layer at one level, reconciles them, and writes the
 /// tiles that come out.
 fn write_conflated_level(
     level: u8,
-    layers: &[LoadedLayer],
-    grids: &[DemGrid],
+    sources: &LevelSources<'_>,
     output: &Path,
     totals: &mut MapBuildTotals,
     digests: &mut Vec<TileDigest>,
 ) -> Result<(), String> {
-    let mut sources = Vec::new();
-    for layer in layers {
-        sources.push(SourceLayer { claim: layer.claim, features: layer.resolve(level)? });
+    let mut layers = Vec::new();
+    for layer in sources.layers {
+        layers.push(SourceLayer { claim: layer.claim, features: layer.resolve(level)? });
     }
-    let (features, report) = conflate(level, sources);
+    let (features, report) = conflate(level, layers);
     totals.covered += report.covered;
     totals.matched += report.matched;
     totals.features += features.len();
-    let tiles = build_tiles_with_terrains(&features, grids)
-        .map_err(|error| format!("cannot encode MT2: {error:?}"))?;
+
     totals.height_tiles +=
-        tiles.iter().filter(|(tile, _)| grids.iter().any(|grid| grid.covers_tile(*tile))).count();
-    digests.extend(tile_digests(&tiles));
-    write_tiles(output, &tiles)
+        write_spooled_tiles(output, features, sources.grids, sources.terrain_max_z, digests)
+            .map_err(|error| format!("cannot build level {level}: {error}"))?;
+    Ok(())
+}
+
+/// Builds a level's features into `output`, writing each tile as it is
+/// made and keeping only its digest. Returns how many of them carried
+/// terrain.
+///
+/// Through a spool, not a `Vec`: a level of a planet is tens of millions
+/// of tiles and terabytes of bytes, and holding them all to write them
+/// afterwards is the one thing such a build certainly cannot do. What
+/// stays behind per tile is its digest — eighty bytes against a hundred
+/// and fifty thousand.
+fn write_spooled_tiles(
+    output: &Path,
+    features: Vec<maps2_ingest::PreparedFeature>,
+    grids: &[DemGrid],
+    terrain_max_z: u8,
+    digests: &mut Vec<TileDigest>,
+) -> Result<usize, String> {
+    let scratch = output.join(".spool");
+    let mut height_tiles = 0;
+    let build = build_tiles_spooled(
+        features,
+        grids,
+        terrain_max_z,
+        &scratch,
+        SPOOL_SHARDS,
+        |tile, bytes| -> Result<(), SpoolError> {
+            if grids.iter().any(|grid| grid.covers_tile(tile)) {
+                height_tiles += 1;
+            }
+            digests.push(TileDigest { id: tile, sha256: sha256(&bytes) });
+            write_tiles(output, &[(tile, bytes)]).map_err(io_error)
+        },
+    );
+    // The scratch goes whether the build worked or not: a failed run must
+    // not leave gigabytes of shards behind for the next one to trip on.
+    let _ = fs::remove_dir_all(&scratch);
+    build.map_err(|error| error.to_string())?;
+    Ok(height_tiles)
+}
+
+/// How many shards a level's features are spread across.
+///
+/// Memory during the drain is one shard's features, so this is the knob
+/// that decides whether a build fits. A thousand keeps a planet's level
+/// down to millions of features at a time while staying far inside any
+/// open-file limit.
+const SPOOL_SHARDS: usize = 1024;
+
+/// The sink writes tiles, and writing is where its errors come from; the
+/// spool speaks its own error type, so they meet here.
+fn io_error(message: String) -> SpoolError {
+    SpoolError::Io(std::io::Error::other(message))
 }
 
 fn load_plan_layers(plan: &BuildPlan) -> Result<Vec<LoadedLayer>, String> {

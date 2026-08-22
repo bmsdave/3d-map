@@ -14,6 +14,8 @@ pipelines/maps-v2-ingest/packages/
 # baseline.json, наоборот, версионируется — он и есть точка отсчёта.
 applications/maps-v2-lab/e2e/perf/last-run.json
 .worktrees/
-.agents/
-.opencode/
-skills-lock.json
+
+# Отчёт покрытия vitest: генерируется каждым прогоном.
+applications/maps-v2-lab/coverage/
+# Второе место для git worktree — рабочие копии, а не исходники.
+.claude/worktrees/
