@@ -5,9 +5,7 @@
 
 use std::{env, fs, path::Path, path::PathBuf, process};
 
-use maps2_fixtures::{
-    ealing_tiles, ridge_tiles, roads_centre, roads_tiles, EALING, RIDGE_DETAIL_LEVEL, ROADS_ZOOM,
-};
+use maps2_fixtures::{ealing_tiles, ridge_tiles, EALING, RIDGE_DETAIL_LEVEL};
 use maps2_units::{Lonlat, TileId, locate};
 use sha2::{Digest, Sha256};
 
@@ -17,7 +15,6 @@ fn main() {
         process::exit(2);
     };
     write_pack(&out.join("ealing"), &ealing_tiles(), EALING, 12.0);
-    write_pack(&out.join("roads"), &roads_tiles(), roads_centre(), ROADS_ZOOM);
     write_pack(&out.join("ridge"), &ridge_tiles(), EALING, f64::from(RIDGE_DETAIL_LEVEL));
     write_pack(&out.join("cache"), &cache_tiles(), EALING, 12.0);
 }
