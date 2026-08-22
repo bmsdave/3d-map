@@ -313,8 +313,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("places.shp");
         let builder = shapefile::dbase::TableWriterBuilder::new()
-            .add_character_field("NAME".try_into().unwrap(), 50)
-            .add_numeric_field("SCALERANK".try_into().unwrap(), 10, 0);
+            .add_character_field("NAME".try_into().expect("static field name fits DBF"), 50)
+            .add_numeric_field("SCALERANK".try_into().expect("static field name fits DBF"), 10, 0);
         let mut writer = shapefile::Writer::from_path(&path, builder).expect("writer");
         let mut record = shapefile::dbase::Record::default();
         record.insert("NAME".to_string(), FieldValue::Character(Some("London".to_string())));
@@ -329,8 +329,8 @@ mod tests {
         // Missing NAME is skipped
         let path2 = dir.path().join("places2.shp");
         let builder2 = shapefile::dbase::TableWriterBuilder::new()
-            .add_character_field("NAME".try_into().unwrap(), 50)
-            .add_numeric_field("SCALERANK".try_into().unwrap(), 10, 0);
+            .add_character_field("NAME".try_into().expect("static field name fits DBF"), 50)
+            .add_numeric_field("SCALERANK".try_into().expect("static field name fits DBF"), 10, 0);
         let mut writer2 = shapefile::Writer::from_path(&path2, builder2).expect("writer2");
         let mut empty_record = shapefile::dbase::Record::default();
         empty_record.insert("NAME".to_string(), FieldValue::Character(None));
@@ -349,7 +349,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("bounds.shp");
         let builder = shapefile::dbase::TableWriterBuilder::new()
-            .add_numeric_field("MIN_ZOOM".try_into().unwrap(), 10, 2);
+            .add_numeric_field("MIN_ZOOM".try_into().expect("static field name fits DBF"), 10, 2);
         let mut writer = shapefile::Writer::from_path(&path, builder).expect("writer");
         let mut record = shapefile::dbase::Record::default();
         record.insert("MIN_ZOOM".to_string(), FieldValue::Numeric(Some(2.0)));
@@ -366,7 +366,7 @@ mod tests {
         // MIN_ZOOM filtering: high MIN_ZOOM filtered at low level
         let path2 = dir.path().join("bounds2.shp");
         let builder2 = shapefile::dbase::TableWriterBuilder::new()
-            .add_numeric_field("MIN_ZOOM".try_into().unwrap(), 10, 2);
+            .add_numeric_field("MIN_ZOOM".try_into().expect("static field name fits DBF"), 10, 2);
         let mut writer2 = shapefile::Writer::from_path(&path2, builder2).expect("writer2");
         let mut record2 = shapefile::dbase::Record::default();
         record2.insert("MIN_ZOOM".to_string(), FieldValue::Numeric(Some(10.0)));
@@ -386,12 +386,12 @@ mod tests {
     /// shapefile plumbing and differ only in the record they carry.
     fn write_road_shapefile(path: &std::path::Path, kind: &str, scalerank: f64, name: Option<&str>) {
         let mut builder = shapefile::dbase::TableWriterBuilder::new()
-            .add_character_field("type".try_into().unwrap(), 30)
-            .add_numeric_field("scalerank".try_into().unwrap(), 10, 0);
+            .add_character_field("type".try_into().expect("static field name fits DBF"), 30)
+            .add_numeric_field("scalerank".try_into().expect("static field name fits DBF"), 10, 0);
         if name.is_some() {
             builder = builder
-                .add_character_field("label".try_into().unwrap(), 30)
-                .add_character_field("name".try_into().unwrap(), 30);
+                .add_character_field("label".try_into().expect("static field name fits DBF"), 30)
+                .add_character_field("name".try_into().expect("static field name fits DBF"), 30);
         }
         let mut writer = shapefile::Writer::from_path(path, builder).expect("writer");
         let mut record = shapefile::dbase::Record::default();

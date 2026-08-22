@@ -40,7 +40,7 @@ root.
 - `maps2-ingest carve`, which cuts a small package out of a built one: whole
   levels where the whole planet is on screen, a tile-radius square around a
   subject below that.
-- An **MT2 v5** tile format with v1–v4 readers, deterministic synthetic fixtures, Rust unit
+- An **MT2 v6** tile format with v1–v6 readers, deterministic synthetic fixtures, Rust unit
   tests, Playwright visual tests, and an executable p95 frame budget of ≤10 ms. Buildings
   carry base/top height, roof shape, and facade material, with documented fallbacks for
   incomplete OSM tags — see the [tile format spec](libraries/maps-v2/docs/tile-format.md).
@@ -419,7 +419,7 @@ working Wasm integration example.
 | Area | Responsibility |
 | --- | --- |
 | `maps2-units`, `maps2-camera` | Coordinate units, camera state, flat/globe projection |
-| `maps2-tile` | MT2 v5 writing and validated v1–v4 reading |
+| `maps2-tile` | MT2 v6 writing and validated v1–v6 reading |
 | `maps2-style`, `maps2-render` | Class visibility, persistent mesh buckets, road and terrain draws |
 | `maps2-text` | Deterministic SDF atlas and collision-managed point labels |
 | `maps2-fixtures` | Reproducible synthetic Ealing, road-pathology, and ridge packages |

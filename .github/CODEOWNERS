@@ -1,0 +1,5 @@
+# Bus factor: single owner bmsdave — require self-review checklist on PR.
+* @bmsdave
+/libraries/maps-v2/crates/maps2-tile/ @bmsdave
+/libraries/maps-v2/crates/maps2-web/ @bmsdave
+/applications/maps-v2-lab/ @bmsdave

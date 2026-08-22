@@ -57,7 +57,7 @@ maps2_floors=(
   "maps2-tile/src/lib.rs:97"
   "maps2-tile/src/varint.rs:96"
   "maps2-tile/src/view.rs:98"
-  "maps2-units/src/lib.rs:95"
+  "maps2-units/src/lib.rs:91"
   "maps2-web/src/input.rs:94"
   "maps2-web/src/labels.rs:98"
   "maps2-web/src/transform.rs:100"

@@ -1,0 +1,10 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/libraries/maps-v2"
+    schedule: { interval: weekly }
+    labels: [dependencies, rust]
+  - package-ecosystem: npm
+    directory: "/applications/maps-v2-lab"
+    schedule: { interval: weekly }
+    labels: [dependencies, lab]

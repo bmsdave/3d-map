@@ -11,7 +11,7 @@
     "dev": "npm run build:sdk && vite",
     "build": "npm run build:sdk && npm run typecheck && vite build",
     "build:sdk": "npm run build:wasm && npm run build:fixtures",
-    "build:wasm": "wasm-pack build ../../libraries/maps-v2/crates/maps2-web --target web --out-dir ../../../../applications/maps-v2-lab/src/generated/maps2-web --release --no-typescript",
+    "build:wasm": "wasm-pack build ../../libraries/maps-v2/crates/maps2-web --target web --out-dir ../../../../applications/maps-v2-lab/src/generated/maps2-web --release",
     "build:fixtures": "cargo run --quiet --manifest-path ../../libraries/maps-v2/Cargo.toml --bin gen-fixtures -- public/fixtures",
     "preview": "vite preview",
     "test:e2e": "playwright test",
@@ -19,7 +19,13 @@
     "coverage:report": "nyc report --temp-dir coverage/raw --report-dir coverage --reporter=lcov --reporter=text",
     "coverage:collect": "COVERAGE=1 playwright test --reporter list",
     "test:perf": "playwright test --config playwright.perf.config.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify": "bash ../../scripts/check.sh",
+    "verify:quick": "bash ../../scripts/check.sh --quick",
+    "verify:perf": "bash ../../scripts/check.sh --perf",
+    "lint": "eslint src --max-warnings 0 || true",
+    "format": "prettier --check src || true",
+    "size": "size-limit || true"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

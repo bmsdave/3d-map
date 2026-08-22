@@ -5,7 +5,7 @@ Full spec: `tile-format.md` (RU). This is the English token-efficient summary.
 ## Constants
 
 * `MAGIC = b"MT2\0"` `crates/maps2-tile/src/lib.rs:48`
-* `FORMAT_VERSION = 5` `lib.rs:49` (readers accept 1-5)
+* `FORMAT_VERSION = 6` `lib.rs:52` (readers accept 1-6)
 * `TILE_EXTENT = 65536` `maps2-units/src/lib.rs:18` — <10cm at z16
 * `RASTER_CLASS_BASE = 0xFF00` `lib.rs:58` — class >=0xFF00 is raster
 
@@ -30,7 +30,7 @@ Zigzag: `enc(v)=(v<<1)^(v>>31)`, varint 7b continuation, >5 bytes = BadVarint.
 
 ## Version history
 
-1: id u32, no building. 2: base/top/roof. 3: holes. 4: id u64. 5: material (reader fills Unknown for v2-4).
+1: id u32, no building. 2: base/top/roof. 3: holes. 4: id u64. 5: material (reader fills Unknown for v2-4). 6: packed heights 0xFF01 beside 0xFF00.
 
 ## Error contract `lib.rs:74`
 
@@ -38,4 +38,4 @@ Never panics. `TooShort|BadMagic|UnsupportedVersion|SectionOutOfBounds|Truncated
 
 ## When to edit
 
-Bump `FORMAT_VERSION` `lib.rs:49` → update `tile-format.md` → regenerate fixtures → update golden hash `maps2-fixtures/src/lib.rs:382`.
+Bump `FORMAT_VERSION` `lib.rs:52` → update `tile-format.md` → regenerate fixtures → update golden hash `maps2-fixtures/src/lib.rs:382`.

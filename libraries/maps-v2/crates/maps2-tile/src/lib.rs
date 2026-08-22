@@ -15,7 +15,7 @@
 //!
 //! ```text
 //! 0   magic  "MT2\0"
-//! 4   version u16 LE (= 5)
+//! 4   version u16 LE (= 6)
 //! 6   z u8, reserved u8
 //! 8   x u32, y u32
 //! 16  section_count u16, reserved u16

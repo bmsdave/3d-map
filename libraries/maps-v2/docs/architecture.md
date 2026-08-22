@@ -48,7 +48,7 @@ synthetic packages the tests and offline studies run on.
 |---|---|
 | `maps2-units` | Coordinate and unit vocabulary; the mercator conversions |
 | `maps2-camera` | Camera state, validation and clamping, flat↔globe projection |
-| `maps2-tile` | MT2 v5 writing, validated v1–v5 reading |
+| `maps2-tile` | MT2 v6 writing, validated v1–v6 reading |
 | `maps2-style` | Class visibility bands, colours, screen-pixel road widths |
 | `maps2-render` | Residency planning and the per-tile mesh buckets |
 | `maps2-text` | SDF atlas, glyph layout, label collision |
@@ -102,15 +102,15 @@ The world has two shapes, blended rather than switched. `Globeness::at(zoom)` ma
 
 Tilt today is stored and clamped, nothing more. The crate's module doc says so explicitly: "Tilt is stored but not yet applied by `project`; it becomes real with the renderer stage" (`crates/maps2-camera/src/lib.rs:7-8`). What tilt *does* affect is one shader — see the GL layer below.
 
-### The MT2 v5 tile format
+### The MT2 v6 tile format
 
 MT2 is documented byte-for-byte in [tile-format.md](tile-format.md) (in Russian; summarised here) and implemented in `crates/maps2-tile/src/`. The format was frozen at implementation-plan step 3.4 on 11 August 2026; version 2 was added for real buildings, and version 5 added facade material and widened the feature identifier to 64 bits on 18 August 2026. From that point, any layout change is a new header version and a deliberate fixture migration, never an in-place edit, because bytes travel to clients and into caches (`docs/tile-format.md:1-8`; mirrored in `crates/maps2-tile/src/lib.rs:11-14`).
 
 The design choices and why: binary, not JSON, because JSON parsing cost 54% of a frame in v1; sections are found by an O(1) offset table so a reader is a zero-copy view over the caller's buffer and corruption in one section doesn't block reading another; geometry uses integer coordinates on the 65536-step tile grid for the same sub-10cm-at-z16 reason as `maps2-units`; adjacent vertices are encoded as varint deltas since they tend to be close together; and a road is stored as a centreline, not a polygon — width lives in style and is expanded in the shader, because a width baked in metres (v1) produced a 48 km-wide road once the camera zoomed out to see the whole Earth (`docs/tile-format.md:10-20`).
 
-**Header** (all little-endian): offset 0, 4 bytes, magic `4D 54 32 00` ("MT2\0"); offset 4, 2 bytes, `version` (= 5); offset 6, 1 byte, `z`; offset 7, 1 byte reserved; offset 8, 4 bytes, `x`; offset 12, 4 bytes, `y`; offset 16, 2 bytes, `section_count`; offset 18, 2 bytes reserved; offset 20 onward, the section table, 10 bytes per entry (`docs/tile-format.md:22-35`). This matches the crate's own layout diagram (`crates/maps2-tile/src/lib.rs:16-29`) and the constants `MAGIC = b"MT2\0"` and `FORMAT_VERSION = 5` (`crates/maps2-tile/src/lib.rs:48-49`).
+**Header** (all little-endian): offset 0, 4 bytes, magic `4D 54 32 00` ("MT2\0"); offset 4, 2 bytes, `version` (= 6); offset 6, 1 byte, `z`; offset 7, 1 byte reserved; offset 8, 4 bytes, `x`; offset 12, 4 bytes, `y`; offset 16, 2 bytes, `section_count`; offset 18, 2 bytes reserved; offset 20 onward, the section table, 10 bytes per entry (`docs/tile-format.md:22-35`). This matches the crate's own layout diagram (`crates/maps2-tile/src/lib.rs:16-29`) and the constants `MAGIC = b"MT2\0"` and `FORMAT_VERSION = 6` (`crates/maps2-tile/src/lib.rs:52`).
 
-**Section table.** Each entry is `class: u16, offset: u32, len: u32` (10 bytes); `offset` is relative to the payload base, `20 + 10 · section_count` (`docs/tile-format.md:36-38`). A class code below `0xFF00` is a vector section (features); `0xFF00` and above is raster, an opaque payload whose meaning belongs to the class — matching `RASTER_CLASS_BASE: ClassCode = 0xFF00` in the crate (`crates/maps2-tile/src/lib.rs:58-64`). Class codes 0–13 (land, water, park, building, roads 4–10 motorway→path, POI, labels, and administrative boundaries) are defined by `maps2-style` (`crates/maps2-style/src/lib.rs:24-42`); the one raster class currently defined is `0xFF00` heights (`docs/tile-format.md:40-46`). `Class::Boundary` goes through the line pipeline like a road — it is a line — but is styled as a dashed rule with no casing.
+**Section table.** Each entry is `class: u16, offset: u32, len: u32` (10 bytes); `offset` is relative to the payload base, `20 + 10 · section_count` (`docs/tile-format.md:36-38`). A class code below `0xFF00` is a vector section (features); `0xFF00` and above is raster, an opaque payload whose meaning belongs to the class — matching `RASTER_CLASS_BASE: ClassCode = 0xFF00` in the crate (`crates/maps2-tile/src/lib.rs:65`). Class codes 0–12 (land, water, park, building, roads 4–10 motorway→path, POI, labels, and administrative boundaries) are defined by `maps2-style` (`crates/maps2-style/src/lib.rs:24-42`); the two raster classes are `0xFF00` heights and `0xFF01` packed heights (`docs/tile-format.md:40-46`). `Class::Boundary` goes through the line pipeline like a road — it is a line — but is styled as a dashed rule with no casing.
 
 **Vector section payload**: `feature_count: u16`, followed by that many features, each: `id: u64` (widened from `u32` in v4), `flags: u8` (style-owned bits: one-way, bridge, tunnel), `rank: u8` (selection importance, 0 highest), `base_dm: u16` and `top_dm: u16` (building base/top in decimetres above datum, zero for non-buildings), `roof: u8` (0 flat, 1 gabled, 2 hipped, 3 other), `material: u8` (0 unknown … 6 wood, v5 only), `name_len: u16` and `name` (UTF-8, non-empty only for labels/POI), `vertex_count: u16`, a first vertex `(x: u16, y: u16)`, then `vertex_count − 1` zigzag-varint `(dx, dy)` deltas (`docs/tile-format.md:48-64`; the same layout is documented in `crates/maps2-tile/src/lib.rs:19-25` and the field struct at `crates/maps2-tile/src/lib.rs:93-101`). `rank` feeds selection: a zoom band only admits a class, and admitted point features then compete for screen space by rank and collision (`docs/tile-format.md:66-68`).
 
@@ -128,9 +128,10 @@ Zigzag encoding is `enc(v) = (v << 1) ^ (v >> 31)`; varint is 7 bits per byte wi
 | 2 | `base_dm`/`top_dm`/`roof` for buildings. |
 | 3 (`HOLES_FORMAT_VERSION`) | Interior rings (holes) on polygons. |
 | 4 (`WIDE_ID_FORMAT_VERSION`) | `id` widened to `u64` (OSM IDs exceed `u32`). |
-| 5 (`MATERIAL_FORMAT_VERSION`, `FORMAT_VERSION`) | `material: u8` on buildings; reads back `Unknown` for v2–v4 tiles. |
+| 5 (`MATERIAL_FORMAT_VERSION`) | `material: u8` on buildings; reads back `Unknown` for v2–v4 tiles. |
+| 6 (`PACKED_HEIGHTS_FORMAT_VERSION`, `FORMAT_VERSION`) | Packed heights `0xFF01` beside plain `0xFF00`. |
 
-`PREVIOUS_FORMAT_VERSION = 4` names the prior frozen version explicitly (`crates/maps2-tile/src/lib.rs:50`).
+`PREVIOUS_FORMAT_VERSION = 5` names the prior frozen version explicitly (`crates/maps2-tile/src/lib.rs:53`).
 
 Reading a corrupted tile always yields `Err`, never a panic: `TooShort`, `BadMagic`, `UnsupportedVersion(v)`, `SectionOutOfBounds`, `Truncated`, `BadVarint`, `DeltaOutOfRange`, `BadText`, `BadBuilding`, `TooLarge`, `EmptyGeometry` (`docs/tile-format.md:109-112`; `crates/maps2-tile/src/lib.rs:74-88`).
 
@@ -170,7 +171,7 @@ Snapping can fold a bay narrower than the lattice onto a line, leaving a ring th
 
 ### What a package is
 
-A build writes a `manifest.json` alongside the tile tree, built by `manifest_json` (`crates/maps2-ingest/src/bin/maps2-ingest.rs:395-424`). It records: `"format": "MT2"` and `"format_version"` (from `maps2_tile::FORMAT_VERSION`, currently 5); the built `levels`; `feature_count` and `tile_count`; `tiles` — the sorted list of relative tile paths, `{z}/{x}/{y}.mt2`, produced by `tile_paths`, which sorts tile ids by `(z, x, y)` before formatting them (`:441-482`); `tile_digests`, a map from each tile path to its SHA-256; `package_sha256`, a single digest over the whole sorted digest map, computed by hashing each `(path, "\0", digest, "\n")` in map order (`:454-461` — a `BTreeMap` iterates in sorted key order, so this is deterministic); a `view` — the default centre and zoom, computed as the geographic centre of the tiles at the lowest built level (`:466-478`); and per-source `attribution`, `licence`, `url`, `sha256`, `source_date`, `bounds`, `adapter_version` for every descriptor that contributed (`:404-420`).
+A build writes a `manifest.json` alongside the tile tree, built by `manifest_json` (`crates/maps2-ingest/src/bin/maps2-ingest.rs:395-424`). It records: `"format": "MT2"` and `"format_version"` (from `maps2_tile::FORMAT_VERSION`, currently 6); the built `levels`; `feature_count` and `tile_count`; `tiles` — the sorted list of relative tile paths, `{z}/{x}/{y}.mt2`, produced by `tile_paths`, which sorts tile ids by `(z, x, y)` before formatting them (`:441-482`); `tile_digests`, a map from each tile path to its SHA-256; `package_sha256`, a single digest over the whole sorted digest map, computed by hashing each `(path, "\0", digest, "\n")` in map order (`:454-461` — a `BTreeMap` iterates in sorted key order, so this is deterministic); a `view` — the default centre and zoom, computed as the geographic centre of the tiles at the lowest built level (`:466-478`); and per-source `attribution`, `licence`, `url`, `sha256`, `source_date`, `bounds`, `adapter_version` for every descriptor that contributed (`:404-420`).
 
 Determinism is the point of hashing everything this way: building twice from a clean checkout should produce byte-identical tiles and therefore identical digests. `maps2-fixtures` enforces this directly with golden-hash tests over its synthetic packages — for example `the_package_bytes_are_golden`, which FNV-1a-hashes every tile's id and bytes and asserts the result against a hard-coded `GOLDEN_FNV1A` constant, with the comment "The package must be bit-for-bit stable: any format or content change shows up as a hash change and is made knowingly" (`crates/maps2-fixtures/src/lib.rs:382-412`; the same pattern recurs in `crates/maps2-fixtures/src/roads.rs:201` and `crates/maps2-fixtures/src/ridge.rs:304`). `verify-package` performs the corresponding check against a built package on disk, and CI runs it on both committed lab packages before building the lab.
 
@@ -227,7 +228,7 @@ Recorded here so the document is honest about its own subject, not as a backlog.
 - **No gesture sets bearing or tilt.** `Input` handles pan, wheel/pinch zoom,
   double-click, arrows and `+`/`-`. Rotation and tilt are host API calls only.
 - **Two docs have drifted from the code.** `release-boundary.md` still describes
-  MT2 v4 as the current write format and `implementation-plan.md` still says the
+  MT2 v6 as the current write format (was v4 at time of writing) and `implementation-plan.md` still says the
   format is frozen at v1; the code has been at v5 since 18 August 2026, as
   `tile-format.md` and `production-roadmap.md` both record correctly.
 - **The performance suite does not run in CI**, for the reason `PERF.md` gives.

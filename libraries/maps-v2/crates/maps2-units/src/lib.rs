@@ -35,6 +35,20 @@ impl Zoom {
     #[must_use]
     pub fn new(value: f64) -> Self {
         debug_assert!(value.is_finite(), "zoom must be finite, got {value}");
+        if !value.is_finite() {
+            return Self(0.0);
+        }
+        Self(value)
+    }
+
+    #[must_use]
+    pub fn try_new(value: f64) -> Option<Self> {
+        if value.is_finite() { Some(Self(value)) } else { None }
+    }
+
+    /// Hot path: caller already validated finiteness.
+    #[must_use]
+    pub fn new_unchecked(value: f64) -> Self {
         Self(value)
     }
 
@@ -132,6 +146,8 @@ fn tile_coordinate(value: u64) -> u16 {
 /// Address a geographic point on the integer grid of tile `level`.
 #[must_use]
 pub fn locate(point: Lonlat, level: u8) -> TilePoint {
+    debug_assert!(level <= 22, "level must be <=22 for grid bounds, got {level}");
+    let level = level.min(22);
     let (xn, yn) = mercator_normalised(point);
     let extent = u64::from(TILE_EXTENT);
     let grid = (1_u64 << level) * extent;

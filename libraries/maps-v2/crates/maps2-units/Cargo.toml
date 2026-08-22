@@ -6,7 +6,7 @@ description = "Zoom, tile addressing, ground and screen units for the Maps SDK v
 license = "MIT"
 
 [dependencies]
-num-traits = "0.2"
+num-traits = { workspace = true }
 
 [lints]
 workspace = true

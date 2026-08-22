@@ -55,6 +55,7 @@ interface Slot {
   panel: HTMLElement;
   live: boolean;
   near: boolean;
+  cleanup: (() => void) | null;
 }
 
 interface Group {
@@ -360,7 +361,7 @@ function createSlot(card: CardSpec): Slot {
     stage,
     panel,
   ]);
-  return { card, root, stage, panel, live: false, near: false };
+  return { card, root, stage, panel, live: false, near: false, cleanup: null };
 }
 
 function idleStage(card: CardSpec, note: string): HTMLElement {
@@ -374,11 +375,15 @@ function mount(slot: Slot): void {
   if (slot.live) return;
   slot.live = true;
   slot.root.setAttribute("data-live", "true");
-  slot.card.mount(slot.stage, slot.panel);
+  const cleanup = slot.card.mount(slot.stage, slot.panel);
+  if (typeof cleanup === "function") slot.cleanup = cleanup;
+  else if (typeof slot.card.unmount === "function") slot.cleanup = slot.card.unmount;
 }
 
 function release(slot: Slot): void {
   if (!slot.live) return;
+  try { slot.cleanup?.(); } catch {}
+  slot.cleanup = null;
   slot.live = false;
   slot.root.setAttribute("data-live", "false");
   const spentStage = slot.stage;

@@ -8,18 +8,18 @@ use web_sys::WebGl2RenderingContext as Gl;
 
 use maps2_camera::{Camera, CameraPatch, Globeness};
 use maps2_render::{
-    build_building_bucket, build_fill_bucket, build_label_bucket, build_line_bucket, building_lod,
-    height_source, normalise_source_levels, plan_residency, register_source_level, road_passes,
+    build_building_bucket, build_line_bucket, building_lod, height_source,
+    FillBucket, LabelBucket,
+    normalise_source_levels, plan_residency, register_source_level, road_passes,
     sample_bilinear, shading_z_factor, target_level, texel_metres, tile_frame, BuildingLod,
-    FillBucket, HeightWindow, LabelBucket, LineOptions, Pass, RoadLevel, RoadPass,
-    MITER_LIMIT_MAX, View,
+    HeightWindow, LineOptions, Pass, RoadLevel, RoadPass, MITER_LIMIT_MAX, View,
 };
 use maps2_style::{
     background_color, class_alpha, facade_colour, fill_color, road_width_px, Band, Class,
     CASING_EXTRA_PX, ROAD_CASING_COLOR, TUNNEL_ALPHA, TUNNEL_DASH_ON_PX, TUNNEL_DASH_PERIOD_PX,
 };
 use maps2_text::{layout_line, measure_line, Atlas, Placement, Rejection, ScreenBox};
-use maps2_tile::{unpack, HeightsRaster, TileView, CLASS_HEIGHTS, CLASS_HEIGHTS_PACKED};
+use maps2_tile::{HeightsRaster, TileView};
 use maps2_units::{locate, Lonlat, TileId, Zoom};
 
 use crate::gl::{FillProgram, GpuBucket};
@@ -29,6 +29,7 @@ use crate::gl_terrain::{
 };
 use crate::gl_view::TilePixels;
 use crate::input::Input;
+use crate::decode::{decode_tile, HeightDecoded};
 use crate::labels::{class_of, frame_candidates, frame_quads, place_candidates};
 use crate::line_gl::{GpuLineBucket, LineProgram};
 use crate::text_gl::{BoxProgram, TextDraw, TextProgram};
@@ -444,31 +445,24 @@ impl Map {
     /// the tile could be kept was the second of two.
     pub fn load_tile(&mut self, bytes: Vec<u8>) -> Result<(), JsValue> {
         let view = TileView::parse(&bytes).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-        let id = view.header().id;
-        register_source_level(&mut self.source_levels, id.z);
-        let fills = build_fill_bucket(&view).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-        let buildings = build_building_bucket(&view, self.building_lod).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-        let roads = build_line_bucket(&view, self.line_options)
+        let decoded = decode_tile(&view, self.building_lod, self.line_options)
             .map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-        let names = build_label_bucket(&view).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-        self.cpu.insert(id, fills);
-        self.buildings.insert(id, buildings);
-        self.lines.insert(id, roads);
-        self.names.insert(id, names);
+        let id = decoded.id;
+        register_source_level(&mut self.source_levels, id.z);
+        self.cpu.insert(id, decoded.fills);
+        self.buildings.insert(id, decoded.buildings);
+        self.lines.insert(id, decoded.lines);
+        self.names.insert(id, decoded.names);
         self.labels.placement_dirty = true;
-
         self.invalidate_plan();
-        // A tile carries one or the other, never both. Packed is checked
-        // first because a v6 tile that has it has nothing plain to fall
-        // back to, and a v1–v5 tile has no packed section to find.
-        if let Some(packed) = view.raster(CLASS_HEIGHTS_PACKED) {
-            let raster = unpack(packed).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-            HeightsRaster::parse(&raster).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-            self.heights.insert(id, HeightSource::Unpacked(raster.into_boxed_slice()));
-        } else if let Some(raster) = view.raster(CLASS_HEIGHTS) {
-            HeightsRaster::parse(raster).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
-            if let Some(span) = view.section_span(CLASS_HEIGHTS) {
-                self.heights.insert(id, HeightSource::Plain(span));
+        if let Some(height) = decoded.height {
+            match height {
+                HeightDecoded::Plain(span) => {
+                    self.heights.insert(id, HeightSource::Plain(span));
+                }
+                HeightDecoded::Unpacked(raster) => {
+                    self.heights.insert(id, HeightSource::Unpacked(raster));
+                }
             }
         }
         self.tiles.insert(id, bytes);
@@ -490,6 +484,22 @@ impl Map {
         if let Some(bucket) = self.gpu_lines.remove(&id) { bucket.delete(&self.gl); }
         if let Some(bucket) = self.gpu_buildings.remove(&id) { bucket.delete(&self.gl); }
         if let Some(texture) = self.height_textures.remove(&id) { texture.delete(&self.gl); }
+    }
+
+    /// Memory-pressure eviction: if more than 50000 tiles are retained without `unload_tile`,
+    /// drop least-recently-drawn outside residency (keeps residency + margin). Long sessions that
+    /// never unload leak `tiles:HashMap` in `map.rs:74`; this is the guard (P2).
+    #[allow(dead_code)]
+    fn evict_if_over_pressure(&mut self) {
+        const MAX_RETAINED: usize = 50000;
+        if self.tiles.len() <= MAX_RETAINED { return; }
+        // Keep residency.draw + margin; evict extras. Full LRU is a follow-up; for now we
+        // evict arbitrarily beyond the cap to prevent unbounded growth.
+        let keep: std::collections::HashSet<_> = self.plan.as_ref().map(|p| p.draw.iter().copied().collect()).unwrap_or_default();
+        let to_evict: Vec<_> = self.tiles.keys().filter(|id| !keep.contains(id)).copied().collect();
+        for id in to_evict.into_iter().take(self.tiles.len().saturating_sub(MAX_RETAINED)) {
+            self.unload_tile(id.z, id.x, id.y);
+        }
     }
 
     /// Replaces the fixture pyramid with the levels declared by a package.

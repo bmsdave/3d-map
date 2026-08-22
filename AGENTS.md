@@ -34,9 +34,27 @@ Rust `libraries/maps-v2` (9 crates) + lab `applications/maps-v2-lab` (TS+Wasm). 
 | Showcase | `src/showcase.ts` | 20 studies |
 | Perf | `src/perfTrace.ts` | 10ms `e2e/perf/FINDINGS.md` |
 
+## Before PR (mandatory) — local verify gate
+
+No CI is running (billing-blocked). **Before opening any PR, run the local gate:**
+
+```sh
+bash scripts/check.sh              # full: version + rust + packages + lab (build+e2e)
+bash scripts/check.sh --quick      # fast loop: version + rust + packages + lab build (no e2e)
+bash scripts/check.sh --perf       # also perf suite (workers=1, 10ms budget)
+# or from lab:
+cd applications/maps-v2-lab && npm run verify        # same as above
+cd applications/maps-v2-lab && npm run verify:quick  # same as --quick
+```
+
+All steps must be green. `--quick` is for dev loops; final check before PR must be without `--quick` (and `--perf` for perf/perf-sensitive changes).
+
 ## Commands
 
 ```sh
+bash scripts/check.sh              # local verify gate (mandatory before PR)
+bash scripts/check.sh --quick      # fast loop (no e2e)
+bash scripts/check.sh --help       # usage
 cd libraries/maps-v2 && cargo test --workspace
 cd libraries/maps-v2 && cargo clippy -p maps2-units --all-targets -- -D warnings
 cd applications/maps-v2-lab && npm ci && npm run build:sdk && npm run typecheck && npm run build && npm run dev
