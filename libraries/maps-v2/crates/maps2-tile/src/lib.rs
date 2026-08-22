@@ -8,7 +8,7 @@
 //! through the header table rather than by scanning, and geometry is
 //! decoded lazily as it is iterated.
 //!
-//! Format v5 — **frozen**. Versions 1 through 4 remain readable; changing
+//! Format v6 — **frozen**. Versions 1 through 5 remain readable; changing
 //! anything below means a new version in the header and a knowing migration,
 //! never a silent edit. The byte-exact layout lives in
 //! `../../docs/tile-format.md`.
@@ -29,7 +29,9 @@
 //!   deltas: (vertex_count − 1) × (dx, dy) zigzag varint
 //!
 //! raster section (class ≥ 0xFF00): opaque payload owned by the class
-//!   (heights: 256×256 u16 LE, row-major)
+//!   (heights 0xFF00: 256×256 u16 LE, row-major)
+//!   (heights packed 0xFF01: the same raster, Paeth-predicted, split into
+//!    a high-byte and a low-byte plane, deflated — see `heights::pack`)
 //! ```
 
 use maps2_units::{TileCoord, TileId};
@@ -41,13 +43,16 @@ mod view;
 
 pub use build::TileBuilder;
 pub use heights::{
-    decode_height, encode_height, HeightsRaster, HEIGHTS_BYTES, HEIGHTS_SIDE, HEIGHT_OFFSET_M,
+    decode_height, encode_height, pack, unpack, HeightsRaster, HEIGHTS_BYTES, HEIGHTS_SIDE,
+    HEIGHT_OFFSET_M,
 };
 pub use view::{FeatureView, SectionView, TileView};
 
 pub const MAGIC: [u8; 4] = *b"MT2\0";
-pub const FORMAT_VERSION: u16 = 5;
-pub const PREVIOUS_FORMAT_VERSION: u16 = 4;
+pub const FORMAT_VERSION: u16 = 6;
+pub const PREVIOUS_FORMAT_VERSION: u16 = 5;
+/// The format version heights gained a packed section beside the plain one.
+pub const PACKED_HEIGHTS_FORMAT_VERSION: u16 = 6;
 /// The format version building features gained a material byte.
 pub const MATERIAL_FORMAT_VERSION: u16 = 5;
 /// The format version feature IDs widened to 64 bits.
@@ -62,6 +67,11 @@ pub const RASTER_CLASS_BASE: ClassCode = 0xFF00;
 /// The heights raster: 256×256 `u16` LE metres offset by +11000
 /// (GEBCO depths stay positive), row-major.
 pub const CLASS_HEIGHTS: ClassCode = 0xFF00;
+/// The same heights, packed. A reader that does not know this class skips
+/// it — an older SDK meeting a v6 tile draws it flat rather than failing,
+/// which is why packing got a new class instead of a new meaning for the
+/// old one.
+pub const CLASS_HEIGHTS_PACKED: ClassCode = 0xFF01;
 
 /// Feature flags on the wire. Meaning of the bits is owned by the
 /// style; the format only carries them.
@@ -81,6 +91,8 @@ pub enum TileError {
     DeltaOutOfRange,
     BadText,
     BadBuilding,
+    /// A raster section that does not decode to a whole raster.
+    BadRaster,
     TooLarge,
     EmptyGeometry,
 }
@@ -609,7 +621,10 @@ mod tests {
         // of the building payload.
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&MAGIC);
-        bytes.extend_from_slice(&PREVIOUS_FORMAT_VERSION.to_le_bytes()); // version 4
+        // Version 4 by name, not by "the one before this one": the body
+        // below is the v4 layout, and it stays v4 however far the format
+        // moves on.
+        bytes.extend_from_slice(&WIDE_ID_FORMAT_VERSION.to_le_bytes());
         bytes.push(16); // z
         bytes.push(0); // reserved
         bytes.extend_from_slice(&1_u32.to_le_bytes()); // x

@@ -16,7 +16,7 @@ Rust `libraries/maps-v2` (9 crates) + lab `applications/maps-v2-lab` (TS+Wasm). 
 |---|---|---|---|
 | maps2-units | `crates/maps2-units/src/lib.rs:1` | Metres/ScreenPx, TileId/TileCoord, mercator | `lib.rs:18` TILE_EXTENT=65536 |
 | maps2-camera | `crates/maps2-camera/src/lib.rs:54` | Camera, patch validation, flat↔globe | `lib.rs:17` Globeness at 3.5-4.5 |
-| maps2-tile | `crates/maps2-tile/src/lib.rs:48` | MT2 v5 writer, v1-5 reader | `lib.rs:16` header layout |
+| maps2-tile | `crates/maps2-tile/src/lib.rs:48` | MT2 v6 writer, v1-6 reader | `lib.rs:16` header layout |
 | maps2-style | `crates/maps2-style/src/lib.rs:1` | Class 0-12, bands, widths, palette | `lib.rs:1` class enum |
 | maps2-render | `crates/maps2-render/src/lib.rs:1` | Residency, buckets, meshes | `residency.rs:1` select_tiles |
 | maps2-text | `crates/maps2-text/src/lib.rs:1` | SDF atlas, collision | `collision.rs:1` 64px grid |
@@ -43,9 +43,9 @@ cd applications/maps-v2-lab && npm ci && npm run build:sdk && npm run typecheck 
 cd libraries/maps-v2 && cargo run -p maps2-ingest -- verify-package <dir>
 ```
 
-## MT2 v5 quick ref
+## MT2 v6 quick ref
 
-Header LE 20+10*count `lib.rs:16` + raster `0xFF00` 131072B `heights.rs:1` — full `tile-format.en.tldr.md:1`. Vector `docs/tile-format.md:60` id/flags/rank/base_dm/top_dm/roof/material/name/deltas. Never panics `lib.rs:74`.
+Header LE 20+10*count `lib.rs:16` + raster `0xFF00` 131072B or packed `0xFF01` `heights.rs:1` (`pack`/`unpack`, ~3.7x) — full `tile-format.en.tldr.md:1`. Vector `docs/tile-format.md:60` id/flags/rank/base_dm/top_dm/roof/material/name/deltas. Never panics `lib.rs:74`.
 
 ## Conflation
 
@@ -53,7 +53,7 @@ Header LE 20+10*count `lib.rs:16` + raster `0xFF00` 131072B `heights.rs:1` — f
 
 ## Manifest
 
-`manifest.json` `bin/maps2-ingest.rs:395` MT2 v5 sorted tiles, digests. Limit 50000, 4MiB `sdk.ts:194`.
+`manifest.json` `bin/maps2-ingest.rs:395` MT2 v6 sorted tiles, digests. Limit 50000, 4MiB `sdk.ts:194`.
 
 ## Where to edit
 

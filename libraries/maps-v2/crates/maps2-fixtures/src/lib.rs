@@ -390,7 +390,11 @@ mod tests {
     /// Changed when the micro fixture gained deterministic building heights.
     // MT2 v5 (2026-08-18): building features gained a material byte, and the
     // fallback base/roof/material now flow from ingest, changing tile bytes.
-    const GOLDEN_FNV1A: u64 = 0x2732_F1FA_CAA3_084E;
+    // MT2 v6 (2026-08-22): heights gained a packed section beside the plain
+    // one, so the header carries version 6. The fixtures still write the plain
+    // raster and nothing else moved — verified by re-hashing these bytes with
+    // the version patched back to 5 and getting the v5 goldens exactly.
+    const GOLDEN_FNV1A: u64 = 0x301E_20A3_F267_3599;
 
     fn fnv1a(bytes: &[u8], mut hash: u64) -> u64 {
         for byte in bytes {

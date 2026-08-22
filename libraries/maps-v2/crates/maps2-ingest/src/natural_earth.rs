@@ -381,64 +381,71 @@ mod tests {
         assert!(resolve_boundary_lines(dir.path().join("nope.shp"), 3).is_err());
     }
 
-    #[test]
-    fn resolve_major_roads_turns_polyline_shapefile_into_road_feature() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("roads.shp");
-        let builder = shapefile::dbase::TableWriterBuilder::new()
+    /// One road in a Natural Earth-shaped polyline shapefile, written to
+    /// `path`. Three of the cases below need the same six lines of
+    /// shapefile plumbing and differ only in the record they carry.
+    fn write_road_shapefile(path: &std::path::Path, kind: &str, scalerank: f64, name: Option<&str>) {
+        let mut builder = shapefile::dbase::TableWriterBuilder::new()
             .add_character_field("type".try_into().unwrap(), 30)
-            .add_numeric_field("scalerank".try_into().unwrap(), 10, 0)
-            .add_character_field("label".try_into().unwrap(), 30)
-            .add_character_field("name".try_into().unwrap(), 30);
-        let mut writer = shapefile::Writer::from_path(&path, builder).expect("writer");
+            .add_numeric_field("scalerank".try_into().unwrap(), 10, 0);
+        if name.is_some() {
+            builder = builder
+                .add_character_field("label".try_into().unwrap(), 30)
+                .add_character_field("name".try_into().unwrap(), 30);
+        }
+        let mut writer = shapefile::Writer::from_path(path, builder).expect("writer");
         let mut record = shapefile::dbase::Record::default();
-        record.insert("type".to_string(), FieldValue::Character(Some("Major Highway".to_string())));
-        record.insert("scalerank".to_string(), FieldValue::Numeric(Some(1.0)));
-        record.insert("label".to_string(), FieldValue::Character(Some("E31".to_string())));
-        record.insert("name".to_string(), FieldValue::Character(Some("31".to_string())));
+        record.insert("type".to_string(), FieldValue::Character(Some(kind.to_string())));
+        record.insert("scalerank".to_string(), FieldValue::Numeric(Some(scalerank)));
+        if let Some(name) = name {
+            record.insert("label".to_string(), FieldValue::Character(Some("E31".to_string())));
+            record.insert("name".to_string(), FieldValue::Character(Some(name.to_string())));
+        }
         let line = shapefile::Polyline::new(vec![
             shapefile::Point::new(0.0, 0.0),
             shapefile::Point::new(1.0, 1.0),
         ]);
         writer.write_shape_and_record(&line, &record).expect("write");
         drop(writer);
+    }
+
+    #[test]
+    fn resolve_major_roads_turns_polyline_shapefile_into_road_feature() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("roads.shp");
+        write_road_shapefile(&path, "Major Highway", 1.0, Some("31"));
+
         let features = resolve_major_roads(&path, 14).expect("resolve");
+
         assert!(!features.is_empty());
         assert_eq!(features[0].class, maps2_style::Class::RoadMotorway);
-        // Unknown type is skipped
-        let path2 = dir.path().join("roads2.shp");
-        let builder2 = shapefile::dbase::TableWriterBuilder::new()
-            .add_character_field("type".try_into().unwrap(), 30)
-            .add_numeric_field("scalerank".try_into().unwrap(), 10, 0);
-        let mut writer2 = shapefile::Writer::from_path(&path2, builder2).expect("writer2");
-        let mut record2 = shapefile::dbase::Record::default();
-        record2.insert("type".to_string(), FieldValue::Character(Some("Ferry Route".to_string())));
-        record2.insert("scalerank".to_string(), FieldValue::Numeric(Some(1.0)));
-        let line2 = shapefile::Polyline::new(vec![
-            shapefile::Point::new(0.0, 0.0),
-            shapefile::Point::new(1.0, 1.0),
-        ]);
-        writer2.write_shape_and_record(&line2, &record2).expect("write2");
-        drop(writer2);
-        let empty = resolve_major_roads(&path2, 14).expect("empty");
-        assert!(empty.is_empty(), "unknown road type should be skipped");
-        // scalerank filtering at low zoom
-        let path3 = dir.path().join("roads3.shp");
-        let builder3 = shapefile::dbase::TableWriterBuilder::new()
-            .add_character_field("type".try_into().unwrap(), 30)
-            .add_numeric_field("scalerank".try_into().unwrap(), 10, 0);
-        let mut writer3 = shapefile::Writer::from_path(&path3, builder3).expect("writer3");
-        let mut record3 = shapefile::dbase::Record::default();
-        record3.insert("type".to_string(), FieldValue::Character(Some("Major Highway".to_string())));
-        record3.insert("scalerank".to_string(), FieldValue::Numeric(Some(12.0)));
-        let line3 = shapefile::Polyline::new(vec![
-            shapefile::Point::new(0.0, 0.0),
-            shapefile::Point::new(1.0, 1.0),
-        ]);
-        writer3.write_shape_and_record(&line3, &record3).expect("write3");
-        drop(writer3);
-        let filtered = resolve_major_roads(&path3, 3).expect("filtered");
-        assert!(filtered.is_empty(), "high scalerank should be filtered at low zoom");
+    }
+
+    #[test]
+    fn resolve_major_roads_skips_a_type_it_does_not_know() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("roads.shp");
+        write_road_shapefile(&path, "Ferry Route", 1.0, None);
+
+        let features = resolve_major_roads(&path, 14).expect("resolve");
+
+        assert!(features.is_empty(), "unknown road type should be skipped");
+    }
+
+    #[test]
+    fn resolve_major_roads_drops_a_high_scalerank_at_low_zoom() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("roads.shp");
+        write_road_shapefile(&path, "Major Highway", 12.0, None);
+
+        let features = resolve_major_roads(&path, 3).expect("resolve");
+
+        assert!(features.is_empty(), "high scalerank should be filtered at low zoom");
+    }
+
+    #[test]
+    fn resolve_major_roads_reports_a_missing_shapefile() {
+        let dir = tempfile::tempdir().expect("tempdir");
         assert!(resolve_major_roads(dir.path().join("nope.shp"), 3).is_err());
     }
 }

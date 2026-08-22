@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- MT2 v6: heights can ride packed. The raster is 128 KiB whatever ground it
+  covers, which is ~60% of a tile and all of the reason a world pyramid of them
+  costs terabytes. `heights::pack` predicts each sample from its neighbours
+  (Paeth, over `u16`), splits the residuals into a high-byte and a low-byte
+  plane, and deflates: 3.7x on the committed London carve, which as a whole
+  falls from 117 MB to 64 MB. Lossless — `unpack` returns the bytes that went
+  in, and the lab's terrain screenshots are unchanged.
+- The packed raster is a new class (`0xFF01`) beside the plain one (`0xFF00`),
+  not a new meaning for it. A reader that does not know the class skips the
+  section and draws the tile flat, so an older SDK meeting a v6 tile degrades
+  instead of failing, and every package built before this one still loads.
+- Deflate rather than zstd: with the predictor and the plane split doing the
+  structural work, zstd was 6% smaller (3.94x against 3.69x) — not worth a C
+  dependency inside the wasm bundle when `miniz_oxide` was already in the lock
+  and builds for wasm32 like the rest of the crate.
+- `scripts/check.sh` runs what CI used to: workspace tests, clippy, the
+  coverage ratchet, package digests, the lab build and the e2e suite, stopping
+  at the first failure. This project's Actions are billing-blocked, so the gate
+  is a command someone runs. It immediately caught a clippy failure that had
+  already landed on `main` (`natural_earth.rs`, a test 55 lines long against a
+  40-line limit), now split into the four cases it was actually testing.
+
 - A public demo page at `/demo/`, built from the lab and published to GitHub
   Pages by `.github/workflows/pages.yml` on every push to `main`. One package,
   one full-window canvas and the same SDK entry points the studies use: four

@@ -220,7 +220,7 @@ function isTilePackageManifest(value: unknown): value is TilePackageManifest {
   const manifest = value as Partial<TilePackageManifest>;
   const version = manifest.format_version;
   return manifest.format === "MT2"
-    && typeof version === "number" && Number.isInteger(version) && version >= 2 && version <= 5
+    && typeof version === "number" && Number.isInteger(version) && version >= 2 && version <= 6
     && Array.isArray(manifest.tiles)
     && manifest.tiles.every((path) => typeof path === "string" && /^\d+\/\d+\/\d+\.mt2$/.test(path))
     && !!manifest.tile_digests

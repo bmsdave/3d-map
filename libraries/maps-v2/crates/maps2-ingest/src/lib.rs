@@ -10,8 +10,8 @@ use std::{
 
 use maps2_style::{Class, FLAG_BRIDGE, FLAG_TUNNEL, entry_band};
 use maps2_tile::{
-    CLASS_HEIGHTS, BuildingDraft, FeatureDraft, MaterialClass, RoofType, TileBuilder, TileError,
-    HEIGHTS_BYTES, HEIGHTS_SIDE, encode_height,
+    CLASS_HEIGHTS_PACKED, BuildingDraft, FeatureDraft, MaterialClass, RoofType, TileBuilder,
+    TileError, HEIGHTS_BYTES, HEIGHTS_SIDE, encode_height, pack,
 };
 use maps2_units::{Lonlat, TileCoord, TileId, TilePoint, Zoom, locate, to_lonlat, world_position_px};
 use num_traits::ToPrimitive;
@@ -1661,8 +1661,12 @@ fn build_tile(
     for feature in features {
         push_feature(&mut builder, feature);
     }
+    // Packed, always: a plain raster is 128 KiB whatever the ground under
+    // it looks like, and a pyramid of them is most of what a world package
+    // weighs. `maps2-tile` keeps reading the plain section, so every
+    // package built before this one still loads.
     if let Some(grid) = terrain.iter().find(|grid| grid.covers_tile(id)) {
-        builder.push_raster(CLASS_HEIGHTS, height_raster_for_tile(grid, id));
+        builder.push_raster(CLASS_HEIGHTS_PACKED, pack(&height_raster_for_tile(grid, id))?);
     }
     Ok((id, builder.build()?))
 }
@@ -1693,7 +1697,7 @@ fn height_dm(height: BuildingHeight) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use maps2_tile::{CLASS_HEIGHTS, HeightsRaster, TileView};
+    use maps2_tile::{CLASS_HEIGHTS_PACKED, HeightsRaster, TileView, unpack};
 
     const HELLO_WORLD_SHA256: &str = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
 
@@ -2464,7 +2468,8 @@ adapter_version = "osm-v1""#,
         let tiles = build_tiles_with_terrain(&[feature], &grid).expect("terrain package");
         let tile = TileView::parse(&tiles[0].1).expect("valid MT2");
 
-        assert!(tile.raster(CLASS_HEIGHTS).is_some());
+        let packed = tile.raster(CLASS_HEIGHTS_PACKED).expect("packed heights");
+        assert_eq!(unpack(packed).expect("unpacks").len(), HEIGHTS_BYTES);
     }
 
     #[test]
@@ -2498,6 +2503,9 @@ adapter_version = "osm-v1""#,
 
         assert!(tiles
             .iter()
-            .all(|(_, bytes)| TileView::parse(bytes).expect("valid MT2").raster(CLASS_HEIGHTS).is_some()));
+            .all(|(_, bytes)| TileView::parse(bytes)
+                .expect("valid MT2")
+                .raster(CLASS_HEIGHTS_PACKED)
+                .is_some()));
     }
 }

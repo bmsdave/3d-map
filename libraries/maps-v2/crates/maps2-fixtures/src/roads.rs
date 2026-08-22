@@ -160,7 +160,11 @@ mod tests {
     /// to the picture the reviewer approved.
     // MT2 v5 (2026-08-18): building features gained a material byte, changing
     // tile bytes even for scenes that never set one explicitly.
-    const GOLDEN_FNV1A: u64 = 0x3A3D_4D78_8D08_55C7;
+    // MT2 v6 (2026-08-22): heights gained a packed section beside the plain
+    // one, so the header carries version 6. The fixtures still write the plain
+    // raster and nothing else moved — verified by re-hashing these bytes with
+    // the version patched back to 5 and getting the v5 goldens exactly.
+    const GOLDEN_FNV1A: u64 = 0xC6A3_A1F0_2870_50BA;
 
     fn fnv1a(bytes: &[u8]) -> u64 {
         let mut hash = 0xcbf2_9ce4_8422_2325_u64;

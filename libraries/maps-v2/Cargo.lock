@@ -414,6 +414,7 @@ name = "maps2-tile"
 version = "0.1.0-alpha"
 dependencies = [
  "maps2-units",
+ "miniz_oxide",
  "num-traits",
 ]
 

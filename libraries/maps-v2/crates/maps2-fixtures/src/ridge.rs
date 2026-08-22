@@ -12,7 +12,7 @@
 //! occupies. Real DEMs (Copernicus, GEBCO) arrive with the pipeline.
 
 use maps2_style::Class;
-use maps2_tile::{encode_height, TileBuilder, CLASS_HEIGHTS, HEIGHTS_BYTES, HEIGHTS_SIDE};
+use maps2_tile::{encode_height, pack, TileBuilder, CLASS_HEIGHTS_PACKED, HEIGHTS_BYTES, HEIGHTS_SIDE};
 use maps2_units::TileId;
 use num_traits::ToPrimitive;
 
@@ -182,21 +182,27 @@ pub fn ridge_tiles() -> Vec<(TileId, Vec<u8>)> {
 pub fn ridge_tile_bytes(id: TileId) -> Vec<u8> {
     let mut builder = TileBuilder::new(id);
     builder.push(Class::Land.code(), rect_polygon(1, (0, 0, 65535, 65535)));
-    builder.push_raster(CLASS_HEIGHTS, heights_raster(id));
+    // Packed, like every tile ingest writes since MT2 v6 — so the lab's
+    // terrain studies exercise the same decode path a real package does.
+    builder.push_raster(CLASS_HEIGHTS_PACKED, pack(&heights_raster(id)).expect("full raster"));
     builder.build().expect("ridge fixture fits MT2")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use maps2_tile::{HeightsRaster, TileView, CLASS_HEIGHTS, HEIGHTS_BYTES, HEIGHTS_SIDE};
+    use maps2_tile::{unpack, HeightsRaster, TileView, CLASS_HEIGHTS_PACKED, HEIGHTS_BYTES, HEIGHTS_SIDE};
     use maps2_units::locate;
     use num_traits::ToPrimitive;
 
     /// The package must be bit-for-bit stable, like the Ealing one.
     // MT2 v5 (2026-08-18): building features gained a material byte, changing
     // tile bytes even for fixtures that never set one explicitly.
-    const GOLDEN_FNV1A: u64 = 0x8570_284B_DEF7_E330;
+    // MT2 v6 (2026-08-22): the header carries version 6, and this fixture's
+    // heights now ride in the packed section rather than the plain one — the
+    // same section ingest writes. The surface it decodes to is unchanged, and
+    // the terrain screenshots in the lab are the proof of that.
+    const GOLDEN_FNV1A: u64 = 0x2D87_2BB6_3386_9885;
 
     fn fnv1a(bytes: &[u8], mut hash: u64) -> u64 {
         for byte in bytes {
@@ -209,7 +215,7 @@ mod tests {
     fn raster_of(id: TileId) -> Vec<u8> {
         let bytes = ridge_tile_bytes(id);
         let tile = TileView::parse(&bytes).expect("parses");
-        tile.raster(CLASS_HEIGHTS).expect("heights section").to_vec()
+        unpack(tile.raster(CLASS_HEIGHTS_PACKED).expect("heights section")).expect("unpacks")
     }
 
     fn sample(raster: &HeightsRaster<'_>, x: usize, y: usize) -> f32 {
@@ -230,9 +236,10 @@ mod tests {
     fn every_tile_carries_a_full_heights_section() {
         for (id, bytes) in ridge_tiles() {
             let tile = TileView::parse(&bytes).expect("parses");
-            let raster = tile.raster(CLASS_HEIGHTS).expect("heights section");
+            let packed = tile.raster(CLASS_HEIGHTS_PACKED).expect("heights section");
+            let raster = unpack(packed).expect("unpacks");
             assert_eq!(raster.len(), HEIGHTS_BYTES, "z{} {} {}", id.z, id.x, id.y);
-            assert!(HeightsRaster::parse(raster).is_ok());
+            assert!(HeightsRaster::parse(&raster).is_ok());
         }
     }
 

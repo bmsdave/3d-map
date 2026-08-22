@@ -25,7 +25,18 @@ const page = (file: string): string => new URL(file, import.meta.url).pathname;
 
 export default defineConfig({
   base,
-  server: { port, strictPort: true },
+  server: {
+    port,
+    strictPort: true,
+    // Playwright writes traces, screenshots and coverage into the project
+    // while the suite runs. The dev server watches the project, so those
+    // writes reload every page it is serving — including the one a test is
+    // mid-assertion on, which surfaces as "execution context was destroyed"
+    // in whichever test happened to be running. None of these are sources.
+    watch: {
+      ignored: ["**/test-results/**", "**/playwright-report/**", "**/coverage/**", "**/dist/**"],
+    },
+  },
   preview: { port, strictPort: true },
   plugins: process.env.COVERAGE ? [istanbul({ include: "src/*", exclude: ["node_modules", "test", "e2e"], extension: [".js", ".ts"], requireEnv: false })] : [],
   build: {

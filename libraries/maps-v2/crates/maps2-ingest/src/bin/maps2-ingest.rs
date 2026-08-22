@@ -725,7 +725,11 @@ fn copy_carved_tiles(root: &Path, output: &Path, wanted: &[TileId]) -> Result<Ca
             .filter_map(|class| tile.section(class))
             .map(|section| section.features().count())
             .sum::<usize>();
-        if tile.raster(maps2_tile::CLASS_HEIGHTS).is_some() {
+        // Either section counts as terrain: packages built before MT2 v6
+        // carry the plain raster and are still verified by this command.
+        if tile.raster(maps2_tile::CLASS_HEIGHTS_PACKED).is_some()
+            || tile.raster(maps2_tile::CLASS_HEIGHTS).is_some()
+        {
             height_tiles += 1;
         }
         digests.push(TileDigest { id: *id, sha256: sha256(&bytes) });
@@ -1002,7 +1006,12 @@ adapter_version = "osm-v1""#,
         ];
         let digests = tile_digests(&tiles);
         let manifest = manifest_json(&[&descriptor], &[16], 10, &digests, 0).expect("manifest JSON");
-        assert!(manifest.contains("\"format_version\": 5"));
+        // The manifest reports whatever version the writer emits; pinning a
+        // literal here only ever fails the next time the format moves.
+        assert!(manifest.contains(&format!(
+            "\"format_version\": {}",
+            maps2_tile::FORMAT_VERSION
+        )));
         assert!(manifest.contains("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"));
         assert!(manifest.contains("© OpenStreetMap contributors"));
 

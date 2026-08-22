@@ -18,7 +18,7 @@ use maps2_style::{
     CASING_EXTRA_PX, ROAD_CASING_COLOR, TUNNEL_ALPHA, TUNNEL_DASH_ON_PX, TUNNEL_DASH_PERIOD_PX,
 };
 use maps2_text::{layout_line, measure_line, Atlas, Placement, Rejection, ScreenBox};
-use maps2_tile::{HeightsRaster, TileView, CLASS_HEIGHTS, HEIGHTS_SIDE};
+use maps2_tile::{unpack, HeightsRaster, TileView, CLASS_HEIGHTS, CLASS_HEIGHTS_PACKED, HEIGHTS_SIDE};
 use maps2_units::{locate, Lonlat, TileId, Zoom};
 
 use crate::gl::{FillProgram, GpuBucket};
@@ -82,12 +82,9 @@ pub struct Map {
     gpu_lines: HashMap<TileId, GpuLineBucket>,
     gpu_buildings: HashMap<TileId, GpuBuildingBucket>,
     /// Heights follow the same two lives as the meshes: the bytes stay,
-    /// the texture comes and goes with residency.
-    /// Where each tile's height raster sits inside the bytes already
-    /// held in `tiles` — a range, not a copy. The raster is 128 KB and
-    /// keeping a second one per resident tile bought nothing: the bytes
-    /// it duplicated cannot be dropped while `tiles` needs them.
-    heights: HashMap<TileId, Range<usize>>,
+    /// the texture comes and goes with residency. Where those bytes are
+    /// depends on how the tile carried them — see [`HeightSource`].
+    heights: HashMap<TileId, HeightSource>,
     height_textures: HashMap<TileId, HeightTexture>,
     viewport: (f64, f64),
     frame_draw_calls: u32,
@@ -123,6 +120,20 @@ pub struct Map {
     /// the phases are the only way to tell a slow frame caused by too
     /// many tiles from one caused by too many labels.
     frame: FrameTimings,
+}
+
+/// Where a tile's height raster lives once the tile is loaded.
+///
+/// A plain section is a range into the bytes already held in `tiles` — a
+/// window, not a copy, because the 128 KiB it points at cannot be dropped
+/// while the tile is resident anyway. A packed section has to be inflated
+/// to be sampled, so that one is owned: the tile keeps the ~33 KiB it
+/// arrived as, and this holds the raster the GPU and the debug readout
+/// need. Costing a little more memory to move a quarter of the bytes is
+/// the trade the whole packed section exists to make.
+enum HeightSource {
+    Plain(Range<usize>),
+    Unpacked(Box<[u8]>),
 }
 
 /// Milliseconds spent in each phase of the last frame.
@@ -444,10 +455,17 @@ impl Map {
         self.labels.placement_dirty = true;
 
         self.invalidate_plan();
-        if let Some(raster) = view.raster(CLASS_HEIGHTS) {
+        // A tile carries one or the other, never both. Packed is checked
+        // first because a v6 tile that has it has nothing plain to fall
+        // back to, and a v1–v5 tile has no packed section to find.
+        if let Some(packed) = view.raster(CLASS_HEIGHTS_PACKED) {
+            let raster = unpack(packed).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
+            HeightsRaster::parse(&raster).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
+            self.heights.insert(id, HeightSource::Unpacked(raster.into_boxed_slice()));
+        } else if let Some(raster) = view.raster(CLASS_HEIGHTS) {
             HeightsRaster::parse(raster).map_err(|e| JsValue::from_str(&format!("{e:?}")))?;
             if let Some(span) = view.section_span(CLASS_HEIGHTS) {
-                self.heights.insert(id, span);
+                self.heights.insert(id, HeightSource::Plain(span));
             }
         }
         self.tiles.insert(id, bytes);
@@ -935,8 +953,10 @@ impl Map {
     /// The height raster of a resident tile, borrowed out of the tile
     /// bytes it arrived in.
     fn height_bytes(&self, id: TileId) -> Option<&[u8]> {
-        let span = self.heights.get(&id)?;
-        self.tiles.get(&id)?.get(span.clone())
+        match self.heights.get(&id)? {
+            HeightSource::Plain(span) => self.tiles.get(&id)?.get(span.clone()),
+            HeightSource::Unpacked(raster) => Some(raster),
+        }
     }
 
     /// Height in metres under the camera centre, when a resident tile

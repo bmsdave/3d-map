@@ -132,7 +132,7 @@ pub fn relief_radius_scale(metres: f32, exaggeration: f32, globeness: f32) -> f3
 mod tests {
     use super::*;
     use maps2_fixtures::{ridge_tile_bytes, EALING, RIDGE_DETAIL_LEVEL};
-    use maps2_tile::{HeightsRaster, TileView, CLASS_HEIGHTS};
+    use maps2_tile::{unpack, HeightsRaster, TileView, CLASS_HEIGHTS_PACKED};
     use maps2_units::locate;
 
     const FLAT: f32 = 1.0;
@@ -230,8 +230,9 @@ mod tests {
         let id = locate(EALING, RIDGE_DETAIL_LEVEL).tile;
         let bytes = ridge_tile_bytes(id);
         let tile = TileView::parse(&bytes).expect("parses");
-        let raster = HeightsRaster::parse(tile.raster(CLASS_HEIGHTS).expect("heights"))
-            .expect("full raster");
+        let unpacked =
+            unpack(tile.raster(CLASS_HEIGHTS_PACKED).expect("heights")).expect("unpacks");
+        let raster = HeightsRaster::parse(&unpacked).expect("full raster");
         let step = texel_metres(id);
         let shade_at = |x: i32, y: i32| {
             let (de, dn) = gradient_at(&raster, x, y, step, 10.0);
