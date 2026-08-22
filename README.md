@@ -102,6 +102,14 @@ Trafalgar Square. Direct routes still isolate one concern at a time —
 animated gallery. `http://localhost:5178/demo/` is the public demo page — the
 same one published to GitHub Pages, served from the same build.
 
+### What the data actually is
+
+[docs/DATA.md](docs/DATA.md) is the anatomy: the four sources and their
+terms, a tile's bytes from the twenty-byte header down to a single
+building's coordinate deltas, the band table that decides what appears at
+which zoom, and what all of it weighs — measured on the committed carve,
+with the planet-scale numbers marked as the estimates they are.
+
 ### Building your own package
 
 `applications/maps-v2-lab/public/packages/trafalgar` is a carve. To build
