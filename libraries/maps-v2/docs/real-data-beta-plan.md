@@ -6,7 +6,7 @@ untracked by default.
 ## Verified starting point
 
 Greater London already has a pinned OSM extract and two pinned Copernicus
-inputs, deterministic MT2 v4 output, per-tile/package checksums, and a local
+inputs, deterministic MT2 v6 output, per-tile/package checksums, and a local
 Chromium acceptance test. On 2026-08-16, two clean z12 terrain builds produced
 159,726 feature parts in 70 tiles with the same package digest:
 `db15c97fd6983f2577e8ed4b997e9f11952e118bdcf00ee66bbcd29a5d41849a`.

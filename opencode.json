@@ -7,7 +7,7 @@
     "Use read with offset/limit. Never read target/, node_modules/, public/packages/, public/fixtures/, dist/, *.mt2, e2e snapshots.",
     "Always emit file_path:line refs for every code reference.",
     "Keep diffs minimal. Verify with: cargo test --workspace (libraries/maps-v2) and npm run typecheck (applications/maps-v2-lab).",
-    "For tile format changes: bump FORMAT_VERSION in maps2-tile/src/lib.rs:48, update docs/tile-format.md, and migrate golden hash in maps2-fixtures/src/lib.rs:382.",
+    "For tile format changes: bump FORMAT_VERSION in maps2-tile/src/lib.rs:52, update docs/tile-format.md, and migrate golden hash in maps2-fixtures/src/lib.rs:382.",
     "For ingest changes: run cargo run -p maps2-ingest -- verify-package <dir> after.",
     "Token budget: stay under 2.5k tokens bootstrap (AGENTS.md + one targeted file). Do not read README.md + architecture.md fully unless task requires narrative context.",
     "For multi-task or long-loop work: delegate per-crate/card work to isolated subagents via task tool; controller keeps summaries only, never re-reads file subagent summarized.",

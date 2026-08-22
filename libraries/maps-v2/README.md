@@ -30,7 +30,7 @@ cd ../../applications/maps-v2-lab && npm run build && npm run test:e2e
 ## Architecture
 
 `maps2-units` protects coordinate units; `maps2-camera` owns the camera and
-projection; `maps2-tile` reads the MT2 v1 binary format; `maps2-style` decides
+projection; `maps2-tile` reads the MT2 v6 binary format (v1–v6 readable); `maps2-style` decides
 class visibility and appearance; `maps2-render` builds persistent render
 buckets; `maps2-text` provides deterministic SDF glyphs and collision placement;
 `maps2-fixtures` creates committed synthetic packages; and `maps2-web` exposes
@@ -46,7 +46,7 @@ The current browser entry point is `maps2-web`: create a map for a canvas,
 load MT2 bytes, set camera/style state, render, and request `debug()` or label
 diagnostics when needed. The lab is the executable API example.
 
-MT2 v1 is frozen. Its header, sections, vector features, height raster, error
+MT2 v6 is frozen (v1–v5 remain readable). Its header, sections, vector features, height raster, error
 rules, and versioning process are documented in [tile-format.md](docs/tile-format.md).
 Changing the layout requires a format-version bump and deliberate fixture and
 golden updates.

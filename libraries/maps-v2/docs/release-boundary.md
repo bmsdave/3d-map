@@ -2,9 +2,9 @@
 
 ## Included
 
-- Rust workspace crates for units, camera, MT2 v4 tile writing with v1/v2/v3 reading, style, fixture
+- Rust workspace crates for units, camera, MT2 v6 tile writing with v1–v6 reading, style, fixture
   generation, rendering, text placement, and the WebGL2/Wasm boundary.
-- MT2 v4 preserves 64-bit OSM feature IDs; label diagnostics expose their
+- MT2 v6 preserves 64-bit OSM feature IDs and adds packed heights 0xFF01; label diagnostics expose their
   128-bit class-plus-feature identities as strings so browsers never lose precision.
 - A deterministic synthetic fixture set, still generated and still used by the
   Rust tests, and browser lab cards for zoom bands, roads, point-label
@@ -36,7 +36,7 @@ routing, geocoding, analytics layers, and a data-hosting service.
 
 ## Compatibility and release policy
 
-MT2 v4 is the current alpha write format; readers continue to accept v1/v2/v3. The browser API and fixture content remain alpha APIs and may
+MT2 v6 is the current alpha write format; readers continue to accept v1–v6. The browser API and fixture content remain alpha APIs and may
 change before beta. Goldens are deterministic fixtures: update them only with a
 documented rendering reason. Real-world data support is explicitly a beta
 milestone; its delivery plan is [real-data-beta-plan.md](real-data-beta-plan.md).

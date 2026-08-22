@@ -23,7 +23,7 @@ pipeline then produces the global package.
 
 The project has the beginnings of the London path: pinned Greater London OSM
 and two Copernicus DEM descriptors, HTTPS-only atomic source acquisition with
-checksum validation, deterministic MT2 v5 encoding with v1–v4 readers, terrain rasters, OSM
+checksum validation, deterministic MT2 v6 encoding with v1–v6 readers, terrain rasters, OSM
 building-height/roof/material/base-height fallbacks, and deterministic
 tile-border clipping, outer/inner-ring multipolygon relations whose member
 ways are not emitted a second time, named places, bridge/tunnel road structure
@@ -36,7 +36,7 @@ z12–z16 London rebuild from real inputs now emits 4,017,061 feature parts in
 the identical package digest
 `c6e61742d63afd68a40bc07a331a358d9d5b16f16e022ea291eaf193c6ce3f28`, and that
 real package passed the local Chromium acceptance test (demand loading,
-attribution, terrain, tilt, ≤10 ms p95). MT2 v5
+attribution, terrain, tilt, ≤10 ms p95). MT2 v6
 preserves 64-bit OSM source IDs, including node IDs beyond the 32-bit range,
 and adds a facade material byte to the building payload.
 MT2 v3 carries interior rings and MT2 v4 preserves full 64-bit source IDs; the renderer excludes holes from fills. Complex
@@ -103,7 +103,7 @@ operations rather than the Rust lint gate.
    validate coordinates, geometry, topology, source checksum, feature counts,
    and tile completeness. Classify land, water, parks, roads, POIs, labels, and
    building footprints; simplify by zoom and produce deterministic MT2 tiles.
-4. **True 3D city rendering.** Done for the base payload and renderer: MT2 v5
+4. **True 3D city rendering.** Done for the base payload and renderer: MT2 v6
    carries base height, top height, roof type, and material class; v1–v4
    remain readable. The renderer draws terrain-clamped walls with LOD tiers
    and shapes gabled/hipped roofs (a bounding-box ridge approximation, not a
