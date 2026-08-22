@@ -891,6 +891,22 @@ fn cell_index(offset: f64, span: f64, cells: u32) -> usize {
     usize::try_from(index).unwrap_or_default()
 }
 
+/// The deepest level worth giving a raster of its own.
+///
+/// Copernicus GLO-30 samples the ground every 30 m. A z12 tile's raster
+/// samples every 38 m, so z12 is where the source is fully spent; a z13
+/// tile would resample the same numbers at 19 m and a z16 tile at 2.4 m.
+/// Those tiles are not more detail, they are the same detail written out
+/// sixteen times per axis — and each costs another 128 KiB before
+/// packing. Below the cap the renderer reads the nearest ancestor that
+/// has a raster (see `maps2_render::height_source`), which is the same
+/// surface at the resolution the DEM actually has.
+///
+/// Raising this is a data decision, not a rendering one: it only makes
+/// sense with a DEM finer than 30 m under it, such as a national `LiDAR`
+/// DTM.
+pub const TERRAIN_MAX_Z: u8 = 12;
+
 /// Samples a DEM on the edge-aligned grid defined by an MT2 height section.
 #[must_use]
 pub fn height_raster_for_tile(grid: &DemGrid, tile: TileId) -> Vec<u8> {
@@ -1665,7 +1681,9 @@ fn build_tile(
     // it looks like, and a pyramid of them is most of what a world package
     // weighs. `maps2-tile` keeps reading the plain section, so every
     // package built before this one still loads.
-    if let Some(grid) = terrain.iter().find(|grid| grid.covers_tile(id)) {
+    if id.z <= TERRAIN_MAX_Z
+        && let Some(grid) = terrain.iter().find(|grid| grid.covers_tile(id))
+    {
         builder.push_raster(CLASS_HEIGHTS_PACKED, pack(&height_raster_for_tile(grid, id))?);
     }
     Ok((id, builder.build()?))
@@ -2455,45 +2473,62 @@ adapter_version = "osm-v1""#,
         assert!((raster.metres(255, 255) - 17.0).abs() < f32::EPSILON);
     }
 
-    #[test]
-    fn terrain_package_writer_adds_heights_to_covered_vector_tiles() {
+    fn one_covered_tile_at(level: u8) -> Vec<u8> {
         let vertices = [
             Lonlat { lon: -0.1278, lat: 51.5074 },
             Lonlat { lon: -0.1277, lat: 51.5074 },
-            Lonlat { lon: -0.1278, lat: 51.5074 },
         ];
-        let feature = prepare_feature(17, &[("building", "yes")], &vertices, 16).expect("one tile");
+        // A road, not a building: buildings only enter at the Address band
+        // (z16), and these cases are about levels at and around the cap.
+        let feature =
+            prepare_feature(17, &[("highway", "primary")], &vertices, level).expect("one tile");
         let grid = DemGrid::new(-1.0, 51.0, 1, 1, vec![17.0]).expect("grid");
-
         let tiles = build_tiles_with_terrain(&[feature], &grid).expect("terrain package");
-        let tile = TileView::parse(&tiles[0].1).expect("valid MT2");
+        tiles[0].1.clone()
+    }
+
+    #[test]
+    fn terrain_package_writer_adds_heights_to_covered_vector_tiles() {
+        let bytes = one_covered_tile_at(TERRAIN_MAX_Z);
+        let tile = TileView::parse(&bytes).expect("valid MT2");
 
         let packed = tile.raster(CLASS_HEIGHTS_PACKED).expect("packed heights");
         assert_eq!(unpack(packed).expect("unpacks").len(), HEIGHTS_BYTES);
+    }
+
+    /// Below the cap the DEM has nothing left to say, so the tile says
+    /// nothing: the renderer reads the nearest ancestor that does.
+    #[test]
+    fn a_tile_deeper_than_the_terrain_cap_carries_no_raster_of_its_own() {
+        let bytes = one_covered_tile_at(TERRAIN_MAX_Z + 1);
+        let tile = TileView::parse(&bytes).expect("valid MT2");
+
+        assert_eq!(tile.raster(CLASS_HEIGHTS_PACKED), None);
+        assert_eq!(tile.raster(maps2_tile::CLASS_HEIGHTS), None);
     }
 
     #[test]
     fn terrain_package_writer_uses_each_covering_degree_cell() {
         let west = prepare_feature(
             17,
-            &[("building", "yes")],
+            &[("highway", "primary")],
             &[
                 Lonlat { lon: -0.1278, lat: 51.5074 },
                 Lonlat { lon: -0.1277, lat: 51.5074 },
                 Lonlat { lon: -0.1278, lat: 51.5074 },
             ],
-            16,
+            TERRAIN_MAX_Z,
         )
         .expect("western feature");
         let east = prepare_feature(
             18,
-            &[("building", "yes")],
+            &[("highway", "primary")],
             &[
                 Lonlat { lon: 0.1278, lat: 51.5074 },
                 Lonlat { lon: 0.1279, lat: 51.5074 },
                 Lonlat { lon: 0.1278, lat: 51.5074 },
             ],
-            16,
+            TERRAIN_MAX_Z,
         )
         .expect("eastern feature");
         let west_grid = DemGrid::new(-1.0, 51.0, 1, 1, vec![17.0]).expect("western grid");

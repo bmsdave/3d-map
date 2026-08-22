@@ -12,6 +12,7 @@ mod line;
 mod building;
 mod labels;
 mod globe;
+mod height_window;
 mod residency;
 mod terrain;
 mod triangulate;
@@ -24,6 +25,7 @@ pub use line::{
 pub use building::{BuildingBucket, BuildingVertex, MaterialRange, build_building_bucket};
 pub use labels::{build_label_bucket, LabelBucket, LabelPoint, LABEL_CLASSES};
 pub use globe::{project_normalised, tile_frame, Projected, TileFrame, View};
+pub use height_window::{height_source, sample_bilinear, HeightWindow, MAX_ANCESTOR_DEPTH};
 pub use residency::{
     building_lod, normalise_source_levels, plan_residency, register_source_level, target_level,
     BuildingLod, ResidencyPlan,

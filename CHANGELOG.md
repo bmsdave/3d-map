@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- Terrain stops at z12, and everything below reads it. Copernicus GLO-30
+  samples the ground every 30 m; a z12 tile's raster samples every 38 m, so
+  z12 is where the source is spent. A z16 tile's raster was the same numbers
+  written out sixteen times per axis for another 128 KiB — a naive z0–16
+  pyramid of them is terabytes. `TERRAIN_MAX_Z` stops ingest emitting them,
+  and a tile below the cap reads the nearest ancestor that has one through a
+  window: `maps2_render::HeightWindow` for where to look, `sample_bilinear`
+  for how, both under test in plain arithmetic that the shaders mirror.
+- One copy of that arithmetic in GLSL, shared by the three shaders that read
+  terrain — ground displacement, hillshade, and building bases — so the
+  surface, its shading and the buildings standing on it cannot disagree
+  about where the ground is. The interpolation is written out because it has
+  to be: the raster is an `R16UI` texture and WebGL2 will not filter integer
+  textures, so nearest-neighbour on a magnified ancestor came out in
+  terraces.
+- The walk up is bounded at four levels (`MAX_ANCESTOR_DEPTH`), which is the
+  distance the cap creates. Unbounded, it found *a* raster — on a world
+  package that was a z3 tile spanning a quarter of the planet at eleven
+  kilometres a sample, which shades a street as perfectly flat while
+  claiming to be terrain. Beyond the limit there is no terrain, and flat
+  ground is the honest answer.
+- The ancestor's texture is uploaded and kept for as long as something on
+  screen reads it. Residency keeps coarse tiles resident but does not draw
+  them, and only drawn tiles were uploaded — so the deep tiles found nothing
+  above them; releasing it each frame instead would have been 128 KiB to the
+  GPU per frame.
+
 - MT2 v6: heights can ride packed. The raster is 128 KiB whatever ground it
   covers, which is ~60% of a tile and all of the reason a world pyramid of them
   costs terabytes. `heights::pack` predicts each sample from its neighbours

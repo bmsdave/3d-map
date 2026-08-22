@@ -3,11 +3,10 @@
 use wasm_bindgen::JsValue;
 use web_sys::{WebGl2RenderingContext as Gl, WebGlBuffer, WebGlProgram, WebGlUniformLocation};
 
-use maps2_render::{BuildingBucket, MaterialRange};
-use maps2_tile::{HEIGHT_OFFSET_M, HEIGHTS_SIDE};
+use maps2_render::{BuildingBucket, HeightWindow, MaterialRange};
 
 use crate::gl::{as_bytes, link_program};
-use crate::gl_terrain::HeightTexture;
+use crate::gl_terrain::{heights_glsl, HeightBinding};
 use crate::gl_view::{ViewLocations, PROJECTION_GLSL};
 
 fn vertex_source() -> String {
@@ -16,27 +15,23 @@ fn vertex_source() -> String {
 in vec2 a_pos;
 in float a_height_dm;
 {PROJECTION_GLSL}
-uniform highp usampler2D u_heights;
-uniform float u_has_heights;
+{HEIGHTS_GLSL}
 uniform float u_metres_to_px;
 uniform float u_tilt_rad;
 out float v_front;
 
-float terrain_metres(ivec2 texel) {{
-    ivec2 at = clamp(texel, ivec2(0), ivec2({last}));
-    return (float(texelFetch(u_heights, at, 0).r) - {offset:.1}) * u_has_heights;
-}}
-
 void main() {{
     vec2 unit = a_pos / 65535.0;
     vec3 p = project_nrm(unit, 1.0);
-    float metres = terrain_metres(ivec2(round(unit * {last}.0))) + a_height_dm * 0.1;
+    // The same ground the terrain shaders draw, read the same way: a
+    // building whose base came from a different sample of the surface
+    // than the surface itself would float or sink into it.
+    float metres = height_metres(unit) + a_height_dm * 0.1;
     p.y -= metres * u_metres_to_px * sin(u_tilt_rad);
     v_front = p.z;
     gl_Position = clip_of(p.xy);
 }}",
-        last = HEIGHTS_SIDE - 1,
-        offset = HEIGHT_OFFSET_M,
+        HEIGHTS_GLSL = heights_glsl(),
     )
 }
 
@@ -55,6 +50,7 @@ pub struct BuildingProgram {
     pub view: ViewLocations,
     pub color: WebGlUniformLocation,
     has_heights: WebGlUniformLocation,
+    height_window: WebGlUniformLocation,
     metres_to_px: WebGlUniformLocation,
     tilt_rad: WebGlUniformLocation,
     pos: u32,
@@ -74,6 +70,7 @@ impl BuildingProgram {
             view: ViewLocations::of(gl, &program)?,
             color: uniform("u_color")?,
             has_heights: uniform("u_has_heights")?,
+            height_window: uniform("u_height_window")?,
             metres_to_px: uniform("u_metres_to_px")?,
             tilt_rad: uniform("u_tilt_rad")?,
             pos: gl.get_attrib_location(&program, "a_pos") as u32,
@@ -88,10 +85,12 @@ impl BuildingProgram {
         gl.uniform1f(Some(&self.tilt_rad), tilt_deg.to_radians() as f32);
     }
 
-    pub fn bind_heights(&self, gl: &Gl, heights: Option<&HeightTexture>) {
+    pub fn bind_heights(&self, gl: &Gl, source: Option<HeightBinding<'_>>) {
         gl.active_texture(Gl::TEXTURE0);
-        gl.bind_texture(Gl::TEXTURE_2D, heights.map(|height| &height.texture));
-        gl.uniform1f(Some(&self.has_heights), f32::from(u8::from(heights.is_some())));
+        gl.bind_texture(Gl::TEXTURE_2D, source.map(|s| &s.texture.texture));
+        gl.uniform1f(Some(&self.has_heights), f32::from(u8::from(source.is_some())));
+        let window = source.map_or(HeightWindow::IDENTITY, |s| s.window);
+        gl.uniform3f(Some(&self.height_window), window.scale, window.offset_x, window.offset_y);
     }
 }
 

@@ -9,21 +9,24 @@ use web_sys::WebGl2RenderingContext as Gl;
 use maps2_camera::{Camera, CameraPatch, Globeness};
 use maps2_render::{
     build_building_bucket, build_fill_bucket, build_label_bucket, build_line_bucket, building_lod,
-    normalise_source_levels, plan_residency, register_source_level, road_passes, shading_z_factor,
-    target_level, texel_metres, tile_frame, BuildingLod, FillBucket, LabelBucket, LineOptions,
-    Pass, RoadLevel, RoadPass, MITER_LIMIT_MAX, View,
+    height_source, normalise_source_levels, plan_residency, register_source_level, road_passes,
+    sample_bilinear, shading_z_factor, target_level, texel_metres, tile_frame, BuildingLod,
+    FillBucket, HeightWindow, LabelBucket, LineOptions, Pass, RoadLevel, RoadPass,
+    MITER_LIMIT_MAX, View,
 };
 use maps2_style::{
     background_color, class_alpha, facade_colour, fill_color, road_width_px, Band, Class,
     CASING_EXTRA_PX, ROAD_CASING_COLOR, TUNNEL_ALPHA, TUNNEL_DASH_ON_PX, TUNNEL_DASH_PERIOD_PX,
 };
 use maps2_text::{layout_line, measure_line, Atlas, Placement, Rejection, ScreenBox};
-use maps2_tile::{unpack, HeightsRaster, TileView, CLASS_HEIGHTS, CLASS_HEIGHTS_PACKED, HEIGHTS_SIDE};
+use maps2_tile::{unpack, HeightsRaster, TileView, CLASS_HEIGHTS, CLASS_HEIGHTS_PACKED};
 use maps2_units::{locate, Lonlat, TileId, Zoom};
 
 use crate::gl::{FillProgram, GpuBucket};
 use crate::gl_building::{BuildingProgram, GpuBuildingBucket};
-use crate::gl_terrain::{GroundMeshGpu, HeightTexture, TerrainProgram, TerrainSettings};
+use crate::gl_terrain::{
+    GroundMeshGpu, HeightBinding, HeightTexture, TerrainProgram, TerrainSettings,
+};
 use crate::gl_view::TilePixels;
 use crate::input::Input;
 use crate::labels::{class_of, frame_candidates, frame_quads, place_candidates};
@@ -902,11 +905,7 @@ impl Map {
                 continue;
             }
             self.terrain.view.set_tile(&self.gl, tile_frame(*id), self.tile_pixels(*id));
-            self.terrain.bind_heights(
-                &self.gl,
-                self.height_textures.get(id),
-                texel_metres(*id),
-            );
+            self.terrain.bind_heights(&self.gl, self.height_binding(*id));
             self.ground.draw(&self.gl);
             self.frame_draw_calls += 1;
         }
@@ -926,8 +925,7 @@ impl Map {
             self.building_program
                 .view
                 .set_tile(&self.gl, tile_frame(*id), self.tile_pixels(*id));
-            self.building_program
-                .bind_heights(&self.gl, self.height_textures.get(id));
+            self.building_program.bind_heights(&self.gl, self.height_binding(*id));
             // One draw call per facade material present in this tile's
             // buildings, not one per building: `ranges` is already grouped.
             for &range in bucket.ranges() {
@@ -950,6 +948,44 @@ impl Map {
         (self.camera.zoom().world_pixels() / (maps2_units::EARTH_CIRCUMFERENCE_METRES * cos_lat)) as f32
     }
 
+    /// Which raster answers for a tile, and how to read it.
+    ///
+    /// Its own if it has one. Below the terrain cap it has none — the DEM
+    /// had nothing more to say at that level — so the nearest ancestor
+    /// that does answers instead, through a window onto its texture. The
+    /// spacing handed over is that ancestor's, because that is the grid
+    /// the hillshade gradient is walking.
+    fn height_binding(&self, id: TileId) -> Option<HeightBinding<'_>> {
+        let source = height_source(id, |candidate| self.height_textures.contains_key(&candidate))?;
+        Some(HeightBinding {
+            texture: self.height_textures.get(&source)?,
+            window: HeightWindow::of(id, source)?,
+            texel_metres: texel_metres(source),
+        })
+    }
+
+    /// Puts the raster each tile in `draw` will read onto the GPU.
+    ///
+    /// A tile below the cap reads an ancestor's, and that ancestor is
+    /// resident — residency keeps every coarser level in play — but it is
+    /// not necessarily in the draw list, and only drawn tiles are
+    /// uploaded. Without this the deep tiles would find no texture above
+    /// them and draw flat ground.
+    fn upload_height_sources(&mut self, draw: &[TileId]) {
+        let sources: Vec<TileId> = draw
+            .iter()
+            .filter_map(|id| height_source(*id, |candidate| self.heights.contains_key(&candidate)))
+            .filter(|source| !self.height_textures.contains_key(source))
+            .collect();
+        for source in sources {
+            if let Some(bytes) = self.height_bytes(source)
+                && let Ok(texture) = HeightTexture::upload(&self.gl, bytes)
+            {
+                self.height_textures.insert(source, texture);
+            }
+        }
+    }
+
     /// The height raster of a resident tile, borrowed out of the tile
     /// bytes it arrived in.
     fn height_bytes(&self, id: TileId) -> Option<&[u8]> {
@@ -964,11 +1000,16 @@ impl Map {
     /// that the raster arrived and is addressed correctly.
     fn centre_height_m(&self) -> Option<f32> {
         let point = locate(self.camera.centre(), self.active_level());
-        let bytes = self.height_bytes(point.tile)?;
+        // Through the window, and bilinear, so the number in the readout
+        // is the height the shaders put under that point rather than a
+        // near-enough one from a different rule.
+        let source = height_source(point.tile, |candidate| self.heights.contains_key(&candidate))?;
+        let window = HeightWindow::of(point.tile, source)?;
+        let bytes = self.height_bytes(source)?;
         let raster = HeightsRaster::parse(bytes).ok()?;
-        let last = (HEIGHTS_SIDE - 1) as f32;
-        let texel = |grid: u16| (f32::from(grid) / 65535.0 * last).round() as i32;
-        Some(raster.metres(texel(point.coord.0), texel(point.coord.1)))
+        let unit = |grid: u16| f32::from(grid) / 65535.0;
+        let (x, y) = window.texel_of(unit(point.coord.0), unit(point.coord.1));
+        Some(sample_bilinear(&raster, x, y))
     }
 
     /// The shape the renderer actually drew this frame.
@@ -1034,26 +1075,43 @@ impl Map {
         // a function of, so the answer cannot have moved since.
         let draw = self.plan().draw.clone();
         let drawn: HashSet<TileId> = draw.iter().copied().collect();
+        // A tile below the terrain cap reads an ancestor's raster, and
+        // that ancestor is usually not drawn itself — residency keeps it,
+        // but nothing here would. Releasing its texture and uploading it
+        // again is 128 KiB to the GPU every frame, so the ones being read
+        // are named before anything is dropped.
+        let sources: HashSet<TileId> = draw
+            .iter()
+            .filter_map(|id| height_source(*id, |candidate| self.heights.contains_key(&candidate)))
+            .collect();
         let stale: Vec<TileId> = self.gpu.keys().copied().filter(|id| !drawn.contains(id)).collect();
         for id in stale {
-            self.release_gpu(id);
+            self.release_gpu(id, sources.contains(&id));
         }
         for id in &draw {
             self.upload_gpu(*id);
         }
+        self.upload_height_sources(&draw);
         draw
     }
 
     /// Drops every GPU copy of one tile. The CPU bytes stay: the host
     /// owns those, and `evictable_tiles` is where it is told to let go.
-    fn release_gpu(&mut self, id: TileId) {
+    ///
+    /// `keep_heights` spares the height texture: this tile is not drawn,
+    /// but a deeper one on screen is reading its raster.
+    fn release_gpu(&mut self, id: TileId, keep_heights: bool) {
         if let Some(bucket) = self.gpu.remove(&id) {
             bucket.delete(&self.gl);
             self.evictions += 1;
         }
         if let Some(bucket) = self.gpu_lines.remove(&id) { bucket.delete(&self.gl); }
         if let Some(bucket) = self.gpu_buildings.remove(&id) { bucket.delete(&self.gl); }
-        if let Some(texture) = self.height_textures.remove(&id) { texture.delete(&self.gl); }
+        if !keep_heights
+            && let Some(texture) = self.height_textures.remove(&id)
+        {
+            texture.delete(&self.gl);
+        }
     }
 
     /// Uploads whatever of one tile is not on the GPU yet. Idempotent, so
@@ -1420,7 +1478,7 @@ impl Map {
     fn resident_classes(&self) -> Vec<String> {
         let level = self.active_level();
         let mut classes: Vec<Class> = Vec::new();
-        let mut admit = |class: Class, classes: &mut Vec<Class>| {
+        let admit = |class: Class, classes: &mut Vec<Class>| {
             let visible = class_alpha(class, self.camera.zoom(), self.override_band) > 0.0;
             if visible && !classes.contains(&class) {
                 classes.push(class);

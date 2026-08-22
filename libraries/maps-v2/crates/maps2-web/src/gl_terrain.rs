@@ -12,7 +12,7 @@ use web_sys::{
     WebGl2RenderingContext as Gl, WebGlBuffer, WebGlProgram, WebGlTexture, WebGlUniformLocation,
 };
 
-use maps2_render::{ground_mesh, GroundMesh, GROUND_MESH_CELLS, HIGHLIGHT_GAIN};
+use maps2_render::{ground_mesh, GroundMesh, HeightWindow, GROUND_MESH_CELLS, HIGHLIGHT_GAIN};
 use maps2_style::{HYPSOMETRIC_STOPS, LIGHT_ALTITUDE_DEG, LIGHT_AZIMUTH_DEG};
 use maps2_tile::{HEIGHTS_SIDE, HEIGHT_OFFSET_M};
 
@@ -21,34 +21,77 @@ use crate::gl_view::{ViewLocations, PROJECTION_GLSL};
 
 const STOPS: usize = HYPSOMETRIC_STOPS.len();
 
+/// Reading heights, for every shader that does.
+///
+/// A tile below the terrain cap has no raster of its own and reads the
+/// nearest ancestor that has one, through a window: `u_height_window` is
+/// `(scale, offset_x, offset_y)`, the identity `(1, 0, 0)` when the tile
+/// reads itself. `maps2_render::HeightWindow` computes it, and
+/// `maps2_render::sample_bilinear` is this arithmetic in Rust, under test.
+///
+/// The interpolation is written out because it has to be: the raster is
+/// an `R16UI` texture and WebGL2 does not filter integer textures. Read
+/// nearest-neighbour, an ancestor magnified four levels puts one texel
+/// across the whole tile and the ground comes out in terraces.
+///
+/// Every shader here shares one copy so the ground, its shading and the
+/// buildings standing on it cannot disagree about where the surface is.
+pub fn heights_glsl() -> String {
+    format!(
+        "uniform highp usampler2D u_heights;
+uniform float u_has_heights;
+uniform vec3 u_height_window;
+
+vec2 height_texel(vec2 unit) {{
+    return (u_height_window.yz + unit * u_height_window.x) * {last}.0;
+}}
+
+float height_at(vec2 texel) {{
+    vec2 within = clamp(texel, vec2(0.0), vec2({last}.0));
+    vec2 low = floor(within);
+    vec2 frac = within - low;
+    ivec2 near = ivec2(low);
+    ivec2 far = min(near + ivec2(1), ivec2({last}));
+    float top = mix(
+        float(texelFetch(u_heights, ivec2(near.x, near.y), 0).r),
+        float(texelFetch(u_heights, ivec2(far.x, near.y), 0).r),
+        frac.x);
+    float bottom = mix(
+        float(texelFetch(u_heights, ivec2(near.x, far.y), 0).r),
+        float(texelFetch(u_heights, ivec2(far.x, far.y), 0).r),
+        frac.x);
+    return (mix(top, bottom, frac.y) - {offset:.1}) * u_has_heights;
+}}
+
+float height_metres(vec2 unit) {{
+    return height_at(height_texel(unit));
+}}",
+        last = HEIGHTS_SIDE - 1,
+        offset = HEIGHT_OFFSET_M,
+    )
+}
+
 fn vertex_source() -> String {
     format!(
         "#version 300 es
 in vec2 a_pos;
 {PROJECTION_GLSL}
-uniform highp usampler2D u_heights;
-uniform float u_has_heights;
+{HEIGHTS_GLSL}
 uniform float u_exaggeration;
 uniform float u_earth_radius_m;
 out vec2 v_unit;
 out float v_front;
 
-float sample_metres(ivec2 texel) {{
-    ivec2 at = clamp(texel, ivec2(0), ivec2({last}));
-    return (float(texelFetch(u_heights, at, 0).r) - {offset:.1}) * u_has_heights;
-}}
-
 void main() {{
     vec2 unit = a_pos / {span:.1};
     v_unit = unit;
-    float metres = sample_metres(ivec2(round(unit * {last}.0)));
+    float metres = height_metres(unit);
     float relief = 1.0 + (metres / u_earth_radius_m) * u_exaggeration * u_globeness;
     vec3 p = project_nrm(unit, relief);
     v_front = p.z;
     gl_Position = clip_of(p.xy);
 }}",
-        last = HEIGHTS_SIDE - 1,
-        offset = HEIGHT_OFFSET_M,
+        HEIGHTS_GLSL = heights_glsl(),
         span = 65535.0_f32,
     )
 }
@@ -58,8 +101,7 @@ fn fragment_source() -> String {
         "#version 300 es
 precision highp float;
 precision highp usampler2D;
-uniform usampler2D u_heights;
-uniform float u_has_heights;
+{HEIGHTS_GLSL}
 uniform float u_texel_metres;
 uniform float u_z_factor;
 uniform float u_shading;
@@ -71,11 +113,6 @@ uniform vec3 u_stop_color[{STOPS}];
 in vec2 v_unit;
 in float v_front;
 out vec4 outColor;
-
-float sample_metres(ivec2 texel) {{
-    ivec2 at = clamp(texel, ivec2(0), ivec2({last}));
-    return (float(texelFetch(u_heights, at, 0).r) - {offset:.1}) * u_has_heights;
-}}
 
 vec3 hypsometric(float metres) {{
     vec3 tint = u_stop_color[0];
@@ -91,28 +128,29 @@ vec3 hypsometric(float metres) {{
 
 void main() {{
     if (v_front < 0.0) {{ discard; }}
-    ivec2 texel = ivec2(round(v_unit * {last}.0));
-    // A tile's raster has no border ring, so at the very edge a central
+    vec2 texel = height_texel(v_unit);
+    // A raster has no border ring, so at the very edge a central
     // difference would fall back on a one-sided one and the two tiles
     // would disagree by a visible line. Stepping the gradient one
     // sample inwards makes both sides read the same field instead.
-    ivec2 slope_at = clamp(texel, ivec2(1), ivec2({last} - 1));
+    // Inwards means inside the raster being read — which is the
+    // ancestor's, for a tile below the cap, and `u_texel_metres` is that
+    // ancestor's sample spacing to match.
+    vec2 slope_at = clamp(texel, vec2(1.0), vec2({last}.0 - 1.0));
     float span = 2.0 * u_texel_metres;
-    float east =
-        (sample_metres(slope_at + ivec2(1, 0)) - sample_metres(slope_at - ivec2(1, 0))) / span;
-    float north =
-        (sample_metres(slope_at - ivec2(0, 1)) - sample_metres(slope_at + ivec2(0, 1))) / span;
+    float east = (height_at(slope_at + vec2(1.0, 0.0)) - height_at(slope_at - vec2(1.0, 0.0))) / span;
+    float north = (height_at(slope_at - vec2(0.0, 1.0)) - height_at(slope_at + vec2(0.0, 1.0))) / span;
     vec3 normal = normalize(vec3(-east * u_z_factor, -north * u_z_factor, 1.0));
     float raw = max(dot(normal, u_light), 0.0) / u_light.z;
     // Highlights compressed as in maps2_render::relative_shade: on a
     // near-white ground a full lambert highlight is just white.
     float lambert = raw > 1.0 ? 1.0 + (raw - 1.0) * {highlight} : raw;
     float shade = mix(1.0, lambert, u_shading);
-    vec3 base = mix(u_base_color.rgb, hypsometric(sample_metres(texel)), u_hypsometric);
+    vec3 base = mix(u_base_color.rgb, hypsometric(height_at(texel)), u_hypsometric);
     outColor = vec4(base * shade, u_base_color.a);
 }}",
+        HEIGHTS_GLSL = heights_glsl(),
         last = HEIGHTS_SIDE - 1,
-        offset = HEIGHT_OFFSET_M,
         highlight = HIGHLIGHT_GAIN,
     )
 }
@@ -127,11 +165,23 @@ pub struct TerrainSettings {
     pub base_color: [u8; 4],
 }
 
+/// One tile's answer to "where is the ground": the raster to read, the
+/// window into it, and how far apart that raster's samples are on the
+/// ground. Passed whole so the three shaders that read terrain cannot be
+/// handed different halves of it.
+#[derive(Clone, Copy)]
+pub struct HeightBinding<'a> {
+    pub texture: &'a HeightTexture,
+    pub window: HeightWindow,
+    pub texel_metres: f32,
+}
+
 pub struct TerrainProgram {
     program: WebGlProgram,
     pub view: ViewLocations,
     a_pos: u32,
     has_heights: WebGlUniformLocation,
+    height_window: WebGlUniformLocation,
     texel_metres: WebGlUniformLocation,
     z_factor: WebGlUniformLocation,
     shading: WebGlUniformLocation,
@@ -151,6 +201,7 @@ impl TerrainProgram {
             ViewLocations::of(gl, &program)?,
             gl.get_attrib_location(&program, "a_pos") as u32,
             uniform("u_has_heights")?,
+            uniform("u_height_window")?,
             uniform("u_texel_metres")?,
             uniform("u_z_factor")?,
             uniform("u_shading")?,
@@ -163,12 +214,13 @@ impl TerrainProgram {
             view: parts.0,
             a_pos: parts.1,
             has_heights: parts.2,
-            texel_metres: parts.3,
-            z_factor: parts.4,
-            shading: parts.5,
-            hypsometric: parts.6,
-            exaggeration: parts.7,
-            base_color: parts.8,
+            height_window: parts.3,
+            texel_metres: parts.4,
+            z_factor: parts.5,
+            shading: parts.6,
+            hypsometric: parts.7,
+            exaggeration: parts.8,
+            base_color: parts.9,
             program,
         })
     }
@@ -189,13 +241,17 @@ impl TerrainProgram {
         );
     }
 
-    /// Per tile: its heights (or none) and the ground distance between
-    /// two samples of them.
-    pub fn bind_heights(&self, gl: &Gl, heights: Option<&HeightTexture>, texel_metres: f32) {
+    /// Per tile: the raster it reads — its own, or an ancestor's seen
+    /// through a window — and that raster's ground distance between two
+    /// samples. `None` is flat ground, which is what a tile with no
+    /// terrain above it has always drawn.
+    pub fn bind_heights(&self, gl: &Gl, source: Option<HeightBinding<'_>>) {
         gl.active_texture(Gl::TEXTURE0);
-        gl.bind_texture(Gl::TEXTURE_2D, heights.map(|h| &h.texture));
-        gl.uniform1f(Some(&self.has_heights), f32::from(u8::from(heights.is_some())));
-        gl.uniform1f(Some(&self.texel_metres), texel_metres);
+        gl.bind_texture(Gl::TEXTURE_2D, source.map(|s| &s.texture.texture));
+        gl.uniform1f(Some(&self.has_heights), f32::from(u8::from(source.is_some())));
+        let window = source.map_or(HeightWindow::IDENTITY, |s| s.window);
+        gl.uniform3f(Some(&self.height_window), window.scale, window.offset_x, window.offset_y);
+        gl.uniform1f(Some(&self.texel_metres), source.map_or(1.0, |s| s.texel_metres));
     }
 
     pub fn attribute(&self) -> u32 {
