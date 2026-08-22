@@ -116,7 +116,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("water.shp");
         let builder = shapefile::dbase::TableWriterBuilder::new()
-            .add_character_field("id".try_into().unwrap(), 10);
+            .add_character_field("id".try_into().expect("static field name fits DBF"), 10);
         let mut writer = shapefile::Writer::from_path(&path, builder).expect("writer");
         // Simple square around null island in EPSG:3857 metres; will be
         // projected back to ~0.09 degrees near lon/lat 0.
@@ -137,7 +137,7 @@ mod tests {
         // Non-polygon shapes are skipped
         let path2 = dir.path().join("water2.shp");
         let builder2 = shapefile::dbase::TableWriterBuilder::new()
-            .add_character_field("id".try_into().unwrap(), 10);
+            .add_character_field("id".try_into().expect("static field name fits DBF"), 10);
         let mut writer2 = shapefile::Writer::from_path(&path2, builder2).expect("writer2");
         let mut record2 = shapefile::dbase::Record::default();
         record2.insert("id".to_string(), shapefile::dbase::FieldValue::Character(Some("2".to_string())));
@@ -154,7 +154,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("water_hole.shp");
         let builder = shapefile::dbase::TableWriterBuilder::new()
-            .add_character_field("id".try_into().unwrap(), 10);
+            .add_character_field("id".try_into().expect("static field name fits DBF"), 10);
         let mut writer = shapefile::Writer::from_path(&path, builder).expect("writer");
         let outer = shapefile::PolygonRing::Outer(vec![
             shapefile::Point::new(-20_000.0, -20_000.0),

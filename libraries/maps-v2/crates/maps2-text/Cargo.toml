@@ -7,7 +7,7 @@ license = "MIT"
 
 [dependencies]
 maps2-units = { path = "../maps2-units" }
-num-traits = "0.2"
+num-traits = { workspace = true }
 
 [lints]
 workspace = true

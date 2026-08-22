@@ -9,7 +9,7 @@ license = "MIT"
 # Deflate for the packed heights section. Pure Rust, so it builds for
 # wasm32 exactly like the rest of the crate does, and already in the
 # workspace lock through the ingest pipeline's readers.
-miniz_oxide = "0.8"
+miniz_oxide = { workspace = true }
 maps2-units = { path = "../maps2-units" }
 num-traits = "0.2"
 
