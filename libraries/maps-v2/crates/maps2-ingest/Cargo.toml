@@ -11,7 +11,7 @@ maps2-tile = { path = "../maps2-tile" }
 maps2-units = { path = "../maps2-units" }
 num-traits = "0.2"
 # Deflate for the spool's scratch shards; already in the workspace lock.
-miniz_oxide = "0.8"
+miniz_oxide = "0.9"
 osmpbfreader = "0.19.1"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
